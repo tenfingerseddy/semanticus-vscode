@@ -46,6 +46,15 @@ namespace Semanticus.Tests
             return bim;
         }
 
+        // Points SEMANTICUS_HOME at a scratch folder so the analysis record a test writes never reaches the real home.
+        private sealed class ScratchHome : IDisposable
+        {
+            private readonly string _dir = Path.Combine(Path.GetTempPath(), "smx-vb-ah-" + Guid.NewGuid().ToString("N"));
+            private readonly string _orig = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
+            public ScratchHome() { Directory.CreateDirectory(_dir); Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(_dir, ".semanticus")); }
+            public void Dispose() { Environment.SetEnvironmentVariable(SemanticusHome.Variable, _orig); try { Directory.Delete(_dir, true); } catch { } }
+        }
+
         private static string VitalsFile(string bim)
             => Path.Combine(LayoutStore.DirFor(bim), VitalsStore.SubDir, VitalsStore.FileName);
 
@@ -308,6 +317,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Single_edit_window_is_attributed_with_the_formula_cause()
         {
+            using var home = new ScratchHome();
             var bim = TempCopyOfFixture();
             var sm = new SessionManager();
             using var e = new LocalEngine(sm, new Fake(true));
@@ -323,10 +333,11 @@ namespace Semanticus.Tests
             Assert.Equal("OLD", d.Before);
             Assert.Equal("NEW", d.After);
 
-            // The shared evidence record landed on the audit trail (the compare_baseline precedent).
-            var chain = await e.ListVerifiedEditsAsync();
-            var rec = chain.Records.LastOrDefault(r => r.Op == "blame_value");
-            Assert.NotNull(rec);
+            // The shared evidence record is kept beside the model, not in it: a read-only analysis must never mark the model unsaved
+            // (UAT 17 Oct). History reads it back as a record row.
+            Assert.DoesNotContain((await e.ListVerifiedEditsAsync()).Records, r => r.Op == "blame_value");
+            Assert.False((await e.SessionInfoAsync()).HasUnsavedEdits);
+            var rec = (await e.GetPlanHistoryAsync()).Rows.Single(r => r.Kind == "record" && r.Title == "blame_value").Record;
             Assert.Equal("attributed", rec.Verdict);
             Assert.Equal(0, rec.Revision);   // analysis mutates nothing — must never badge a timeline row
         }
@@ -350,6 +361,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task No_history_is_inconclusive_over_the_engine_door_too()
         {
+            using var home = new ScratchHome();
             var bim = TempCopyOfFixture();
             var sm = new SessionManager();
             using var e = new LocalEngine(sm, new Fake(true));
@@ -358,8 +370,8 @@ namespace Semanticus.Tests
             Assert.Equal("ok", blame.Status);
             Assert.Equal("inconclusive", blame.Verdict);
             // an inconclusive analysis claims nothing — it must not spam the audit trail
-            var chain = await e.ListVerifiedEditsAsync();
-            Assert.DoesNotContain(chain.Records, r => r.Op == "blame_value");
+            Assert.DoesNotContain((await e.ListVerifiedEditsAsync()).Records, r => r.Op == "blame_value");
+            Assert.DoesNotContain((await e.GetPlanHistoryAsync()).Rows, r => r.Title == "blame_value");
         }
 
         [Fact]

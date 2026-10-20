@@ -2757,8 +2757,52 @@
           { column: 'column:Sales/Qty', table: 'Sales', source: 'Import (M) · DW · let Source = Sql.Database("contoso-sql", "DW")…' },
           { column: 'column:Sales/Unit Cost', table: 'Sales', source: 'Import (M) · DW · let Source = Sql.Database("contoso-sql", "DW")…' },
         ];
+        // The engine's pick for the cell is Category; the others that also explain most of the number come with it (explain_value's alternatives).
+        var ALT = ["'Store'[Region]", "'Date'[Quarter]", "'Customer'[City]", "'Store'[City]"];
+        var SPLITS = {
+          "'Product'[Category]": {
+            dimension: "'Product'[Category]", additive: true, truncated: true, alternatives: ALT,
+            rows: [
+              { member: 'Audio', value: '520000', pct: 42.1 },
+              { member: 'Computers', value: '331000', pct: 26.8 },
+              { member: 'Cameras and camcorders', value: '214000', pct: 17.3 },
+              { member: 'TV and Video', value: '96567', pct: 7.8 },
+              { member: 'Music, Movies and Audio Books', value: '41000', pct: 3.3 },
+              { member: '(everything else, 3 more)', value: '32000', pct: 2.6 },
+            ],
+            note: "The largest parts of this number, split by 'Product'[Category]. The parts add up to the total.",
+          },
+          "'Store'[Region]": {
+            dimension: "'Store'[Region]", additive: true, truncated: false, alternatives: [],
+            rows: [
+              { member: 'North America', value: '611000', pct: 49.5 },
+              { member: 'Europe', value: '402000', pct: 32.6 },
+              { member: 'Asia', value: '221567', pct: 17.9 },
+            ],
+            note: "The largest parts of this number, split by 'Store'[Region]. The parts add up to the total.",
+          },
+          "'Date'[Quarter]": {
+            dimension: "'Date'[Quarter]", additive: true, truncated: false, alternatives: [],
+            rows: [
+              { member: 'Q4', value: '412000', pct: 33.4 },
+              { member: 'Q3', value: '310000', pct: 25.1 },
+              { member: 'Q2', value: '267000', pct: 21.6 },
+              { member: 'Q1', value: '245567', pct: 19.9 },
+            ],
+            note: "The largest parts of this number, split by 'Date'[Quarter]. The parts add up to the total.",
+          },
+          "'Customer'[Segment]": {
+            dimension: "'Customer'[Segment]", additive: true, truncated: false, alternatives: [],
+            rows: [
+              { member: 'Retail', value: '801000', pct: 64.9 },
+              { member: 'Trade', value: '433567', pct: 35.1 },
+            ],
+            note: "The largest parts of this number, split by 'Customer'[Segment]. The parts add up to the total.",
+          },
+        };
         var RLS_E = [{ role: 'Sales Manager', filters: [{ table: 'Sales', filterExpression: '[Region] = LOOKUPVALUE ( … )' }] }];
-        return function () {
+        return function (params) {
+          var splitBy = params && params[3];
           if (blankMode) return {
             status: 'ok', measure: 'measure:Sales/Total Sales', name: 'Total Sales',
             expression: 'SUMX ( Sales, Sales[Qty] * Sales[Net Price] )',
@@ -2785,18 +2829,7 @@
             valueEvaluated: true, value: '1234567', isBlank: false,
             summary: '[Total Sales] is 1,234,567 for this selection. The largest parts are listed below.',
             chain: CHAIN, chainTruncated: false, lineage: LINEAGE_E,
-            contributors: {
-              dimension: "'Product'[Category]", additive: true, truncated: true,
-              rows: [
-                { member: 'Audio', value: '520000', pct: 42.1 },
-                { member: 'Computers', value: '331000', pct: 26.8 },
-                { member: 'Cameras and camcorders', value: '214000', pct: 17.3 },
-                { member: 'TV and Video', value: '96567', pct: 7.8 },
-                { member: 'Music, Movies and Audio Books', value: '41000', pct: 3.3 },
-                { member: '(everything else, 3 more)', value: '32000', pct: 2.6 },
-              ],
-              note: "The largest parts of this number, split by 'Product'[Category]. The parts add up to the total. Other columns to try: 'Customer'[City], 'Date'[Year] (pass decomposeBy).",
-            },
+            contributors: SPLITS[splitBy] || SPLITS["'Product'[Category]"],
             blank: null,
             rls: RLS_E,
             note: "Row-level security exists on this number's tables (1 role(s)). This tool reads the model without a role, so what a secured user sees can differ.",
@@ -3168,6 +3201,10 @@
       // shapes are Semanticus.Engine/Query/DataAsk.cs. ?askdata=nodata|error picks the other outcomes.
       askData: function (params) { return window.__askDataMock.ask((params || [])[0] || {}); },
       listDataQuestions: function () { return window.__askDataMock.history(); },
+      // The Query notebook (1.6): the same rows as the history, with pinned and inNotebook flags (Semanticus.Engine/LocalEngine.Notebook.cs).
+      queryNotebook: function (params) { return window.__askDataMock.notebook((params || [])[0] || 'list', (params || [])[1] || null); },
+      recordQueryRun: function (params) { return window.__askDataMock.recordRun(params || []); },
+      noteQueryRow: function (params) { return window.__askDataMock.noteRow((params || [])[0], (params || [])[1] || {}); },
       cancelDax: { cancelled: true },
       // Offline DAX check for the <DaxField> linter + validity pill: a trivial bracket-balance so a well-formed
       // expression reads ✓ valid and an unbalanced one shows a red error squiggle (mirrors DaxValidator.cs's shape).
@@ -3962,15 +3999,68 @@
       ];
       var col = function (ref) { var m = /\[([^\]]+)\]\s*$/.exec(ref || ''); return m ? m[1] : ref; };
       var words = function (f) { return col(f.column) + ' ' + ({ is: '=', is_not: 'is not', after: 'after', from: 'from', before: 'before', up_to: 'up to' }[f.op] || '=') + ' ' + f.values.join(' or '); };
+      var keyOf = function (r) { var t = r.kind === 'dax' ? r.dax : (r.reading || r.question || r.dax); return String(t || r.id).split(/\s+/).filter(Boolean).join(' ').toLowerCase(); };
+      // A question asked again takes the place and the pin of its earlier row (the engine's DataQuestionStore.Append); recordAs updates in place.
       var record = function (ask, a, origin) {
-        list.unshift({ id: 'dq-' + Math.random().toString(16).slice(2, 14), askedAt: new Date().toISOString(), question: ask.question || null, reading: a.reading || null,
-          readBy: a.readBy || null, outcome: a.outcome, parts: a.parts || null, dax: a.dax || null, rowCount: a.rowCount || 0, origin: origin || 'human' });
+        if (mode === 'unsaved') return null;   // a model with no place on disk keeps nothing and gives no id
+        var at = new Date().toISOString();
+        var held = ask.recordAs && list.filter(function (x) { return x.id === ask.recordAs; })[0];
+        if (held) { held.askedAt = at; held.reading = a.reading || null; held.readBy = a.readBy || null; held.outcome = a.outcome; held.parts = a.parts || null; held.dax = a.dax || null; held.rowCount = a.rowCount || 0; held.dropped = a.assumption || null; held.inNotebook = true; held.headline = null; held.tookMs = null; held.coldMs = null; held.warmMs = null; return held.id; }
+        var rec = { id: 'dq-' + Math.random().toString(16).slice(2, 14), askedAt: at, kind: 'words', question: ask.question || null, reading: a.reading || null, dropped: a.assumption || null,
+          readBy: a.readBy || null, outcome: a.outcome, parts: a.parts || null, dax: a.dax || null, rowCount: a.rowCount || 0, origin: origin || 'human', inNotebook: true, pinned: false };
+        list.forEach(function (x) { if ((x.pinned || x.inNotebook) && keyOf(x) === keyOf(rec)) { rec.pinned = rec.pinned || !!x.pinned; x.pinned = false; x.inNotebook = false; } });
+        list.unshift(rec);
+        return rec.id;
       };
       window.__askDataMock = {
         calls: [],
         history: function () { return mode === 'unsaved' ? { questions: [], note: 'Save this model to keep its questions. Nothing is kept for a model with no place on disk.' } : { questions: list.slice(0, 50) }; },
-        agentAsk: function (ask) { var a = this.answer(ask); record(ask, a, 'agent'); return a; },
-        ask: function (ask) { this.calls.push(JSON.parse(JSON.stringify(ask))); var a = this.answer(ask); record(ask, a, 'human'); return a; },
+        agentAsk: function (ask) { var a = this.answer(ask); a.questionId = record(ask, a, 'agent'); return a; },
+        ask: function (ask) { this.calls.push(JSON.parse(JSON.stringify(ask))); var a = this.answer(ask); a.questionId = record(ask, a, 'human'); return a; },
+        notebook: function (action, id) {
+          if (mode === 'unsaved') return { questions: [], note: 'Save this model to keep its queries. Nothing is kept for a model with no place on disk.' };
+          var done = null, note = null, row = id && list.filter(function (x) { return x.id === id; })[0];
+          if (action !== 'list') {
+            if (!id) note = 'Say which query: pass its id from the list.';
+            else if (!row) note = 'No query has that id. Read the list for the ids.';
+            else if (action === 'pin') { row.pinned = true; row.inNotebook = true; done = 'Pinned.'; }
+            else if (action === 'unpin') { row.pinned = false; done = 'Unpinned.'; }
+            else if (action === 'close') { row.pinned = false; row.inNotebook = false; done = 'Closed. It stays in the history.'; }
+            else if (action === 'reopen') { list.forEach(function (x) { if (x.id !== id && (x.pinned || x.inNotebook) && keyOf(x) === keyOf(row)) { row.pinned = row.pinned || x.pinned; x.pinned = false; x.inNotebook = false; } }); row.inNotebook = true; done = 'Back in the notebook.'; }
+            else if (action === 'remove') { list.splice(list.indexOf(row), 1); done = 'Removed.'; }
+          }
+          return { questions: list.slice(), done: done, note: note };
+        },
+        recordRun: function (p) {
+          if (mode === 'unsaved') return null;
+          var dax = p[0], at = new Date().toISOString(), replaces = p[4];
+          var probe = { kind: 'dax', dax: dax, id: 'x' };
+          var same = list.filter(function (x) { return x.kind === 'dax' && keyOf(x) === keyOf(probe); })[0] || (replaces && list.filter(function (x) { return x.id === replaces && x.kind === 'dax'; })[0]);
+          if (same) { same.dax = dax; same.askedAt = at; same.rowCount = p[1]; same.tookMs = p[2]; same.headline = p[3] || null; same.dropped = null; same.coldMs = null; same.warmMs = null; same.inNotebook = true; return same.id; }
+          var rec = { id: 'dq-' + Math.random().toString(16).slice(2, 14), askedAt: at, kind: 'dax', dax: dax, rowCount: p[1], tookMs: p[2], headline: p[3] || null, outcome: 'answered', readBy: 'you', origin: 'human', inNotebook: true, pinned: false };
+          list.unshift(rec); return rec.id;
+        },
+        noteRow: function (id, n) {
+          var row = list.filter(function (x) { return x.id === id; })[0]; if (!row) return false;
+          ['headline', 'dropped', 'tookMs', 'coldMs', 'warmMs'].forEach(function (k) { if (n[k] != null) row[k] = n[k]; });
+          return true;
+        },
+        // The scene's own rows for the notebook (?nb=seed): older questions with their numbers, one pinned, one with a word that did not apply.
+        seed: function () {
+          var mins = function (m) { return new Date(Date.now() - m * 60000).toISOString(); };
+          list.length = 0;
+          list.push(
+            { id: 'dq-seed05', kind: 'dax', askedAt: mins(26 * 60), dax: 'EVALUATE\nSUMMARIZECOLUMNS(\'Date\'[Month], "v", [Total Sales])', rowCount: 12, tookMs: 1380, headline: '12 rows', outcome: 'answered', readBy: 'you', origin: 'human', inNotebook: true, coldMs: 1640, warmMs: 210 },
+            { id: 'dq-seed04', kind: 'words', askedAt: mins(300), question: 'sales in 2031', reading: 'Total Sales, Year is 2031', outcome: 'answered', readBy: 'jev', rowCount: 0, tookMs: 21, headline: 'No rows', origin: 'human', inNotebook: true,
+              parts: { measures: ['Total Sales'], groupBy: [], filters: [{ column: "'Date'[Year]", op: 'is', values: ['2031'] }] }, dax: 'EVALUATE ROW("Total Sales", [Total Sales])' },
+            { id: 'dq-seed03', kind: 'words', askedAt: mins(120), question: 'premium customer sales by category', reading: 'Total Sales by Category', outcome: 'answered', readBy: 'jev', rowCount: 4, tookMs: 54, headline: '4 rows', origin: 'human', inNotebook: true,
+              dropped: '"premium" is not in the model, so this is all customers.', parts: { measures: ['Total Sales'], groupBy: ["'Product'[Category]"], filters: [] }, dax: 'EVALUATE SUMMARIZECOLUMNS(\'Product\'[Category], "v", [Total Sales])' },
+            { id: 'dq-seed02', kind: 'words', askedAt: mins(60), question: 'total sales', reading: 'Total Sales', outcome: 'answered', readBy: 'you', rowCount: 1, tookMs: 38, headline: '$2.65M', origin: 'human', inNotebook: true, pinned: true,
+              parts: { measures: ['Total Sales'], groupBy: [], filters: [] }, dax: 'EVALUATE ROW("Total Sales", [Total Sales])' },
+            { id: 'dq-seed01', kind: 'words', askedAt: mins(20), question: 'margin % by region', reading: 'Margin % by Region', outcome: 'answered', readBy: 'jev', rowCount: 4, tookMs: 44, headline: '4 rows', origin: 'human', inNotebook: false,
+              parts: { measures: ['Margin %'], groupBy: ["'Customer'[Region]"], filters: [] }, dax: 'EVALUATE SUMMARIZECOLUMNS(\'Customer\'[Region], "v", [Margin %])' });
+          list.reverse();
+        },
         answer: function (ask) {
           var hasParts = (ask.measures || []).length || (ask.groupBy || []).length || (ask.filters || []).length;
           if (!hasParts && !ask.question) return { outcome: 'needs-you', unsure: ['Type a question, or choose a number to see.'], checks: [] };
@@ -4039,6 +4129,7 @@
             if (!read.measures.length) return { outcome: 'needs-you', readBy: 'jev', parts: read, unsure: ['Not sure which number you want.'], checks: [] };
             var jev = this.answer(read);
             jev.readBy = 'jev';
+            if (/premium/.test(q)) jev.assumption = '"premium" is not in the model, so this is all customers.';
             if (torn) {
               var other = JSON.parse(JSON.stringify(jev.parts)); other.measures = ['Margin'];
               jev.others = [{ line: 'Showing Total Sales. You may have meant Margin.', instead: 'Margin', reading: this.answer(other).reading, parts: other }];
@@ -4082,6 +4173,7 @@
             rows: rows, rowCount: truncated ? 500 : rows.length, truncated: truncated, elapsedMs: 38 };
         },
       };
+      if (new URLSearchParams(location.search).get('nb') === 'seed') window.__askDataMock.seed();
     })();
     window.__uishotHarness = {
       messages: HOST_MESSAGES,
@@ -4611,7 +4703,7 @@
     w = ({
       'edit history': 'history', 'bpa': 'model quality', 'best practices': 'model quality',
       'ai understanding': 'ai readiness', 'evidence': 'reports', 'results': 'reports',
-      'saved reports': 'reports', 'search': 'find and replace', 'tests': 'validation',
+      'saved reports': 'reports', 'tests': 'validation',
       'storage': 'size', 'm code': 'power query', 'change plan': 'pending changes',
       'proposed': 'pending changes', 'deploy': 'published', 'primer': 'ai instructions',
       'model notes': 'ai instructions', 'knowledge': 'ai instructions',

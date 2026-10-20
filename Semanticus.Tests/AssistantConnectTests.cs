@@ -364,6 +364,46 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public void Claude_code_update_that_fails_after_the_remove_puts_the_old_entry_back()
+        {
+            // F-291: remove worked, add failed. The person must not be left with no Semanticus entry.
+            File.WriteAllText(Path.Combine(_home, ".claude.json"),
+                "{\n  \"mcpServers\": { \"semanticus\": { \"command\": \"/old/engine\", \"args\": [\"mcp\", \"--workspace\", \"/old/ws\"] } }\n}\n");
+            var calls = new List<string>();
+            var h = Host(onPath: n => n == "claude" ? "/usr/bin/claude" : null, run: (file, args) =>
+            {
+                var line = string.Join(" ", args);
+                calls.Add(line);
+                // the new entry (this workspace) is refused; the remove and the restore of the old one go through
+                return (line.StartsWith("mcp add") && line.Contains(_ws) ? 1 : 0, line.StartsWith("mcp add") && line.Contains(_ws) ? "error: boom" : "");
+            });
+            var r = AssistantConnector.Connect("claude-code", h);
+            Assert.False(r.Ok);
+            Assert.Equal("mcp add --scope user semanticus -- /old/engine mcp --workspace /old/ws", calls.Last());
+            Assert.Contains("mcp remove --scope user semanticus", calls);
+        }
+
+        [Fact]
+        public void Verifier_F291_the_restore_of_an_old_entry_with_env_is_a_line_claude_accepts()
+        {
+            // v-trial-fixes: claude's -e is variadic, so "-e A=x semanticus -- cmd" eats the name and is refused
+            // (measured with claude 2.1.300: "Invalid environment variable format: semanticus"). The name must come before -e.
+            File.WriteAllText(Path.Combine(_home, ".claude.json"),
+                "{\n  \"mcpServers\": { \"semanticus\": { \"command\": \"/old/engine\", \"args\": [\"mcp\"], \"env\": { \"SEMANTICUS_HOME\": \"/old/home\" } } }\n}\n");
+            var calls = new List<string>();
+            var h = Host(onPath: n => n == "claude" ? "/usr/bin/claude" : null, run: (file, args) =>
+            {
+                var line = string.Join(" ", args);
+                calls.Add(line);
+                return (line.StartsWith("mcp add") && line.Contains(_ws) ? 1 : 0, "");
+            });
+            AssistantConnector.Connect("claude-code", h);
+            var restore = calls.Last();
+            Assert.Contains("SEMANTICUS_HOME=/old/home", restore);
+            Assert.True(restore.IndexOf(" semanticus ", StringComparison.Ordinal) < restore.IndexOf("-e ", StringComparison.Ordinal), restore);
+        }
+
+        [Fact]
         public void Claude_code_without_the_command_but_with_its_settings_file_edits_only_our_entry()
         {
             var file = Path.Combine(_home, ".claude.json");

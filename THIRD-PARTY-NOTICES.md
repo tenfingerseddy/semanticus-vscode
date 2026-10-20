@@ -727,6 +727,67 @@ incorporates across that repository's build. It is not reproduced here: MIT crea
 obligation, and that file is not copied into the engine payload. It is available in the package at
 `StreamJsonRpc/2.25.29/NOTICE`.
 
+## MessagePack
+
+`MessagePack` 2.5.303 is the binary serializer StreamJsonRpc uses for its framing. It was a transitive dependency of
+`StreamJsonRpc` at 2.5.302 and is now pinned directly at 2.5.303 for one security advisory (GHSA-qhrr-8q5h-9q3h).
+`Semanticus.Engine` references it and `MessagePack.dll` ships in the engine payload under MIT, so the permission notice
+travels with it.
+
+- Path: `MessagePack`
+- License: **MIT**
+- Author: Yoshifumi Kawai and contributors
+- Version: **2.5.303**
+- Source: <https://github.com/MessagePack-CSharp/MessagePack-CSharp>
+
+The package carries no licence file of its own. Read from `LICENSE` at commit `7fd78bbf3476e03beae8b0f7a521125525a8a64a`, the
+commit recorded in the `<repository>` element of the shipped `messagepack.nuspec`. That file also holds the BSD 2-Clause
+notice for `lz4net`, which MessagePack's LZ4 code is derived from, so both are reproduced. Reproduced verbatim:
+
+```
+MessagePack for C#
+
+MIT License
+
+Copyright (c) 2017 Yoshifumi Kawai and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+lz4net
+
+BSD 2-Clause "Simplified" License
+
+Copyright (c) 2013-2017, Milosz Krajewski
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+
+Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 ## Azure.Identity
 
 `Azure.Identity` 1.13.1 supplies the Microsoft Entra token credentials used to authenticate XMLA

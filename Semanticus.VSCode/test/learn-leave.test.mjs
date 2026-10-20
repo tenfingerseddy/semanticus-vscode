@@ -20,19 +20,34 @@ Module._load = function (request, ...rest) {
   return realLoad.call(this, request, ...rest);
 };
 const { createLearn } = require(join(root, 'out', 'learnHost.js'));
+const { isScratchCopyPath } = require(join(root, 'out', 'learn.js'));
 
-function rig() {
+// Nothing offers the demo's internal folder as a person's own model or folder (1.6, v2-fix-r2-start).
+test('a path inside a tour demo copy is known as one, and nothing else is', () => {
+  const store = join('home', 'k', 'globalStorage', 'semanticus-vscode.semanticus-vscode');
+  assert.equal(isScratchCopyPath(join(store, 'learn', 'plan-20261018-063000')), true);
+  assert.equal(isScratchCopyPath(join(store, 'learn', 'ask-20261018-063000-2', 'tables', 'Sales.tmdl')), true, 'a file inside it too');
+  assert.equal(isScratchCopyPath('C:\\Users\\k\\globalStorage\\x\\learn\\edit-20261018-063000'), true, 'a Windows path');
+  assert.equal(isScratchCopyPath(join('work', 'models', 'Contoso.bim')), false);
+  assert.equal(isScratchCopyPath(join('work', 'learn', 'my-notes')), false, 'a folder called learn that the tour did not make');
+  assert.equal(isScratchCopyPath(undefined), false);
+});
+
+// `modelOpen` false: the tour opens its demo, and Leave brings back what was remembered. True: the person's own model is open, and the
+// tour is about THAT model (fix-uat-first-start, F6): the demo never opens and Leave leaves the model exactly as it was.
+function rig(modelOpen = false) {
   const storageDir = mkdtempSync(join(tmpdir(), 'lrn-'));
-  const state = { open: 'sales', restored: [], forgotten: 0, posted: [] };
+  const state = { open: modelOpen ? 'sales' : undefined, restored: [], forgotten: 0, posted: [], opened: 0, readyMessages: [] };
   const learn = createLearn({
     assetsDir: join(root, 'assets'),
     storageDir,
-    open: async () => { state.open = 'demo-1'; return { modelName: 'Contoso Shop', sessionId: 'demo-1' }; },
+    open: async () => { state.opened++; state.open = 'demo-1'; return { modelName: 'Contoso Shop', sessionId: 'demo-1' }; },
+    currentModelName: () => (state.open === 'sales' ? 'Sales' : undefined),
     remembered: () => ({ kind: 'file', path: '/home/me/Sales.bim' }),
     restore: async (previous) => { state.restored.push({ previous, whileOpen: state.open }); state.open = 'sales'; },
     forget: () => { state.forgotten++; },
     currentSessionId: () => state.open,
-    postToStudio: async (message) => { state.posted.push(message.type); },
+    postToStudio: async (message) => { state.posted.push(message.type); if (message.type === 'learnReady') state.readyMessages.push(message); },
     log: () => {},
   });
   return { learn, state, done: () => rmSync(storageDir, { recursive: true, force: true }) };
@@ -95,5 +110,22 @@ test('a model that opens while a chapter is starting does not end the tour', asy
     release();
     await running;
     assert.deepEqual(state.posted, ['learnReady']);
+  } finally { done(); }
+});
+
+test('with the person\'s model open the tour never opens the demo, and Leave leaves the model as it was', async () => {
+  const { learn, state, done } = rig(true);
+  try {
+    await learn.start('plan');
+    assert.equal(state.opened, 0, 'the demo was opened over the person\'s model');
+    assert.equal(state.open, 'sales');
+    assert.deepEqual(state.readyMessages.map((m) => [m.sessionId, m.own, m.modelName]), [['sales', true, 'Sales']], 'the tour is about the open model');
+    await learn.start('ask');   // the next chapter keeps touring the same model
+    assert.equal(state.opened, 0);
+    await learn.end();
+    assert.deepEqual(state.restored, [], 'Leave reopened (and so discarded) the person\'s model');
+    assert.equal(state.forgotten, 0);
+    assert.equal(state.open, 'sales');
+    assert.ok(state.posted.includes('learnEnded'));
   } finally { done(); }
 });

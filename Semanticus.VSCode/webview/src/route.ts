@@ -8,9 +8,9 @@ export type Area = 'plan' | 'explore' | 'edit' | 'review' | 'publish' | 'workflo
 export type Destination = Area | 'utility';
 export type ToolId =
   | 'plan' | 'optimize' | 'spec'
-  | 'data' | 'askdata' | 'diagram' | 'lineage' | 'stats'
-  | 'search' | 'daxlab' | 'knowledge' | 'instructions' | 'advmodels' | 'mcode'
-  | 'bpa' | 'readiness' | 'tests' | 'docs' | 'evidence'
+  | 'data' | 'query' | 'diagram' | 'lineage' | 'stats'
+  | 'knowledge' | 'instructions' | 'advmodels' | 'mcode'
+  | 'bpa' | 'readiness' | 'copilottest' | 'tests' | 'docs' | 'evidence'
   | 'deploy' | 'compare' | 'dataagent' | 'permissions' | 'workflows' | 'pro';
 
 export type ObjectRef =
@@ -23,12 +23,12 @@ export type ObjectRef =
 // A seed records an explicit hand-off, not ambient selection. Views acknowledge one-use seeds after adopting them so
 // returning through area memory or Back cannot replay an old request over work the person has since changed.
 export type Seed = {
-  kind: 'query' | 'test' | 'search' | 'publish' | 'rescan' | 'addTables' | 'approval' | 'workflow' | 'workflowRuns' | 'advanced'
+  kind: 'query' | 'test' | 'publish' | 'rescan' | 'addTables' | 'approval' | 'workflow' | 'workflowRuns' | 'advanced'
     // A composer draft handed to Author (Edit in Workflows, Make it reusable; lanes U5 and W2): the value is its dr- id.
     | 'draft'
-    // Open in Queries from Ask your data (26 Sep): the value is the DAX text the engine built, adopted once.
+    // Open the Query page on a DAX text (an old Open in Queries jump, a plan row): the value is the DAX, adopted once.
     | 'daxText'
-    // Open Ask your data from the Plan's field: the value is what the person typed, adopted once into the
+    // Open Query from the Plan's field: the value is what the person typed, adopted once into the
     // question box so the page opens on their words instead of empty (fix-askdata-r6).
     | 'askWords'
     // The new model wizard's SQL step, asked for by SQL_DRAFT_TARGET below. One use: the draft panel says when it took it.
@@ -55,18 +55,18 @@ export const DESTINATION_OF_TOOL: Record<ToolId, Destination> = {
   // Model Spec and Pending changes are not pages of their own any more: they are the two other ways of
   // looking at the one living plan, so they sit in its area (Kane, 22 September 2026).
   plan: 'plan', optimize: 'plan', spec: 'plan',
-  data: 'explore', askdata: 'explore', diagram: 'explore', lineage: 'explore', stats: 'explore',
-  search: 'edit', daxlab: 'edit', knowledge: 'edit', instructions: 'edit', advmodels: 'edit', mcode: 'edit',
+  data: 'explore', query: 'explore', diagram: 'explore', lineage: 'explore', stats: 'explore',
+  knowledge: 'edit', instructions: 'edit', advmodels: 'edit', mcode: 'edit',
   // `evidence` keeps its id so old links and saved state still resolve, but it is no longer a place of its
   // own: it opens Validation on its Reports tab. Its area is therefore Validation's area.
-  bpa: 'review', readiness: 'review', tests: 'review', docs: 'review', evidence: 'review',
+  bpa: 'review', readiness: 'review', copilottest: 'review', tests: 'review', docs: 'review', evidence: 'review',
   deploy: 'publish', compare: 'publish', dataagent: 'publish',
   // The Semanticus Pro page is a detour like Assistant permissions: no area of its own, and Done returns you.
   permissions: 'utility', pro: 'utility', workflows: 'workflows',
 };
 
 export const AREA_HOME: Record<Area, ToolId> = {
-  plan: 'plan', explore: 'data', edit: 'search',
+  plan: 'plan', explore: 'data', edit: 'instructions',
   review: 'bpa', publish: 'deploy', workflows: 'workflows',
 };
 
@@ -94,6 +94,13 @@ const RETIRED_TOOLS: Record<string, Landing> = {
   overview: { tool: 'plan' },
   history: { tool: 'plan', view: 'history' },
   compare: { tool: 'deploy' },
+  // Find and replace left the Studio (1.5.1): an old link or saved page lands on the Edit area's home. The assistant still has
+  // search_model, propose_replace and replace_in_object, and VS Code search works over the saved TMDL and DAX files.
+  search: { tool: 'instructions' },
+  // Ask your data and Queries became one page, Explore > Query (1.6, Kane 15 Oct). Every old link, saved page, keybinding, place and
+  // assistant jump lands on it.
+  askdata: { tool: 'query' },
+  daxlab: { tool: 'query' },
 };
 
 /** The one table every navigation goes through. Null only for an id Studio never answered to, which the shell

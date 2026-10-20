@@ -295,6 +295,38 @@ namespace Semanticus.Tests
             finally { try { Directory.Delete(dir, true); } catch { } }
         }
 
+        [Fact]
+        public async Task A_record_the_model_carries_from_a_session_this_machine_never_saw_is_not_called_you()
+        {
+            // The verified record travels with the MODEL: a model opened from the service carries what other people and runs did (UAT P12).
+            var dir = Path.Combine(Path.GetTempPath(), "sem-plangaps-earlier-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var model = LedgerFixture.Write(dir, "model.bim");
+                var sessions = new SessionManager();
+                using (var engine = new LocalEngine(sessions, TestEntitlements.Pro))
+                {
+                    await engine.OpenAsync(model);
+                    await sessions.Current.MutateAsync("human", "record", m => VerifiedEditsStore.Append(m, new VerifiedEditRecord
+                    {
+                        SessionId = "s-someone-else", Revision = 0, Origin = "human", Op = "deploy_live", ObjectRef = "measure:Sales/M1",
+                        Verdict = "overridden", Summary = "Published with a red check.", OverrideReason = "Approved.",
+                    }));
+                    await sessions.Current.MutateAsync("human", "record", m => VerifiedEditsStore.Append(m, new VerifiedEditRecord
+                    {
+                        SessionId = sessions.Current.Id, Revision = 0, Origin = "human", Op = "explain_value", ObjectRef = "measure:Sales/M1",
+                        Verdict = "explained", Summary = "Explained the value.",
+                    }));
+                    var rows = (await engine.GetPlanHistoryAsync()).Rows;
+                    Assert.Equal(ChangeBy.Earlier, Assert.Single(rows, r => r.Kind == "record" && r.Record.Op == "deploy_live").By);
+                    Assert.Equal(ChangeBy.You, Assert.Single(rows, r => r.Kind == "record" && r.Record.Op == "explain_value").By);
+                    await sessions.Ledger.FlushAsync();
+                }
+            }
+            finally { try { Directory.Delete(dir, true); } catch { } }
+        }
+
         private static string Git(string dir, params string[] args)
         {
             var psi = new ProcessStartInfo("git") { WorkingDirectory = dir, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };

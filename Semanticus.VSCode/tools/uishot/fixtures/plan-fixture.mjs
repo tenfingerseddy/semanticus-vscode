@@ -1378,7 +1378,7 @@ const ASK_ANSWERS = [
     // Calculations area) and the thing itself; the page turns that into the command and runs it.
     match: ['create a measure', 'add a new measure', 'create a kpi'],
     result: {
-      tool: 'daxlab', area: 'calc', confidence: 1, confidenceBar: ASK_BAR, asked: false,
+      tool: 'query', area: 'explore', confidence: 1, confidenceBar: ASK_BAR, asked: false,
       create: 'measure',
     },
   },

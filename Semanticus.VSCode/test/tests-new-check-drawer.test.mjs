@@ -54,13 +54,13 @@ assert.match(authoring, /sqlSourceId/, 'the check references its source by stabl
 assert.match(authoring, /A blank in the model means/, 'the blank meaning stays a visible choice with no default');
 assert.match(authoring, /Which groups to compare/, 'grouping is visible: without it a check can never do better than could not check');
 assert.match(authoring, /Your SQL must use the same filter as the check/, 'the one line that stops two different questions being compared');
-assert.match(authoring, /limitedEvidenceNote\(/, 'a total-only comparison says it proves very little');
+assert.match(authoring, /limitedEvidenceNote\(/, 'a total-only comparison says what it leaves out');
 assert.doesNotMatch(authoring, /Source SQL endpoint saved with this check/, 'endpoints are no longer typed per check');
 assert.doesNotMatch(authoring, /Use the detected endpoint/, 'the per-check endpoint override is replaced by a named source');
 assert.doesNotMatch(authoring, /reviewReconcileMapping/, 'the drawer no longer detects an endpoint it cannot save anywhere shared');
 
 // ---------------------------------------------------------------------------------------------------
-// 7. Table row count shows the table and its mapping fields, and is the SAME thing as Map source.
+// 7. Table row count shows the table and its mapping fields, and is the SAME thing as Choose source.
 // ---------------------------------------------------------------------------------------------------
 assert.match(authoring, /function TableRowCountForm\(/, 'the third kind has its own form');
 assert.match(authoring, /Which table/, 'it starts with the model table');
@@ -96,9 +96,39 @@ assert.match(testsSource, /stopRowToggle/, 'a row action stops the row toggling 
 // empty state, so its first load looked like a source appearing while the hub was open and one saved source
 // replaced an existing check's binding. The comparison is now against a baseline captured when Add is
 // INVOKED. sourceAddedSinceAdd and sqlSourceBinding are run, not matched, in tests-fixes.test.mjs.
-assert.match(authoring, /sourceAddedSinceAdd\(baseline, latestSources\.map/, 'the drawer decides whether a new source is unambiguous');
-assert.match(authoring, /addBaseline\.current = sources\.map\(\(s\) => s\.id\)/, 'and only against the list as it was when Add was chosen');
-assert.match(authoring, /if \(adopt\) setPicked\(adopt\)/, 'an unambiguous one is selected for the person');
-assert.doesNotMatch(authoring, /onAddSqlSource\?\.\(\);[\s\S]{0,60}onClose/, 'adding a source must never close the drawer');
+// CHANGED 17 Oct 2026 (UAT 1.5.104): the drawer owns adding a source. A small form inside it saves the source and the picker adopts
+// exactly that one, so there is no baseline to compare and no trip to Connections. Query opens this drawer with no handler at all.
+assert.match(authoring, /import \{ SqlSourceAddForm, type AddedSource \} from '\.\/tests-addsource';/, 'the add form is part of the drawer');
+assert.match(authoring, /const sourceAdded = \(added: AddedSource, keepOpen: boolean, connected\?: string\) =>/, 'the drawer learns which source was added');
+assert.match(authoring, /setAdopt\(added\.id\)/, 'and the picker chooses exactly that one for the person');
+assert.match(authoring, /if \(adopt\) setPicked\(adopt\)/, 'the check form takes it');
+assert.doesNotMatch(authoring, /onAddSqlSource\?\.\(\)/, 'no handler is needed from outside: a drawer opened from Query adds a source too');
+assert.doesNotMatch(authoring, /<option value=\{ADD\}>|const ADD = /, 'adding is a button, never an item in the list, so moving over the list opens nothing');
+assert.match(authoring, /data-testid="check-add-source-open"/, 'the button under the list');
+
+// UAT 1.5.104 (17 Oct): the check form. Each line is a thing a person met: a result off screen, a form that moved while they typed, a
+// blank rule with no default, a box cut off at the edge, a SQL box that started empty, a source nobody chose.
+assert.match(authoring, /data-testid="author-result"/, 'the answer to Try it now sits under the buttons, outside the scrolling form');
+assert.doesNotMatch(authoring, /\{err && <div className="mb-3 rounded border/, 'and no longer at the top of a long form where it was off screen');
+assert.match(authoring, /data-testid="draft-row"/, 'the draft row exists even with no draft');
+assert.doesNotMatch(authoring, /function draftRow\([^)]*\) \{\s*if \(!show\) return null;/, 'the draft row keeps its height, so the form never moves under the cursor');
+assert.match(authoring, /blankPolicy: p\.blankPolicy \|\| 'zero'/, 'a blank counts as zero until the person says otherwise (a stated default)');
+assert.doesNotMatch(authoring, /There is no sensible default/, 'no "pick one, there is no default" wall');
+assert.match(authoring, /placeholder="Value" className="min-h-7 min-w-0 flex-1/, 'the Value box can shrink, so the form never scrolls sideways');
+assert.match(authoring, /defaultSqlSourceId\(linkedSourceId, sources\)/, 'a new check starts on the model\'s own source');
+assert.match(authoring, /guessSumSql\(measureExpression, mappings \?\? \[\], sqlSourceId, groupBy, links\)/, 'and a plain SUM starts the SQL as a guess');
+assert.match(authoring, /const sqlSourceId = pickedSourceId \|\| \(modelTable \? defaultSqlSourceId\(linkedSourceId, sources\) : ''\);/, 'a table row count starts on the model\'s own source too, shown and not stored');
+assert.match(authoring, /title: sqlTitleFor\(measureRef, groupBy\)/, 'a grouped check says its groups in its title, so the total and the one by Brand are not twins');
+assert.match(authoring, /\$\{name\}\$\{groups\.length \? ' by ' \+ groups\.join\(' and '\) : ''\} ties to source SQL/, 'Net Sales by Brand ties to source SQL');
+assert.match(authoring, /onSourcesChanged\?\.\(\);/, 'adding a source asks the page to read its sources again');
+assert.doesNotMatch(authoring.slice(authoring.indexOf('const sourceAdded')), /^[\s\S]{0,700}announceTestSuiteChanged\(\)/, 'and never says a check changed, because none did');
+assert.match(authoring, /className="sticky -bottom-3 z-10 -mx-4 -mb-3 mt-3 flex flex-wrap items-center gap-2 px-4 pb-3 pt-2"/, 'Try it now and Save stay in reach at the bottom of the form, and cover the form padding so no chip shows under them (round 2 N10)');
+assert.match(authoring, /saveLabel="Save check"/, 'the row count form saves a check, not a source (round 2 N28)');
+assert.doesNotMatch(authoring, /saveLabel="Save source"/, 'no Save source button');
+assert.match(readFileSync(resolve(root, 'webview/src/tests-addsource.tsx'), 'utf8'), /connectedLine\(added\.name\)/, 'Save and check says it connected (round 2 N29)');
+assert.match(authoring, /setTryNote\(connected \?\? null\)/, 'and the drawer shows that line after the form closes');
+assert.match(authoring, /expectedShown = typedExpected \? expected : shownNumber\(expected, formatString\)/, 'a handed-over ratio is shown in the measure\'s format (round 2 N11)');
+assert.match(authoring, /distinctTitle\(/, 'a new check takes a name no saved check has (round 2 N15)');
+assert.match(authoring, /rpc<[^>]*>\('getModelGraph'\)/, 'the SQL guess reads the model links to join the groups');
 
 console.log('New check drawer contract passed');

@@ -30,6 +30,14 @@ export function scratchPath(globalStorage: string, chapter: LearnChapter, now: D
     return path.join(globalStorage, 'learn', scratchName(chapter, now));
 }
 
+/** True for a path inside a tour's demo copy (<globalStorage>/learn/<chapter>-<stamp>/...). The demo is throwaway: nothing offers it as a person's own model or folder. */
+export function isScratchCopyPath(p: unknown): boolean {
+    if (typeof p !== 'string' || p.length === 0) return false;
+    const parts = p.split(/[\\/]+/);
+    for (let i = 0; i + 1 < parts.length; i++) if (parts[i] === 'learn' && COPY_NAME.test(parts[i + 1])) return true;
+    return false;
+}
+
 /** The copies old enough to delete: made here (by name), and last changed more than seven days before `nowMs`. */
 export function staleCopies(entries: { name: string; mtimeMs: number }[], nowMs: number): string[] {
     return entries.filter((e) => COPY_NAME.test(e.name) && nowMs - e.mtimeMs > LEARN_KEEP_DAYS * DAY_MS).map((e) => e.name);

@@ -53,5 +53,7 @@ const page = readFileSync(resolve(root, 'webview/src/tests.tsx'), 'utf8');
 assert.match(page, /rpcPressed<TestRunW>\('runTests', options\.persist \?\? false, 'human', options\.only \?\? null, options\.sections \?\? null, runId\)/, 'the page names its own run');
 assert.match(page, /onProgress\(\(event\) => setProgress\(\(current\) => foldRunProgress\(current, event, ownRunId\.current\)\)\)/, 'progress events fold through the model');
 assert.match(page, /ownRunId\.current = null; setProgress\(null\); setBusy\(false\)/, 'a finished run clears the count');
-assert.match(page, /<StatusLine run=\{run\} busy=\{busy \|\| assistantRun\.phase === 'running'\} progress=\{progress\}/, 'the status line shows it, and shows the assistant\'s run as busy too');
+assert.match(page, /const running = busy \|\| assistantRun\.phase === 'running';/, 'the page counts the assistant\'s run as busy too');
+assert.match(page, /run=\{run\} running=\{running\} progress=\{progress\}/, 'the board shows the count in place of the verdict line');
+assert.match(page, /running\s*\? <RunProgressLine progress=\{progress\} \/>/, 'the verdict line shows it while a run goes');
 console.log('tests-progress: ok');

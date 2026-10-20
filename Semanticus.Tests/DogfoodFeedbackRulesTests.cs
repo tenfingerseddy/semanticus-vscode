@@ -265,6 +265,7 @@ namespace Semanticus.Tests
             [("list_report_scope", "delete_if_unused")] = "a plan item kind",
             [("unused_objects", "delete_if_unused")] = "a plan item kind (the reviewed route that removes a visible attribute)",
             [("check_workflow", "bpa_clean")] = "a workflow verify kind",
+            [("add_interview_question", "interview_replay")] = "a workflow verify kind",
             [("cicd_generate", "publish_all_items")] = "the fabric-cicd library function the scaffold calls",
             [("cicd_generate", "replace_value")] = "a fabric-cicd parameter.yml key",
             [("publish_data_agent", "publish_info")] = "a field of the Fabric data agent definition",

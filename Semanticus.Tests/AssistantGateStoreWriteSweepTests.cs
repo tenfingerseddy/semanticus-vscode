@@ -78,6 +78,10 @@ namespace Semanticus.Tests
                 ParamsJson = TestSuiteStore.Serialize(new ReconcileRequest { MeasureRef = "measure:Sales/Total", Sql = "SELECT 1", BlankPolicy = "zero" }),
             }, "human")).Id;
             rig.QuestionId = (await engine.AddInterviewQuestionAsync("What is the total?", "value", "EVALUATE ROW(\"v\", 1)", null, null, null, null, "1", null, false, null, "user", "project", "human", null)).Id;
+            // The Copilot test rows run DAX to prove and grade, so this rig's engine answers every query with the number 2 and holds one bank question.
+            engine.CopilotDaxForTest = _ => Task.FromResult(new ResultSet { Rows = new[] { new object[] { 2.0 } }, RowCount = 1 });
+            await engine.AddInterviewQuestionsAsync(new[] { new CopilotQuestionIn { Question = "Rows in Sales, from the bank", Kind = "totals", ReferenceDax = "EVALUATE ROW(\"v\", 2)" } }, "human");
+            await engine.RunInterviewBatchAsync(null, null, null, new[] { new CopilotAnswerIn { N = 1, Dax = "EVALUATE ROW(\"v\", 2)" } }, null, "human");   // a first round, so the file the batch row appends to already exists
             await engine.SetSpecAsync("{\"name\":\"S\",\"tables\":[],\"relationships\":[],\"measures\":[],\"timeIntelligence\":[]}", "human");
             var line = (await engine.AddPlanItemAsync("measure:Sales/Total", "set_description", "reviewed words", null, null, null, "human")).Items.Single().Id;
             await engine.SetPlanItemAsync(line, null, true, "human");
@@ -154,6 +158,8 @@ namespace Semanticus.Tests
         private static Dictionary<string, Func<Rig, Dictionary<string, object>>> Recipes() => new(StringComparer.Ordinal)
         {
             ["AddInsightAsync"] = r => R("text", "Another note about the model", "keys", new[] { "table:Sales" }, "kind", "fact", "scope", "project", "fingerprintScoped", false),
+            ["AddInterviewQuestionsAsync"] = r => R("items", new[] { new CopilotQuestionIn { Question = "How many rows are in Sales?", Kind = "totals", ReferenceDax = "EVALUATE ROW(\"v\", 2)" } }),
+            ["RunInterviewBatchAsync"] = r => R("answers", new[] { new CopilotAnswerIn { N = 1, Dax = "EVALUATE ROW(\"v\", 2)" } }),
             ["AddInterviewQuestionAsync"] = r => R("question", "How many rows?", "tier", "value", "query", "EVALUATE ROW(\"v\", 2)", "expectedValue", "2", "expectRefusal", false, "seedSource", "user", "scope", "project"),
             ["ApplyDaxScriptAsync"] = r => R("script", r.DaxScript),
             ["ApplyFixAsync"] = r => R("ruleId", "FMT-SUMMARIZE", "objRef", "column:Sales/ProductId"),

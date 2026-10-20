@@ -62,6 +62,11 @@ assert.deepEqual(R.landingOf('modelhome'), { tool: 'plan' }, 'the Overview lands
 assert.deepEqual(R.landingOf('overview'), { tool: 'plan' }, 'so does its area word used as a tool');
 assert.deepEqual(R.landingOf('history'), { tool: 'plan', view: 'history' }, 'Edit History lands on the Plan, on its History view');
 assert.deepEqual(R.landingOf('compare'), { tool: 'deploy' }, 'Compare stays an alias for Published');
+// Ask your data and Queries became one page, Explore > Query (1.6). Both old ids still land, on the one page.
+assert.deepEqual(R.landingOf('askdata'), { tool: 'query' }, 'Ask your data lands on Query');
+assert.deepEqual(R.landingOf('daxlab'), { tool: 'query' }, 'Queries lands on Query');
+assert.ok(tools.has('query') && !tools.has('askdata') && !tools.has('daxlab'), 'Query is a tool of its own; the two old ids are not');
+assert.equal(R.DESTINATION_OF_TOOL.query, 'explore', 'Query lives in Explore');
 assert.equal(R.landingOf('nonsense'), null, 'an id nobody ever used is still refused, not guessed at');
 assert.equal(R.landingOf(''), null);
 
@@ -96,7 +101,8 @@ assert.ok(hostTabs.length > 15, `the host's tool names were found (${hostTabs.le
 for (const t of hostTabs) assert.ok(R.landingOf(t), `the host sends "${t}", which lands nowhere`);
 const hostAreas = [...(extension.match(/const groups: Array<vscode\.QuickPickItem & \{ key: string \}> = \[[\s\S]*?\];/) || [''])[0]
   .matchAll(/key: '([a-z]+)'/g)].map((m) => m[1]);
-assert.deepEqual(hostAreas, [...areas], 'Go to Studio Area offers the six areas');
+// Workflows has no way in (e86f859f): its route still lands old links, but Go to Studio Area no longer offers it.
+assert.deepEqual(hostAreas, [...areas].filter((a) => a !== 'workflows'), 'Go to Studio Area offers the five areas that have a way in');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 for (const b of pkg.contributes.keybindings.filter((x) => x.command === 'semanticus.studioGoGroup')) {
   assert.ok(areas.has(R.AREA_ALIASES[b.args]), `the key ${b.key} sends "${b.args}", which lands on no area`);
@@ -125,5 +131,18 @@ const askLabels = [...(src('askbox.tsx').match(/export const ASK_TOOL_LABEL: Rec
 assert.ok(askLabels.length > 15, `the ask box's places were found (${askLabels.length})`);
 for (const id of askLabels) assert.ok(R.landingOf(id), `the ask box offers "${id}", which lands nowhere`);
 assert.ok(!askLabels.includes('modelhome'), 'the ask box no longer offers the Overview');
+
+// The Studio's place map and press map (embedded in the engine) name pages too. Every place lands, and none names a retired page.
+const placeFile = JSON.parse(readFileSync(join(webview, 'src', 'studio', 'places.json'), 'utf8'));
+for (const place of placeFile.places) {
+  if (place.tool === 'connections' || place.tool === 'help') continue;   // not Studio tabs; notes-nav handles them
+  assert.ok(R.landingOf(place.tool), `the place "${place.id}" names "${place.tool}", which lands nowhere`);
+  assert.ok(!['askdata', 'daxlab'].includes(place.tool), `the place "${place.id}" names "${place.tool}", a page that became Query`);
+}
+for (const id of ['explore/ask', 'edit/queries']) {
+  assert.equal(placeFile.places.find((p) => p.id === id)?.tool, 'query', `${id} opens the Query page`);
+}
+const pressFile = JSON.parse(readFileSync(join(webview, 'src', 'studio', 'presses.json'), 'utf8'));
+assert.doesNotMatch(JSON.stringify(pressFile), /askdata-|daxlab-/, 'no press looks for a control on a retired page');
 
 console.log('retired routes: every old tab id, area word and route lands');

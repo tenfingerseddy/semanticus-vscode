@@ -53,7 +53,7 @@ id = "c36e4692c7394434ba7aa0b687e3d3b1"
 # fails if it stops matching the engine.
 RELAY_PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4UzdpLYvBWYfMnPiArcoCmJ7H1V6pV4nOf9jJmZRu31j1gf5B9LXHKCXmBFQL7lJxINjweMi8inaqLFr6du1aQ=="
 # The served model, pinned. The caller never chooses it.
-RELAY_MODEL = "jev-latest"
+RELAY_MODEL = "jev-1.14.0"
 RELAY_UPSTREAM = "https://api.typesafe.ai/v1/systemone"
 # The house-wide cap is the per-licence cap (RELAY_LICENCE_TOKENS below) times this count. Start it at the
 # real number of paying licences, not an aspiration: it is the blast radius of a bug or a stolen token.

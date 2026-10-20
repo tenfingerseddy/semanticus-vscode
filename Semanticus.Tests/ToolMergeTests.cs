@@ -271,8 +271,11 @@ namespace Semanticus.Tests
             // 396 = 395 plus resolve_file_recovery from studio-polish (11 Oct 2026).
             // 398 = 396 plus get_next_step and set_next_step from the Next line lane (1.5, 11 Oct 2026).
             // 399 = 398 plus get_trial_tally from the free Pro month lane (1.5).
+            // 405 = 402 plus get_personality_settings, set_personality_settings and start_trial from the trial-fixes lane (1.5.1, F-292 and F-293).
             // 400 = 399 plus connect_assistant from the connect-any lane (1.5, 12 Oct 2026).
-            Assert.Equal(402, tools.Length);
+            // 412 = 411 plus query_notebook (the Query notebook, lane m16/query-c, 16 Oct).
+            // 411 = 410 plus pick_check_visuals (Jev picks each check's visual on Validation, 1.6).
+            Assert.Equal(412, tools.Length);
             foreach (var old in RetiredTools)
             {
                 Assert.DoesNotContain(old, tools);

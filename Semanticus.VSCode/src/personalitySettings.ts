@@ -33,6 +33,29 @@ export async function writePersonalitySetting(msg: { key?: unknown; value?: unkn
     await vscode.workspace.getConfiguration('semanticus').update(key, value, vscode.ConfigurationTarget.Global);
 }
 
+/** What the engine is told about the settings (F-292): personality, sounds and volume, in the order reportHostSettings takes them. */
+export function personalityReport(): [string, boolean, number] {
+    const s = readPersonalitySettings();
+    return [s.personality, s.sounds, s.soundVolume];
+}
+
+/** The assistant set some of them (set_personality_settings, host/settings): write each through the same path as the page's switch. */
+export async function applyHostPersonality(v: { personality?: unknown; sounds?: unknown; soundVolume?: unknown } | undefined): Promise<void> {
+    if (!v) return;
+    const now = readPersonalitySettings();
+    if (v.personality !== undefined && v.personality !== now.personality) await writePersonalitySetting({ key: 'personality', value: v.personality });
+    if (v.sounds !== undefined && v.sounds !== now.sounds) await writePersonalitySetting({ key: 'sounds', value: v.sounds });
+    if (v.soundVolume !== undefined && v.soundVolume !== now.soundVolume) await writePersonalitySetting({ key: 'soundVolume', value: v.soundVolume });
+}
+
+/** Call `report` now and whenever one of the three settings changes, so the engine can answer get_personality_settings. */
+export function watchPersonalityForEngine(report: () => void): vscode.Disposable {
+    report();
+    return vscode.workspace.onDidChangeConfiguration((e) => {
+        if (KEYS.some((k) => e.affectsConfiguration(`semanticus.${k}`))) report();
+    });
+}
+
 /** Post the settings to this panel now, and again whenever one of them changes, until the panel closes. Once per panel. */
 const attached = new WeakSet<vscode.WebviewPanel>();
 export function attachPersonalitySettings(panel: vscode.WebviewPanel): void {

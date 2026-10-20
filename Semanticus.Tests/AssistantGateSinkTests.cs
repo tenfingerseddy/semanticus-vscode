@@ -525,7 +525,8 @@ namespace Semanticus.Tests
             {
                 var (askedOff, _, _, _, _) = await TripwireAsync("outside-off");
                 var guarded = MethodsThatCallTheChokepoint();
-                var stillAsked = guarded.Where(g => askedOff.Contains(g, StringComparer.Ordinal)).ToArray();
+                // SaveSqlSourceAsync has a second gate of its own (a host not saved yet asks in every preset, SqlHostAskTests), so it still asks here.
+                var stillAsked = guarded.Where(g => g != nameof(LocalEngine.SaveSqlSourceAsync) && askedOff.Contains(g, StringComparer.Ordinal)).ToArray();
                 Assert.True(stillAsked.Length == 0, "these asked with the chokepoint off, so the case does not test it: " + string.Join(", ", stillAsked));
                 Assert.True(askedOn.Count - askedOff.Count >= guarded.Length - 5, "switching the chokepoint off changed too little: " + askedOn.Count + " asked on, " + askedOff.Count + " off");
             }
@@ -581,7 +582,7 @@ namespace Semanticus.Tests
 
                 // below Locked the matrix is today's: nothing is asked
                 AgentPolicyStore.SetPreset("standard", "human");
-                await gate.SaveSqlSourceAsync(null, "Second", "srv2", "db2", "azcli", null, "agent");
+                await gate.SaveSqlSourceAsync(null, "Second", "srv", "db2", "azcli", null, "agent");   // a host already saved: a new host asks in every preset (SqlHostAskTests)
                 Assert.False(await gate.ForgetConnectionAsync("nothing", "agent"));
                 Assert.Empty(await engine.ListPendingApprovalsAsync());
                 // and the person is never asked

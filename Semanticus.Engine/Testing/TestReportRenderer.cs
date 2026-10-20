@@ -22,6 +22,7 @@ namespace Semanticus.Engine
             b.AppendLine("- Environment: " + Text(run.Environment, run.Live ? "Not recorded" : "Offline"));
             b.AppendLine("- Run: " + Text(run.When, "Not recorded"));
             b.AppendLine("- Duration: " + run.DurationMs.ToString(CultureInfo.InvariantCulture) + " ms");
+            b.AppendLine("- Checks: " + CheckTally.Of(run).Words() + ".");
             b.AppendLine("- Run mode: " + (run.Live
                 ? "Live. Data-backed probes were available."
                 : "Offline. Live-only probes and reconciliations could not be verified."));
@@ -98,6 +99,8 @@ namespace Semanticus.Engine
         {
             if (run == null) throw new ArgumentNullException(nameof(run));
             var h = run.Health;
+            var tally = CheckTally.Of(run);
+            var seen = tally.Ran > 0;
             var doc = new SemEvidence.EvidenceDoc
             {
                 Id = string.IsNullOrWhiteSpace(run.RunId)
@@ -112,18 +115,21 @@ namespace Semanticus.Engine
                 ModelName = run.ModelName,
                 ModelFingerprint = run.ModelFingerprint,
                 Verdict = OverallVerdict(h),
+                // The checks the person sees on the Validation page, in the same unit as the page and the assistant's note. The probes
+                // inside each check (and the comparisons inside a probe) stay in that check's detail below. A run that kept no itemised
+                // check (only a health record) has nothing to count in that unit, so it keeps the health counts rather than show zeros.
                 Coverage = new SemEvidence.Coverage
                 {
-                    Verified = h?.Passed ?? 0,
-                    Total = h?.Checked ?? 0,
-                    Unknowns = h?.NotVerifiable ?? 0,
+                    Verified = seen ? tally.Passed : h?.Passed ?? 0,
+                    Total = seen ? tally.Ran : h?.Checked ?? 0,
+                    Unknowns = seen ? tally.Cannot : h?.NotVerifiable ?? 0,
                 },
                 VerdictCounts = new Dictionary<string, int>
                 {
-                    ["Verified"] = h?.Passed ?? 0,
-                    ["NeedsReview"] = h?.Suspect ?? 0,
-                    ["Broken"] = h?.Failed ?? 0,
-                    ["Unknown"] = h?.NotVerifiable ?? 0,
+                    ["Verified"] = seen ? tally.Passed : h?.Passed ?? 0,
+                    ["NeedsReview"] = seen ? tally.Accepted : h?.Suspect ?? 0,   // an accepted difference is not verified and not broken: a person decided it
+                    ["Broken"] = seen ? tally.Differs : h?.Failed ?? 0,
+                    ["Unknown"] = seen ? tally.Cannot : h?.NotVerifiable ?? 0,
                     ["Overridden"] = 0,
                 },
             };
@@ -135,7 +141,8 @@ namespace Semanticus.Engine
                 {
                     h == null
                         ? "Grade and coverage were not recorded."
-                        : $"Grade {Text(h.Grade, "not recorded")} with {Pct(h.CoveragePct)} coverage. {h.RootFailures} root failure(s) explain {h.Failed + h.Suspect} affected observation(s).",
+                        : $"{Capital(tally.Words())}. Grade {Text(h.Grade, "not recorded")}."
+                            + (h.RootFailures == 1 ? " One cause explains what differs." : h.RootFailures > 1 ? $" {h.RootFailures} causes explain what differs." : ""),
                     run.Live
                         ? "Live data-backed probes were available."
                         : "This run was offline. Live-only probes and reconciliations were not verified.",
@@ -203,7 +210,8 @@ namespace Semanticus.Engine
                 if (o.Variants != null && o.Variants.Length > 0)
                     detail += " Variants: " + string.Join("; ", o.Variants.Where(v => v != null).Select(v =>
                         Text(v.Variant, "Unnamed variant") + " [" + VariantName(v.Kind) + "] " + VerdictName(v.Verdict) + ": " + Reason(v.Explanation)));
-                rows.Add(Finding(Text(o.Title, o.TargetRef ?? "Unnamed measure test"), Map(o.Verdict), detail));
+                if (o.Waiver != null) detail = AcceptedWords(o) + " " + detail;
+                rows.Add(Finding(Text(o.Title, o.TargetRef ?? "Unnamed measure test"), o.Waiver != null ? SemEvidence.Verdict.NeedsReview : Map(o.Verdict), detail));
             }
             if (rows.Count == 0)
                 rows.Add(Finding("Saved measure reconciliations", SemEvidence.Verdict.Unknown, "No saved measure reconciliations were part of this run."));
@@ -237,10 +245,20 @@ namespace Semanticus.Engine
         {
             if (health == null || health.Checked == 0 || health.Passed + health.Failed == 0) return SemEvidence.Verdict.Unknown;
             if (health.Failed > 0) return SemEvidence.Verdict.Broken;
-            if (health.Suspect > 0) return SemEvidence.Verdict.NeedsReview;
+            if (health.Suspect > 0 || health.Accepted > 0) return SemEvidence.Verdict.NeedsReview;
             // Verified means the checks were verified. Remaining unknowns keep the suite Unknown.
             if (health.NotVerifiable > 0) return SemEvidence.Verdict.Unknown;
             return SemEvidence.Verdict.Verified;
+        }
+
+        /// <summary>"Accepted difference, by you on 18 Oct 2026: known rounding." The check still differs; a person accepted that.</summary>
+        private static string AcceptedWords(ReconcileOutcome o)
+        {
+            var w = o.Waiver;
+            var who = string.Equals(w.By, "agent", StringComparison.OrdinalIgnoreCase) ? "your assistant" : "you";
+            // The person's own day, as the page shows it, not the UTC day the store keeps.
+            var when = DateTimeOffset.TryParse(w.When, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var t) ? " on " + t.ToLocalTime().ToString("d MMM yyyy", CultureInfo.InvariantCulture) : "";
+            return "Accepted difference, by " + who + when + (string.IsNullOrWhiteSpace(w.Note) ? "." : ": " + w.Note.Trim().TrimEnd('.') + ".");
         }
 
         private static SemEvidence.Verdict Map(Verdict verdict) => verdict switch
@@ -250,6 +268,8 @@ namespace Semanticus.Engine
             Verdict.Suspect => SemEvidence.Verdict.NeedsReview,
             _ => SemEvidence.Verdict.Unknown,
         };
+
+        private static string Capital(string s) => string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s.Substring(1);
 
         private static SemEvidence.KeyValuePairRow Pair(string key, string value) => new SemEvidence.KeyValuePairRow { Key = key, Value = value };
         private static SemEvidence.FindingRow Finding(string name, SemEvidence.Verdict verdict, string detail, long? count = null) => new SemEvidence.FindingRow
@@ -278,7 +298,7 @@ namespace Semanticus.Engine
         {
             foreach (var o in run.Reconciles ?? Array.Empty<ReconcileOutcome>())
             {
-                if (o?.Verdict == Verdict.Fail)
+                if (o?.Verdict == Verdict.Fail && o.Waiver == null)
                     yield return "Measure " + Text(o.Title, o.TargetRef ?? "Unnamed") + ": " + Reason(o.Message);
                 if (o?.TimingVerdict == Verdict.Fail)
                     yield return "Timing " + Text(o.Title, o.TargetRef ?? "Unnamed") + ": " + Reason(o.TimingDetail);
@@ -304,7 +324,8 @@ namespace Semanticus.Engine
             }
             foreach (var o in outcomes.Where(x => x != null))
             {
-                var line = "- **" + Text(o.Title, o.TargetRef ?? "Unnamed measure test") + "**: " + VerdictName(o.Verdict) + ". " + Reason(o.Message);
+                var line = "- **" + Text(o.Title, o.TargetRef ?? "Unnamed measure test") + "**: "
+                    + (o.Waiver != null ? AcceptedWords(o) : VerdictName(o.Verdict) + ".") + " " + Reason(o.Message);
                 if (!string.IsNullOrWhiteSpace(o.Expected))
                     line += " Expected " + Code(o.Expected, "not recorded") + ", actual " + Code(o.Actual, "not recorded")
                         + ", difference " + Number(o.Difference) + ".";

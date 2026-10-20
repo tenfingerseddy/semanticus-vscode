@@ -220,5 +220,37 @@ namespace Semanticus.Tests
             Assert.Equal(before.TasksDone, after.TasksDone);
             Assert.Equal(before.TasksAll, after.TasksAll);
         }
+
+        // Hero 24 D10 (and hero20 to hero23 before it): Plan done read 71% at the end of a run and 25% after the model was saved, closed and
+        // opened again. The applied tasks that had left the plan were counted only in the session that applied them, so a new session
+        // forgot them. They are on disk in the plan's memory as applied, and a reopen counts them from there, as the close did.
+        [Fact]
+        public async Task Plan_done_is_the_same_after_the_model_is_saved_closed_and_opened_again()
+        {
+            using var f = await ChangeCauseTests.PlanModelAsync("Finish3Reopen.bim");
+            await f.Engine.GetModelPlanAsync();
+            var ids = Enumerable.Range(0, 8).Select(n => "jev.columns.table:Reopened" + n).ToArray();
+            using (ChangeCause.Begin(ChangeCauseKinds.PlanItem, "Completed tasks", "you", ids))
+                await f.Engine.SetDescriptionAsync("measure:Sales/Total Sales", "Completed", "human");
+            f.Engine.SeedPlanMemoryForTest(state =>
+            {
+                foreach (var id in ids)
+                {
+                    state.Changes[id] = new PlanChangeHeader { State = ModelPlanChangeStates.Applied };
+                    state.History.Add(new ModelPlanHistoryEntry { ItemId = id, Title = id, Kind = ModelPlanHistoryKinds.Approved });
+                }
+            });
+            var path = System.IO.Path.Combine(f.Workspace, "Finish3Reopen.bim");
+            await f.Engine.SaveAsync(path, "bim", true, "human", true);   // saving closes the "Save your changes" task: read the close after it
+            await f.Engine.GetModelPlanAsync();
+            var before = (await f.Engine.GetModelPlanAsync()).Strip;
+            Assert.True(before.TasksDone >= 8, $"the close counted the applied tasks: {before.TasksDone}/{before.TasksAll}");
+            await f.Engine.OpenAsync(path, discardUnsaved: true);
+            f.UseNull();
+            var after = (await f.Engine.GetModelPlanAsync()).Strip;
+            _out.WriteLine($"close {before.TasksDone}/{before.TasksAll}, reopen {after.TasksDone}/{after.TasksAll}");
+            Assert.Equal(before.TasksDone, after.TasksDone);
+            Assert.Equal(before.TasksAll, after.TasksAll);
+        }
     }
 }

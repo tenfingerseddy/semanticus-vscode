@@ -78,8 +78,8 @@ try {
     const answer = await page.evaluate(() => window.__askDataMock.answer({ measures: ['Total Sales'], groupBy: ["'Store'[Region]"], filters: [], top: null, sortBy: null }));
     await wait(1200);
     await send({ type: 'studioAnswer', payload: { id: 'sa-0000000000a1', at: new Date().toISOString(), question: 'total sales by store region', answer } });
-    await page.waitForSelector('[data-testid="askdata-by-assistant"]', { timeout: 10000 });
-    const label = await page.$eval('[data-testid="askdata-by-assistant"]', (el) => el.textContent.replace(/\s+/g, ' ').trim());
+    await page.waitForSelector('[data-testid="query-by-assistant"]', { timeout: 10000 });
+    const label = await page.$eval('[data-testid="query-by-assistant"]', (el) => el.textContent.replace(/\s+/g, ' ').trim());
     assert.match(label, /^Asked by your assistant/);
     assert.ok(await page.$('[data-testid="askdata-page"] table, [data-testid="askdata-page"] [role="grid"], [data-testid="askdata-page"] [data-testid]'), 'the answer view is on the page');
     await wait(500);

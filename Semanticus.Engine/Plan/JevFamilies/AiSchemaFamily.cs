@@ -75,18 +75,20 @@ namespace Semanticus.Engine
         /// <summary>How many NEW objects one run asks about. A batch, not a sample: every object is prepared, the answers
         /// already known (the session's cache, or kept on this computer, DecisionAnswerStore) are read first and cost
         /// nothing, and then at most this many objects nobody has asked about yet are asked, tables first, then each
-        /// table's columns and measures in name order. The rest follow in the next run, which the next read of the
-        /// Plan starts, and until then every row says how far Jev has got (ProgressLine). Over enough runs every
-        /// object is asked once, as the replay did.</summary>
-        internal const int MaxObjectsPerRun = 80;
+        /// table's columns and measures in name order. It is no longer a small number (80 until 15 Oct 2026): a whole model goes in one run
+        /// (JevTableBatch.MaxObjectsPerRun), and the rest of a very large one follows in the next run, which the next read of the
+        /// Plan starts, and until then every row says how far Jev has got (ProgressLine).</summary>
+        internal const int MaxObjectsPerRun = JevTableBatch.MaxObjectsPerRun;
 
-        /// <summary>WHETHER THE ASKS GO ONE PER TABLE (m11/jev-batch, JevTableBatch.cs): a table's objects (the table, its columns,
-        /// its measures) in one request, the table's fields once, one question per object pointing at its entry in `objects`.
+        /// <summary>WHETHER THE ASKS ARE BATCHED (m11/jev-batch, JevTableBatch.cs; across tables since m16/jev-batch): the objects of the whole model
+        /// (the tables, their columns, their measures) in as few requests as Jev's context allows, each table's fields once, one question per
+        /// object pointing at its entry in `objects`.
         /// True, as shipped: ON (Kane, 1 Oct: "the batching is the best mitigation not caps"). The comparison run of 30 September missed its fixed bar (docs/redesign/jev-batch-comparison-result.md: the unsure middle moves, sure answers stay), and Kane accepted that an unsure answer can move and arrive ticked or unticked in the reviewed Plan. JevPerObjectModeTests still proves both modes give the same plan lines. False: one request per object (the test seam JevBatchedForTest sets it).</summary>
         internal const bool Batched = true;
 
-        /// <summary>How many objects one batched request asks about. Names, kinds and structure facts only, so a chunk is small.</summary>
-        internal const int ChunkSize = 30;
+        /// <summary>The most objects one batched request asks about (JevTableBatch.AiSchemaObjectsPerRequest, measured live: a bigger request loses
+        /// Jev's sure answers to unrelated tables). Jev's context (JevTableBatch.MaxBodyBytes) can cut a request earlier. Names, kinds and structure facts only.</summary>
+        internal const int ChunkSize = JevTableBatch.AiSchemaObjectsPerRequest;
 
         /// <summary>The id of the one row that exists only to say Jev has not finished (LocalEngine.JevProgressRow).
         /// It carries the family's own prefix so the progress line lands on it like any other row, and it can never
@@ -362,9 +364,10 @@ namespace Semanticus.Engine
                 .Take(MaxTableFields)
                 .ToList();
 
-        /// <summary>The batched requests for the asks: each table's objects in chunks, the table's fields once, and a question for
-        /// each object that starts "For the object `objects[i]`:" and then says what the per-object question says.</summary>
-        internal static List<TableBatch<Ask>> Batches(Prepared prepared, int size = ChunkSize)
+        /// <summary>The batched requests for the asks: the objects of every table together, each table's fields once in a map keyed by the
+        /// table's name, and a question for each object that starts "For the object `objects[i]`:" and then says what the per-object question
+        /// says. Each entry in `objects` names its table.</summary>
+        internal static List<TableBatch<Ask>> Batches(Prepared prepared, int size = ChunkSize, bool perTable = false)
         {
             var point = DecisionRegistry.Require(DecisionRegistry.AiSchema);
             var options = DecisionRegistry.AiSchemaChoices.Select(o => new DecisionOption(o, Criteria[o])).ToList();
@@ -376,19 +379,18 @@ namespace Semanticus.Engine
                 {
                     var name = JevTableBatch.QuestionName(Question, chunk[i].Ref);
                     questions.Add(new DecisionQuestion(name, DecisionQuestionKind.Choice,
-                        "For the object " + JevTableBatch.Path("objects", i) + ": " + Instruction, options));
+                        JevTableBatch.Lead("object", "objects", i, (string)chunk[i].Entry["name"], chunk[i].TableName) + Instruction, options));
                     batch.Names[chunk[i]] = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>(name, Question) };
                 }
                 batch.Questions = questions;
                 batch.Snapshot = DecisionSnapshot.Build(point, new[]
                 {
-                    new KeyValuePair<string, object>("table_name", chunk[0].TableName),
-                    new KeyValuePair<string, object>("table_fields", prepared.Fields[batch.TableRef]),
-                    new KeyValuePair<string, object>("objects", chunk.Select(a => (object)a.Entry).ToList()),
+                    new KeyValuePair<string, object>("table_fields", JevTableBatch.ByTable(chunk, a => a.TableName, a => prepared.Fields[a.TableRef])),
+                    new KeyValuePair<string, object>("objects", chunk.Select(a => (object)JevTableBatch.WithTable(a.Entry, a.TableName)).ToList()),
                 });
                 return batch;
             }
-            return JevTableBatch.Chunks(prepared.Asks, a => a.TableRef, size).SelectMany(c => JevTableBatch.Fit(c, Build)).ToList();
+            return JevTableBatch.Pack(prepared.Asks, a => a.TableRef, Build, point, perTable ? int.MaxValue : size, perTable, perTable ? JevTableBatch.LegacyQuestions : JevTableBatch.MaxQuestions);
         }
 
         private static readonly Dictionary<string, string> Criteria = new Dictionary<string, string>(StringComparer.Ordinal)

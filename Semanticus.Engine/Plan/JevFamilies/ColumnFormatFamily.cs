@@ -42,17 +42,18 @@ namespace Semanticus.Engine
 
         internal const string Question = "format_family";
 
-        /// <summary>WHETHER THE ASKS GO ONE PER TABLE (m11/jev-batch, JevTableBatch.cs): a table's columns in one request, its
-        /// column names once, one question per column pointing at its entry in `columns`. True, as shipped: ON (Kane, 1 Oct: "the batching is the best mitigation not caps"). The comparison run of 30 September missed its fixed bar (docs/redesign/jev-batch-comparison-result.md: the unsure middle moves, sure answers stay), and Kane accepted that an unsure answer can move and arrive ticked or unticked in the reviewed Plan. JevPerObjectModeTests still proves both modes give the same plan lines. False: one request per object (the test seam JevBatchedForTest sets it).</summary>
+        /// <summary>WHETHER THE ASKS ARE BATCHED (m11/jev-batch, JevTableBatch.cs; across tables since m16/jev-batch): the columns of the whole model
+        /// in as few requests as Jev's context allows, each table's column names once, one question per column pointing at its entry in `columns`. True, as shipped: ON (Kane, 1 Oct: "the batching is the best mitigation not caps"). The comparison run of 30 September missed its fixed bar (docs/redesign/jev-batch-comparison-result.md: the unsure middle moves, sure answers stay), and Kane accepted that an unsure answer can move and arrive ticked or unticked in the reviewed Plan. JevPerObjectModeTests still proves both modes give the same plan lines. False: one request per object (the test seam JevBatchedForTest sets it).</summary>
         internal const bool Batched = true;
 
-        /// <summary>How many columns one batched request asks about. Names and types only, so a chunk is small.</summary>
-        internal const int ChunkSize = 30;
+        /// <summary>The most columns one batched request asks about (JevTableBatch.ColumnObjectsPerRequest, measured live). Jev's context
+        /// (JevTableBatch.MaxBodyBytes) can cut a request earlier.</summary>
+        internal const int ChunkSize = JevTableBatch.ColumnObjectsPerRequest;
 
         /// <summary>How many columns one run ASKS about. A cap on the asks, never on what is seen (m11/sf-progress): Prepare lists
         /// every eligible column and LocalEngine.JevFamilies.cs asks this many per run, not-yet-asked first, then starts the next
         /// run for the rest. Every ask is a call against the session's budget.</summary>
-        internal const int MaxColumnsPerRun = 60;
+        internal const int MaxColumnsPerRun = JevTableBatch.MaxObjectsPerRun;
 
         private const int MaxTableColumns = 40;
 
@@ -243,9 +244,10 @@ namespace Semanticus.Engine
                 DecisionRegistry.FormatFamilies.Select(o => new DecisionOption(o, Criteria[o])).ToList()),
         };
 
-        /// <summary>The batched requests for the asks: each table's columns in chunks, the table's column names and types once, a
-        /// question for each column that starts "For the column `columns[i]`:" and then says what the per-column question says.</summary>
-        internal static List<TableBatch<Ask>> Batches(Prepared prepared, int size = ChunkSize)
+        /// <summary>The batched requests for the asks: the columns of every table together, each table's column names and types once in a map
+        /// keyed by the table's name, a question for each column that starts "For the column `columns[i]`:" and then says what the per-column
+        /// question says. Each entry in `columns` names its table.</summary>
+        internal static List<TableBatch<Ask>> Batches(Prepared prepared, int size = ChunkSize, bool perTable = false)
         {
             var point = DecisionRegistry.Require(DecisionRegistry.ColumnFormat);
             var options = DecisionRegistry.FormatFamilies.Select(o => new DecisionOption(o, Criteria[o])).ToList();
@@ -257,19 +259,18 @@ namespace Semanticus.Engine
                 {
                     var name = JevTableBatch.QuestionName(Question, chunk[i].Ref);
                     questions.Add(new DecisionQuestion(name, DecisionQuestionKind.Choice,
-                        "For the column " + JevTableBatch.Path("columns", i) + ": " + Instructions, options));
+                        JevTableBatch.Lead("column", "columns", i, (string)chunk[i].Entry["name"], chunk[i].TableName) + Instructions, options));
                     batch.Names[chunk[i]] = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>(name, Question) };
                 }
                 batch.Questions = questions;
                 batch.Snapshot = DecisionSnapshot.Build(point, new[]
                 {
-                    new KeyValuePair<string, object>("table_name", chunk[0].TableName),
-                    new KeyValuePair<string, object>("table_columns", prepared.TableColumns[batch.TableRef]),
-                    new KeyValuePair<string, object>("columns", chunk.Select(a => (object)a.Entry).ToList()),
+                    new KeyValuePair<string, object>("table_columns", JevTableBatch.ByTable(chunk, a => a.TableName, a => prepared.TableColumns[a.TableRef])),
+                    new KeyValuePair<string, object>("columns", chunk.Select(a => (object)JevTableBatch.WithTable(a.Entry, a.TableName)).ToList()),
                 });
                 return batch;
             }
-            return JevTableBatch.Chunks(prepared.Asks, a => a.TableRef, size).SelectMany(c => JevTableBatch.Fit(c, Build)).ToList();
+            return JevTableBatch.Pack(prepared.Asks, a => a.TableRef, Build, point, perTable ? int.MaxValue : size, perTable, perTable ? JevTableBatch.LegacyQuestions : JevTableBatch.MaxQuestions);
         }
 
         // ---- Jev's answer into a line -------------------------------------------------------------------------

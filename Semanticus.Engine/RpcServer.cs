@@ -65,8 +65,11 @@ namespace Semanticus.Engine
             _sessions.Bus.StudioNextStep += OnStudioNextStep;
             _sessions.Bus.StudioAnswer += OnStudioAnswer;
             _sessions.Bus.AgentCall += OnAgentCall;
+            _sessions.Bus.HostSettings += OnHostSettings;
+            _sessions.Bus.HostStartTrial += OnHostStartTrial;
             _sessions.Bus.EntitlementChanged += OnEntitlementChanged;
             _sessions.Bus.HumanClientAttached = () => { lock (_gate) return _clients.Count > _agentClients.Count; };
+            _sessions.Bus.SqlHostAsk = AskSqlHostAsync;
         }
 
         public string PipeName => _pipeName;
@@ -90,6 +93,8 @@ namespace Semanticus.Engine
         private void OnStudioNextStep(NextStepView v) => Broadcast("studio/nextStep", v);
         private void OnStudioAnswer(StudioAnswer v) => Broadcast("studio/answer", v);
         private void OnAgentCall(AgentCallEvent v) => Broadcast("assistant/call", v);
+        private void OnHostSettings(HostSettingsView v) => Broadcast("host/settings", v);
+        private void OnHostStartTrial(string email) => Broadcast("host/startTrial", new { email });
         // A licence applied, removed, or past its end (the free Pro month ending while a window is open).
         private void OnEntitlementChanged(Entitlement.EntitlementInfo v) => Broadcast("entitlement/didChange", v);
         private void OnLayoutChanged(LayoutChange v) => Broadcast("layout/didChange", v);
@@ -102,6 +107,22 @@ namespace Semanticus.Engine
         // The connection that asked for the swap is skipped: it refreshes from its own answer, and an echo racing that
         // answer would tell its Studio the model was replaced while the request was still in flight.
         private void OnSessionChanged(SessionChangeNotification n) => Broadcast("session/didChange", n, exceptWriter: n?.Writer);
+
+        /// <summary>The one question the engine asks the person through their window: "This model reads from X. Send your sign-in there?".
+        /// It goes to a human connection only (an assistant cannot answer for the person), and a window that does not answer, or is closed
+        /// mid-question, counts as nobody to ask. The person may take their time, so the limit is long.</summary>
+        private async Task<bool?> AskSqlHostAsync(string host)
+        {
+            JsonRpc human;
+            lock (_gate) human = _clients.FirstOrDefault(c => !_agentClients.Contains(c));
+            if (human == null) return null;
+            try
+            {
+                using (var limit = new CancellationTokenSource(TimeSpan.FromMinutes(10)))
+                    return await human.InvokeWithCancellationAsync<bool?>("askSqlHost", new object[] { host }, limit.Token).ConfigureAwait(false);
+            }
+            catch { return null; }
+        }
 
         private void Broadcast(string method, object payload, string exceptWriter = null)
         {
@@ -273,12 +294,15 @@ namespace Semanticus.Engine
             _sessions.Bus.StartPlanChanged -= OnStartPlanChanged;
             _sessions.Bus.SessionChanged -= OnSessionChanged;
             _sessions.Bus.StudioShow -= OnStudioShow;
+            _sessions.Bus.HostSettings -= OnHostSettings;
+            _sessions.Bus.HostStartTrial -= OnHostStartTrial;
             _sessions.Bus.StudioSuggest -= OnStudioSuggest;
             _sessions.Bus.StudioNextStep -= OnStudioNextStep;
             _sessions.Bus.StudioAnswer -= OnStudioAnswer;
             _sessions.Bus.AgentCall -= OnAgentCall;
             _sessions.Bus.EntitlementChanged -= OnEntitlementChanged;
             _sessions.Bus.HumanClientAttached = null;
+            _sessions.Bus.SqlHostAsk = null;
             JsonRpc[] snapshot;
             lock (_gate) { snapshot = _clients.ToArray(); _clients.Clear(); _agentClients.Clear(); }
             foreach (var c in snapshot) { try { c.Dispose(); } catch { } }

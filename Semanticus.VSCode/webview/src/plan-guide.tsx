@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { whenFirstRunClosed } from './firstrun-gate';
 import { requestFirstRun, requestGuideFlags, rpc, setGuideFlag, type GuideFlags } from './bridge';
+import { learnPhase } from './studio/learn-state';
 import { cssZoomFactor } from './toolrow';
+import { historyEmptyForPerson } from './plan-history-model';
 import './plan-guide.css';
 
 // ===================================================================================================
@@ -328,11 +330,14 @@ export function PlanGuide({ onView }: { onView?: (view: 'work' | 'history') => v
     take();
     window.addEventListener(GUIDE_EVENT, take);
     if (!asked.current) {
-      const empty = rpc<{ rows?: unknown[] }>('getPlanHistory', null, null, null, 1)
-        .then((v) => (Array.isArray(v?.rows) ? v.rows.length === 0 : null), () => null);
+      // The first page, not one row: the newest row may be a record the model carried, and that is not this person's history.
+      const empty = rpc<{ rows?: { by?: string | null }[] }>('getPlanHistory', null, null, null, 50)
+        .then((v) => historyEmptyForPerson(v?.rows), () => null);
       // The tour waits for the first-run choice to close: two cards at once fight for the keyboard.
       void Promise.all([requestGuideFlags(WHAT_CHANGED_CARD_ID), empty, whenFirstRunClosed()]).then(([flags, historyEmpty]) => {
         if (!alive || asked.current) return;
+        // The Learn tour is already walking the person through the Plan, with its own counter: two tours at once read "1 of 7" and "step 1 of 5" (r2 UAT N18).
+        if (learnPhase() !== 'idle') { write(['whatChanged', 'planTour']); return; }   // and the person has had a tour: the Plan does not start another later
         const mode = decideGuide(flags, historyEmpty, WHAT_CHANGED_CARD_ID);
         if (mode === 'none') return;
         write(shownFlags(mode));

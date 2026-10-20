@@ -22,6 +22,41 @@ namespace Semanticus.Tests
                 => ValueTask.FromResult(GetToken(context, ct));
         }
 
+        // Kane, 17 Oct: "no query plan seems to return". On the Power BI service the DAXQueryPlan (112) and DAXEvaluationLog (135)
+        // events are only sent to a trace that collects the DatabaseName column (id 28): measured on the real Contoso Sales service
+        // 17 Oct, the same query gave no plan with the old columns and a logical + physical plan with this one added. DAX Studio 2.9.0
+        // added the same column "to work with the new Power BI XMLA endpoint".
+        [Fact]
+        public void Plan_and_log_events_collect_the_database_name_the_service_needs_to_send_them()
+        {
+            Assert.Contains(Microsoft.AnalysisServices.TraceColumn.DatabaseName, DaxTrace.MarkerCols);
+            Assert.Contains(Microsoft.AnalysisServices.TraceColumn.DatabaseName, DaxTrace.EvalLogCols);
+        }
+
+        // Kane, 17 Oct: the page often showed the warm-up ping's plan ("TableCtor") as the query's plan. The ping's late plan and QueryEnd
+        // landed in the real window, and a late ping QueryEnd stopped the wait before the query's own plan arrived.
+        [Fact]
+        public void A_ping_end_never_counts_as_the_querys_end_and_the_pings_plan_is_dropped()
+        {
+            var c = new PlanCollector("semwarm_ab12");
+            c.OnPlan(false, "TableCtor: ping logical");
+            c.OnQueryEnd("EVALUATE ROW(\"semwarm_ab12_1\", 1)");
+            c.OnPlan(true, "TableCtor: late ping physical semwarm_ab12_1");      // late and still tagged: dropped by text
+            Assert.False(c.GotQueryEnd);
+            Assert.Equal(1, c.PingEnds);
+            Assert.Equal("", c.Logical);
+            Assert.Equal("", c.Physical);
+
+            c.OnPlan(false, "GroupBy: the query's logical");
+            c.OnQueryEnd("EVALUATE SUMMARIZECOLUMNS('Date'[Year])");
+            Assert.True(c.GotQueryEnd);
+            Assert.False(c.GotBothPlans);                                         // its physical plan has not come yet
+            c.OnPlan(true, "Cache: the query's physical");
+            Assert.True(c.GotBothPlans);
+            Assert.Equal("GroupBy: the query's logical", c.Logical);
+            Assert.Equal("Cache: the query's physical", c.Physical);
+        }
+
         [Fact]
         public async Task Query_and_profile_lanes_renew_their_own_expiring_identity_before_work()
         {

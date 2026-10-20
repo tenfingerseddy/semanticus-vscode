@@ -46,6 +46,8 @@ export function rowAnnouncement(rowCount: number, truncated: boolean): string {
 
 export function timingAnnouncement(ms: number): string {
   if (ms < 1) return 'under 1 ms';
+  // A second or more is written in seconds, as the row header does ("6.8 s"), never "6374.2 ms" (v-batch1).
+  if (ms >= 1000) return `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)} s`;
   return Number.isInteger(ms) ? `${ms} ms` : `${ms.toFixed(1)} ms`;
 }
 

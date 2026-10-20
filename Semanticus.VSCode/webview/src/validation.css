@@ -1,0 +1,122 @@
+/* Validation A (1.6). Studio tokens only. The page is one column of eight whole columns (ten when the window is narrow): the verdict,
+   then only what needs a look. Everything else opens on demand, one thing at a time. */
+.vc-page { padding-bottom: var(--sem-space-8); }
+.vc-page > .va-col { grid-column: 3 / 11; display: flex; flex-direction: column; gap: var(--sem-gap); min-width: 0; }
+.vc-page > .va-reports-head { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: var(--sem-space-3); }
+.vc-page > .va-reports-head .sem-section-title { margin: 0; }
+@media (max-width: 1200px) { .vc-page > .va-col { grid-column: 2 / 12; } }
+@media (max-width: 760px) { .vc-page > .va-col { grid-column: 1 / -1; } }
+
+.va-num { font-variant-numeric: tabular-nums; }
+.va-faint { color: var(--sem-muted); }
+.va-bad { color: var(--sem-bad); }
+.va-warn { color: var(--sem-warn); }
+.va-push { margin-left: auto; }
+.va-rel { position: relative; display: inline-flex; }
+.va-sep { color: var(--sem-muted); padding: 0 var(--sem-space-2); }
+.va-line { margin: 0; font-size: var(--sem-text-body); line-height: var(--sem-lh-body); }
+.va-note { margin: 0; font-size: var(--sem-text-label); line-height: var(--sem-lh-label); color: var(--sem-muted); }
+.va-label { font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
+.va-link { background: none; border: 0; padding: 0; color: inherit; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; }
+.va-link:hover, .va-link[aria-expanded="true"] { text-decoration-color: currentColor; }
+.va-passlink { align-self: flex-start; color: var(--sem-muted); font-size: var(--sem-text-body); padding: var(--sem-space-1) 0; }
+
+/* ---- the head: the verdict as a number first, one primary action, one menu for the rest */
+.va-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sem-space-4); padding: var(--sem-space-2) 0 var(--sem-space-1); }
+.va-verdict { display: flex; flex-direction: column; gap: var(--sem-space-2); min-width: 0; flex: 1; }
+.va-figure { line-height: var(--sem-lh-grade); }
+.va-n { font-size: var(--sem-text-grade); line-height: var(--sem-lh-grade); font-weight: var(--sem-weight-strong); letter-spacing: -.01em; color: var(--sem-fg); }
+.va-n.va-faint { color: var(--sem-muted); }
+.va-of { font-size: var(--sem-text-title); color: var(--sem-muted); }
+.va-sub { display: flex; flex-wrap: wrap; align-items: baseline; font-size: var(--sem-text-body); line-height: var(--sem-lh-body); }
+.va-tools { display: flex; gap: var(--sem-space-2); align-items: center; flex: none; }
+.va-split > .sem-btn:first-child { border-radius: var(--sem-radius-control) 0 0 var(--sem-radius-control); }
+.va-split > .sem-btn:nth-child(2) { border-radius: 0 var(--sem-radius-control) var(--sem-radius-control) 0; border-left-color: var(--sem-on-accent); padding: 0 var(--sem-space-2); }
+.sem-btn.va-icon-btn { padding: 0; width: var(--sem-control-h); }
+.va-icon { display: inline-flex; align-items: center; justify-content: center; width: var(--sem-control-h); height: var(--sem-control-h); border: 0; border-radius: var(--sem-radius-control); background: transparent; color: var(--sem-muted); cursor: pointer; flex: none; }
+.va-icon:hover { color: var(--sem-fg); background: var(--sem-hover); }
+
+/* the strip: one cell per check, worst first */
+.va-strip { display: flex; flex-wrap: wrap; gap: var(--sem-space-1); }
+.va-cell { width: 16px; height: 6px; border-radius: var(--sem-radius-chip); box-sizing: border-box; }
+.va-c-pass { background: var(--sem-good); }
+.va-c-differs { background: var(--sem-bad); }
+.va-c-cannot { background: var(--sem-warn); }
+.va-c-accepted { background: transparent; border: var(--sem-hairline) solid var(--sem-good); }
+.va-c-off { background: transparent; border: var(--sem-hairline) dashed var(--sem-border); }
+
+/* ---- menus */
+.va-pop { position: absolute; top: calc(100% + var(--sem-space-1)); left: 0; z-index: 40; min-width: 200px; padding: var(--sem-space-1); display: flex; flex-direction: column; background: var(--sem-surface); border: var(--sem-hairline) solid var(--sem-rule); border-radius: var(--sem-radius-card); box-shadow: var(--sem-shadow-pop); }
+.va-pop-right { left: auto; right: 0; }
+.va-pop-wide { min-width: 240px; }
+.va-pop-note { padding: var(--sem-space-2); font-size: var(--sem-text-label); color: var(--sem-muted); }
+.va-item { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--sem-fg); font: inherit; font-size: var(--sem-text-body); padding: var(--sem-space-1) var(--sem-space-2); border-radius: var(--sem-radius-control); cursor: pointer; white-space: nowrap; }
+.va-item:hover:not(:disabled) { background: var(--sem-hover); }
+.va-item:disabled { color: var(--sem-muted); cursor: default; }
+.va-item.va-bad { color: var(--sem-bad); }
+.va-item-count { display: flex; justify-content: space-between; gap: var(--sem-space-4); }
+
+/* ---- the list: only what needs a look, one line each */
+.sem-card.va-list { padding: 0; }
+.va-rowwrap { border-bottom: var(--sem-hairline) solid var(--sem-rule); }
+.va-rowwrap:last-child { border-bottom: 0; }
+.va-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 16px; gap: var(--sem-space-3); align-items: center; width: 100%; min-height: var(--sem-row); padding: var(--sem-space-2) var(--sem-space-4); border: 0; background: transparent; color: var(--sem-fg); font: inherit; font-size: var(--sem-text-body); text-align: left; cursor: pointer; }
+.va-row:hover { background: var(--sem-hover); }
+.va-row-on .va-name { font-weight: var(--sem-weight-strong); }
+.va-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.va-find { text-align: right; white-space: nowrap; }
+.va-chev { display: inline-flex; color: var(--sem-muted); }
+.va-chev-btn { background: none; border: 0; padding: 0; cursor: pointer; }
+.va-mark { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; box-sizing: border-box; }
+.va-m-pass { background: var(--sem-good); }
+.va-m-differs { background: var(--sem-bad); }
+.va-m-cannot { box-shadow: inset 0 0 0 2px var(--sem-warn); }
+.va-m-accepted { box-shadow: inset 0 0 0 2px var(--sem-good); }
+.va-m-off { box-shadow: inset 0 0 0 1.5px var(--sem-muted); }
+
+/* the optional note beside Waive */
+.va-waive-note { flex: 1 1 140px; min-width: 0; max-width: 260px; height: var(--sem-control-h); padding: 0 var(--sem-space-2); border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-control); background: transparent; color: var(--sem-fg); font: inherit; font-size: var(--sem-text-body); }
+.va-waive-note::placeholder { color: var(--sem-muted); }
+
+/* the line that opens the rest of a long list, and the one line for checks that have not run */
+.va-moreline { color: var(--sem-muted); grid-template-columns: 8px minmax(0, 1fr) auto 16px; }
+.va-notrun { cursor: default; grid-template-columns: 8px minmax(0, 1fr) auto 16px; }
+.va-notrun:hover { background: transparent; }
+.va-notrun-name { text-align: left; color: var(--sem-muted); }
+.va-notrun-list { border-top: var(--sem-hairline) solid var(--sem-rule); }
+.va-filter { padding: var(--sem-space-2) var(--sem-space-4); border-bottom: var(--sem-hairline) solid var(--sem-rule); }
+.va-filter-input { width: 100%; box-sizing: border-box; height: var(--sem-control-h); padding: 0 var(--sem-space-3); border: var(--sem-hairline) solid var(--sem-rule); border-radius: var(--sem-radius-control); background: var(--sem-surface); color: var(--sem-fg); font: inherit; font-size: var(--sem-text-body); }
+.va-filter-input:focus { outline: none; border-color: var(--sem-accent); }
+.va-nomatch { padding: var(--sem-space-3) var(--sem-space-4); }
+
+/* ---- a check, opened in place */
+.va-detail { display: flex; flex-direction: column; gap: var(--sem-space-3); padding: 0 var(--sem-space-4) var(--sem-space-4) calc(var(--sem-space-4) + var(--sem-space-2) + var(--sem-space-3)); min-width: 0; }
+.va-detail .qv-table td, .va-detail .qv-table th { font-size: var(--sem-text-body); }
+.va-visual { display: flex; flex-direction: column; gap: var(--sem-space-2); min-width: 0; }
+.va-visual .qv-pickline { margin-top: 0; }
+.va-facts { display: flex; flex-wrap: wrap; gap: var(--sem-space-1) var(--sem-space-4); font-size: var(--sem-text-meta); color: var(--sem-muted); }
+.va-facts strong { color: var(--sem-fg); }
+.va-actions-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); }
+.va-meta { margin: 0; font-size: var(--sem-text-label); color: var(--sem-muted); }
+.va-notice { min-width: 0; }
+.va-empty { display: flex; align-items: center; gap: var(--sem-space-3); color: var(--sem-muted); font-size: var(--sem-text-body); }
+.vc-rows { overflow-x: auto; min-width: 0; }
+/* a table of rows on the grid: columns keep a gap and shrink with an ellipsis, so one never runs into the next */
+.vc-row, .vc-rowhead { column-gap: var(--sem-space-3); }
+.vc-row > span, .vc-rowhead > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vc-rowhead { display: grid; align-items: center; padding: var(--sem-space-1) var(--sem-space-2); border-bottom: var(--sem-hairline) solid var(--sem-rule); color: var(--sem-muted); }
+
+/* ---- the panels a menu opens: run history and grade, new check, choose checks */
+.sem-card.va-panel { display: flex; flex-direction: column; gap: var(--sem-space-3); }
+.va-panel-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sem-space-2); }
+.va-panel-title { margin: 0; font-size: var(--sem-text-title); line-height: var(--sem-lh-title); font-weight: var(--sem-weight-strong); }
+.va-sub-title { margin: var(--sem-space-2) 0 0; font-size: var(--sem-text-body); font-weight: var(--sem-weight-strong); }
+.va-pair { display: flex; gap: var(--sem-space-8); }
+.va-mid { font-size: var(--sem-text-page); line-height: var(--sem-lh-page); font-weight: var(--sem-weight-strong); }
+.va-choices { display: flex; flex-direction: column; }
+.va-pick { display: flex; flex-direction: column; gap: var(--sem-space-1); max-height: 280px; overflow: auto; }
+.va-pickrow { display: flex; align-items: center; gap: var(--sem-space-3); padding: var(--sem-space-1) 0; font-size: var(--sem-text-body); cursor: pointer; }
+
+.va-details { margin-top: var(--sem-space-1); }
+.va-details > summary { cursor: pointer; width: fit-content; color: var(--sem-muted); font-size: var(--sem-text-label); }
+.va-details > summary:hover { color: var(--sem-fg); }

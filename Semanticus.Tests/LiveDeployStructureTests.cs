@@ -411,6 +411,7 @@ namespace Semanticus.Tests
             var live = NewStar(withHierarchy: true);
             var lh = live.Tables["Date"].Hierarchies["Calendar"];
             lh.Levels[0].Description = "keep-me";                        // matched-level metadata that must survive
+            lh.Levels[0].LineageTag = "tag-month-name";                  // identity the reconcile never rewrites
             // Day is the DEEPEST live-only level (ordinal 2) — the session's two levels take 0 and 1, so nothing collides
             // with it and it is preserved in place.
             lh.Levels.Add(new TOM.Level { Name = "Day", Ordinal = 2, Column = live.Tables["Date"].Columns["Date"], LineageTag = "tag-day" });
@@ -419,13 +420,17 @@ namespace Semanticus.Tests
             var sh = src.Tables["Date"].Hierarchies["Calendar"];
             sh.Levels.Clear();
             sh.Levels.Add(new TOM.Level { Name = "Month Number", Ordinal = 0, Column = src.Tables["Date"].Columns["Month Number"] });
-            sh.Levels.Add(new TOM.Level { Name = "Month Name", Ordinal = 1, Column = src.Tables["Date"].Columns["Month Name"] });
+            // The session level carries the same text: a level text now goes like a hierarchy's (a cleared one clears), so the text is
+            // equal here and the check is that the reconcile keeps the level itself (its tag) rather than rebuilding it.
+            sh.Levels.Add(new TOM.Level { Name = "Month Name", Ordinal = 1, Column = src.Tables["Date"].Columns["Month Name"], Description = "keep-me" });
 
             var rep = LiveDeploy.SyncModels(src, live, apply: true);
 
             var reLive = live.Tables["Date"].Hierarchies["Calendar"];
             Assert.Contains("Day", reLive.Levels.Cast<TOM.Level>().Select(l => l.Name));         // live-only level PRESERVED
-            Assert.Equal("keep-me", reLive.Levels.Cast<TOM.Level>().First(l => l.Name == "Month Name").Description);   // metadata preserved
+            var kept = reLive.Levels.Cast<TOM.Level>().First(l => l.Name == "Month Name");
+            Assert.Equal("keep-me", kept.Description);
+            Assert.Equal("tag-month-name", kept.LineageTag);                                      // matched level kept, not rebuilt
             Assert.Contains(rep.LiveOnly, x => x.Contains("Day") && x.Contains("preserved"));
         }
 

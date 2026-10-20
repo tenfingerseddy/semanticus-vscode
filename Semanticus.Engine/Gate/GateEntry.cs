@@ -96,6 +96,10 @@ namespace Semanticus.Engine
         /// <summary>For a method whose kind depends on its arguments or the model (an open that may throw away unsaved work, a
         /// run that may or may not save): chooses the entry that applies to this call.</summary>
         public Func<GateCall, Task<GateEntry>> Choose { get; init; }
+        /// <summary>True for a call that is the person's question in EVERY preset, not only where the matrix asks (the Allow of the open and
+        /// standard presets does not apply): a write whose harm is not a changed file but what the file later makes the engine do. A held
+        /// row only; the person's own call is never asked.</summary>
+        public Func<GateCall, bool> AsksEveryPreset { get; init; }
         /// <summary>For <see cref="GateKind.Ratchet"/>: true when this call loosens what it sets.</summary>
         public Func<GateCall, Task<bool>> Loosens { get; init; }
         /// <summary>The reason a Pass, Live, Data or Person entry is what it is, in a sentence.</summary>

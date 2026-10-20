@@ -270,6 +270,7 @@ namespace Semanticus.Engine
             string authMode, string tenantId, string origin = "human", string expectedJson = null)
         {
             GuardOutsideWrite(origin);
+            HoldNewSqlHost(origin, server);
             // an id replaces a saved source: it must be the one the person was asked about. No id adds a new one and replaces nothing.
             using (string.IsNullOrWhiteSpace(id) ? null : GuardRegistry(nameof(SaveSqlSourceAsync), "SQL sources", SqlSourceRegistry.StatePath()))
                 return Task.FromResult(SqlSourceRegistry.Save(id, name, server, database, authMode, tenantId,
@@ -390,7 +391,7 @@ namespace Semanticus.Engine
                 if (openIdentity != null && !string.IsNullOrWhiteSpace(openName)) names[openIdentity] = openName;
                 AddStore(TestsDirFor(s), openName);
             }
-            if (_workspaceDir != null) AddStore(Path.Combine(_workspaceDir, LayoutStore.DirName), null);
+            if (FolderDir != null) AddStore(Path.Combine(FolderDir, LayoutStore.DirName), null);
 
             var usage = new Dictionary<string, SqlSourceUse>(StringComparer.OrdinalIgnoreCase);
             SqlSourceUse For(string sourceId) => usage.TryGetValue(sourceId, out var u) ? u : usage[sourceId] = new SqlSourceUse();
@@ -488,6 +489,8 @@ namespace Semanticus.Engine
             }, FileBasisCheck(nameof(SetTableSourceMappingAsync), "table mapping"),
                 expectedJson == null ? null : prior => GuardExpectedFields("table mapping", expectedJson, prior)) ?? throw new InvalidOperationException("The mapping could not be written to .semanticus/tests/table-sources.jsonl.");
 
+            // A count taken against the old source says nothing about the one just chosen: this table waits for its next run.
+            ForgetTableCounts(resolvedName);
             var incomplete = string.IsNullOrWhiteSpace(mapping.Schema) || string.IsNullOrWhiteSpace(mapping.Entity);
             return new TableSourceMappingInfo
             {
@@ -510,7 +513,20 @@ namespace Semanticus.Engine
             if (dir == null) return false;
             var identity = PaneIdentity(s, null);
             var resolvedName = await s.ReadAsync(m => (ObjectRefs.Resolve(m, table) as Table)?.Name) ?? table.Trim();
-            return TableSourceMappingStore.Remove(dir, resolvedName, identity, FileBasisCheck(nameof(ClearTableSourceMappingAsync), "table mapping"));
+            var removed = TableSourceMappingStore.Remove(dir, resolvedName, identity, FileBasisCheck(nameof(ClearTableSourceMappingAsync), "table mapping"));
+            if (removed) ForgetTableCounts(resolvedName);
+            return removed;
+        }
+
+        /// <summary>Drop the last count of one table (or of every table when none is named): the source it was counted against has
+        /// changed, so the page must not go on showing the older result as if it belonged to the new source.</summary>
+        private void ForgetTableCounts(string table = null)
+        {
+            var last = _lastTableCounts;
+            if (last.Results == null) return;
+            _lastTableCounts = table == null
+                ? default
+                : (last.ModelIdentity, last.Results.Where(r => !string.Equals(r.ModelTable, table, StringComparison.OrdinalIgnoreCase)).ToArray(), last.When);
         }
 
         /// <summary>The open model's table mappings. A sidecar can be shared by more than one model, so a mapping is

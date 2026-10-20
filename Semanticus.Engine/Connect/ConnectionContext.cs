@@ -24,6 +24,9 @@ namespace Semanticus.Engine
         public bool Live { get; set; }
         public bool SourceControlled { get; set; }
         public string RepositoryRoot { get; set; }
+        /// <summary>Publishing side only: the model was opened live, so a publish goes back to where it came from, but the person
+        /// has not chosen or made one yet. The footer says "not set yet" rather than naming a target nobody picked.</summary>
+        public bool Implied { get; set; }
     }
 
     /// <summary>One target's silently-probed account (UPN) — what a picker shows as "as &lt;account&gt;" before a click.
@@ -259,7 +262,9 @@ namespace Semanticus.Engine
             ModelConnectionRecord publish = null;
             if (session.LiveOrigin != null && !LiveDeploy.IsLocalEndpoint(session.LiveOrigin.Endpoint))
                 publish = ConnectionRegistry.FindByEndpoint(session.LiveOrigin.Endpoint, session.LiveOrigin.Database);
-            publish = ConnectionRegistry.Find(editingRecord?.PublishConnectionId) ?? publish;
+            var chosen = ConnectionRegistry.Find(editingRecord?.PublishConnectionId);
+            var implied = session.LiveOrigin != null && chosen == null;
+            publish = chosen ?? publish;
             // The person let go of the destination for this local copy (contract 19.2): that beats the default back
             // to an XMLA source below. A model open live is not a local copy, so the flag never applies to it: saving
             // goes straight back to the live model there, and clearing is refused for that case instead.
@@ -282,7 +287,8 @@ namespace Semanticus.Engine
                 Kind = publish.Kind,
                 Endpoint = publish.Endpoint,
                 Database = publish.Database,
-                Live = true
+                Live = true,
+                Implied = implied
             });
         }
 

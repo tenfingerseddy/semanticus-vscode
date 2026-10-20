@@ -115,4 +115,54 @@ test('C4 the Claude Desktop card says Connected once', () => {
   assert.match(model, /r\.ok && r\.changed && r\.nextStep \? \[\] : \[r\.message\]/, 'a good press says what to do next, not Connected again');
 });
 
+// ---- UAT round 2 (18 Oct) surface words ----------------------------------------------------------------------
+const words = await load('webview/src/rule-words.ts');
+const share = await load('webview/src/storage-share.ts');
+
+test('R1 the pending list hides a chip with nothing behind it and says "new value to come"', () => {
+  const optimize = read('webview/src/optimize.tsx');
+  assert.match(optimize, /\(s\?\.jev \?\? 0\) > 0 \|\| filter === 'jev'/, 'the Jev chip shows only with rows, or while it is the filter in force');
+  assert.doesNotMatch(optimize, /awaiting authored value/, 'no engine words on a row with no value yet');
+  assert.match(optimize, /new value to come/);
+});
+
+test('R2 the readiness card speaks plain words, not type names or "capped at D"', () => {
+  assert.equal(words.plainCategory('CopilotLimits'), 'Copilot limits');
+  assert.equal(words.plainCategory('DataAgentConfig'), 'Data agent setup');
+  assert.equal(words.plainCategory('Naming'), 'Naming');
+  const half = words.plainGate('>50% of visible measures undescribed; capped at D');
+  assert.doesNotMatch(half, /capped|>50%/);
+  assert.match(half, /More than half of your measures have no description/);
+  assert.match(words.plainGate('2 objects hold a formula that refers to an object the model does not have; capped at D'), /^2 objects have a formula/);
+  assert.equal(words.plainGate('Something new'), 'Something new', 'an unknown note passes through as it came');
+});
+
+test('R3 the Size page says plain words and names the table of a repeated column', () => {
+  assert.equal(words.plainRuleName('Dictionary-dominated column'), 'Column with many different values');
+  const msg = share.adviceFor('Dictionary is the largest component: 5.3 MB of 6 MB (88%). Often indicates a high-cardinality or wide text column.', true);
+  assert.doesNotMatch(msg, /Dictionary|cardinality/);
+  assert.match(share.adviceFor('Hash index is 40% of this column (2 MB of 5 MB).', true), /^Lookup help is 40%/);
+  const app = read('webview/src/App.tsx');
+  assert.doesNotMatch(app, /Hash indexes <span/, 'the legend does not say hash indexes');
+  assert.match(app, /\$\{c\.table\} · \$\{c\.column\}/, 'two bars with one column name carry their table');
+});
+
+test('R4 Workflows is retired from the header, and one name drives the screen', () => {
+  const app = read('webview/src/App.tsx');
+  assert.match(app, /const SHOWN_GROUPS = TAB_GROUPS\.filter\(\(g\) => !RETIRED_AREAS\.includes\(g\.id\)\)/);
+  assert.doesNotMatch(app, /\{TAB_GROUPS\.map\(\(item, index\) => <GroupTab/, 'the header strip draws the shown areas only');
+  const head = read('webview/src/plan-head.tsx');
+  assert.doesNotMatch(head, /'Claude'/, 'the Plan switch never names the app: it says Your assistant');
+  assert.match(head, /Let your assistant drive/);
+  const propage = read('webview/src/propage.tsx');
+  assert.doesNotMatch(propage, /Workflows/, 'the Pro page does not sell Workflows');
+  assert.doesNotMatch(propage, /waits for you to approve/, 'the Pro page describes asking, not approving');
+});
+
+test('R5 with no model open the Pro advice line says to open one', () => {
+  const consent = read('webview/src/consent.tsx');
+  assert.match(consent, /Open a model before you can let Pro decide for it/);
+  assert.match(consent, /permissionNeedsLine\(modelOpen\)/);
+});
+
 console.log(`pending-copy: ${passed} tests passed`);

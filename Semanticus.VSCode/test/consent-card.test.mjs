@@ -29,7 +29,7 @@ assert.deepEqual(goesLines, [
   'data types, formats, folders',
   'counts and relationships',
   'the questions you type into the ask box',
-  'the words you type to describe a task or a workflow',
+  'the words you type to describe a task',
   'the words of your data questions',
   'measure and column descriptions, when you ask about your data',
   'other names the model gives a measure, when your data question uses one',
@@ -61,7 +61,7 @@ assert.match(registry, /"measure_formula_facts"/, 'the measure point does not de
 // ---- the version bumped, so a person who agreed to the old card sees it once more -----------------
 const version = /public const int ConsentSchemaVersion = (\d+);/.exec(registry);
 assert.ok(version, 'the engine consent version could not be read');
-assert.equal(Number(version[1]), 6, 'the consent version must be 6: next.step joined in 1.5 (the Next line, 11 Oct) after version 5 shipped');
+assert.equal(Number(version[1]), 6, 'the consent version stays 6 in 1.5.1: copilot.misses ships off and sends nothing, so adding it must not make every Pro person agree again (bump it when the point is switched on)');
 
 // The driver fakes the engine, so its version has to be the engine's or it proves the old card.
 assert.match(driver, /setConsentVersion !== 6/, 'the consent driver does not check that OK sends version 6');

@@ -30,6 +30,7 @@ namespace Semanticus.Tests
         };
 
         // 1.4 adds two Connections tools, cancellation and cold/warm timing: 359 to 363.
+        // 53 on 15 Oct 2026: get_personality_settings, set_personality_settings and start_trial (trial-fixes, 1.5.1) joined Workflows and rules, 50 to 53.
         // 396 on 11 Oct 2026: get_trial_tally (the free Pro month's tally, m15/trial) joined Workflows and rules beside get_entitlement, 49 to 50.
         // T215 placements plus the workflow document, preview, layout and upgrade operations.
         // 381 on 11 Oct 2026: file recovery joins Connections and targets, 29 to 30 (studio-polish fix 2).
@@ -52,13 +53,14 @@ namespace Semanticus.Tests
         // claim_request, complete_request, decline_request), 22 to 26 and 334 to 338 after E4.
         // Slice C added set_model_sql_endpoint, list_model_sql_endpoints and list_workspace_models to Connections
         // (contract 19), 24 to 27 and 338 to 341.
+        // 412 on 16 Oct 2026 (411 plus query_notebook: the Query notebook, lane m16/query-c, See what is in the model > Measures, DAX and queries, 11 to 12).
         // 400 on 12 Oct 2026 (399 plus connect_assistant): connect_assistant (lane m15/connect-any, Connect another assistant) joined Connections and targets, 31 to 32.
         private static readonly Dictionary<string, Dictionary<string, int>> Ratified = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal)
         {
             ["Open a model and connect"] = new Dictionary<string, int> { ["Connections and targets"] = 32 },
             ["See what is in the model"] = new Dictionary<string, int>
             {
-                ["Measures, DAX and queries"] = 11, ["Reports and what uses this model"] = 9, ["Speed and size"] = 7,
+                ["Measures, DAX and queries"] = 12, ["Reports and what uses this model"] = 9, ["Speed and size"] = 7,
                 ["Tables, columns and hierarchies"] = 5, ["The model as a whole"] = 6,
                 ["Relationships and the diagram"] = 3, ["Tests, numbers and evidence"] = 3,
             },
@@ -71,14 +73,15 @@ namespace Semanticus.Tests
             // 23 = 21 plus add_plan_target and remove_plan_target, the target half of the living plan.
             // 47 = 45 plus get_next_step and set_next_step (the Next line, 1.5); 49 = 47 plus reading_card and fix_them (the reading card, 1.5).
             ["Make it better"] = new Dictionary<string, int> { ["Findings and fixes"] = 49 },
-            ["Prove it is right"] = new Dictionary<string, int> { ["Tests, numbers and evidence"] = 30 },
+            // 36 = 35 plus pick_check_visuals (Jev picks each check's visual on Validation, 1.6).
+            ["Prove it is right"] = new Dictionary<string, int> { ["Tests, numbers and evidence"] = 36 },
             ["Track versions and compare"] = new Dictionary<string, int> { ["Versions and history"] = 14 },
             ["Ship it out"] = new Dictionary<string, int>
             {
                 ["Publishing and deployment"] = 25, ["Who can see what"] = 9, ["The model write-up"] = 5,
             },
             ["Teach the AI about this model"] = new Dictionary<string, int> { ["Teach the AI"] = 28 },
-            ["Set the rules of the work"] = new Dictionary<string, int> { ["Workflows and rules"] = 50 },
+            ["Set the rules of the work"] = new Dictionary<string, int> { ["Workflows and rules"] = 53 },
             ["Look things up"] = new Dictionary<string, int> { ["Reference lists and instruction sheets"] = 6 },
         };
 
@@ -138,8 +141,8 @@ namespace Semanticus.Tests
                 Assert.False(string.IsNullOrWhiteSpace(o.Question), o.Name);
                 Assert.False(string.IsNullOrWhiteSpace(o.Shelf), o.Name);
             });
-            Assert.Equal(402, catalog.Length);
-            Assert.Equal(402, OpTaxonomy.Count);
+            Assert.Equal(412, catalog.Length);
+            Assert.Equal(412, OpTaxonomy.Count);
         }
 
         [Fact]
@@ -272,7 +275,7 @@ namespace Semanticus.Tests
             {
                 var e = new LocalEngine(new SessionManager(), new FreeTier(), ws);
                 var cat = await e.GetOpCatalogAsync();
-                Assert.Equal(402, cat.Length);
+                Assert.Equal(412, cat.Length);
                 Assert.All(cat, o => Assert.False(string.IsNullOrWhiteSpace(o.Question) || string.IsNullOrWhiteSpace(o.Shelf), o.Name));
                 var wf = cat.Single(o => o.Name == "start_workflow");
                 Assert.Equal("Set the rules of the work", wf.Question);

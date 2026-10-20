@@ -119,12 +119,15 @@ namespace Semanticus.Engine
         // attaching MCP proxy sets/reads it over RPC, so both doors see the same switch. `Available` is always true.
         private volatile bool _verifiedMode;
 
-        public LocalEngine(SessionManager sessions, Entitlement.IEntitlement entitlement = null, string workspaceDir = null)
+        /// <param name="workspaceIsFolder">False when the workspace is only the host process's working folder (no folder is open in VS Code): it holds
+        /// engine.json, but it is not a place the person chose, so a save of a live model never goes there.</param>
+        public LocalEngine(SessionManager sessions, Entitlement.IEntitlement entitlement = null, string workspaceDir = null, bool workspaceIsFolder = true)
         {
             _sessions = sessions;
             sessions.SessionReplaced += () => DropHeldLive("the model was replaced");
             _entitlement = entitlement ?? Entitlement.LicenseEntitlement.FromEnvironment();
             _workspaceDir = string.IsNullOrWhiteSpace(workspaceDir) ? null : workspaceDir;
+            _workspaceIsFolder = workspaceIsFolder;
             StartPlanHost = new StartPlanHostOverStore(this);
             WireNextStep();   // 1.5: the Next line counts unsaved objects and repeats from the first commit
             // Health delta (feature #4): PRO with a SOFT gate (Kane's locked call 2026-07-07) — the probe is
@@ -165,6 +168,7 @@ namespace Semanticus.Engine
 
         // Host workspace (the sidecar fallback anchor for live/unsaved sessions — same rule as ExperienceTee).
         private readonly string _workspaceDir;
+        private readonly bool _workspaceIsFolder;
         // Disk fingerprint of the last successful open or save. Compared on SessionInfo so a checkout
         // that changed files is visible to both doors without waiting for the next save.
         private string _loadedDiskStamp;
@@ -530,6 +534,20 @@ namespace Semanticus.Engine
             }
             return null;
         }
+        /// <summary>A publish landed: the place it went is the person's publish target from now on (round 2 UAT N22 — opening a model
+        /// never sets one). Only a model opened live has an implied target to confirm; a failed write leaves it implied.</summary>
+        internal static void ConfirmPublishTarget(Session s)
+        {
+            try
+            {
+                if (s?.LiveOrigin == null) return;
+                var record = ConnectionContextBuilder.FindEditingRecord(s);
+                if (record != null && string.IsNullOrWhiteSpace(record.PublishConnectionId))
+                    ConnectionRegistry.SetWorkingCopy(record.Id, record.WorkingFolder, record.Id);
+            }
+            catch { /* the footer stays on "not set yet"; the publish itself already landed */ }
+        }
+
         // ---- Verified Edits: the append-only audit trail ----------------------------------------------
         // Append a record to the model's audit chain (VerifiedEditsStore — non-undoable, so undo_change from
         // either door can't erase it). Runs on the dispatcher thread AFTER the mutation it records, so a
@@ -546,6 +564,8 @@ namespace Semanticus.Engine
             // the guard suppresses every audit writer without a per-site check. The DryRunScope AsyncLocal flows
             // down the op's async chain to this continuation, so it is visible here.
             if (DryRunScope.Current != null) return rec;
+            if (IsPublishLanded(rec)) { NotePublished(s?.Id); ConfirmPublishTarget(s); }   // the Next line and the suggestion drop a Publish step only for this
+            else if (IsPublishUndone(rec)) ClearPublished(s?.Id);   // Undo publish puts the words back as they were: the Publish step and the old line come back
             // Weld the record to the git commit the model currently sits on — the durable-time-travel anchor (the
             // chain hashes bodies, never stores them, so a REVERT must come from git, not the chain). Resolved HERE,
             // off the dispatcher thread, because it spawns a git child process: the dispatcher is the single-writer
@@ -565,6 +585,29 @@ namespace Semanticus.Engine
                     vitalsChangedRefs ?? (rec.ObjectRef != null ? new[] { rec.ObjectRef } : Array.Empty<string>()),
                     liveReflectsSession: VitalsLiveReflectsSession(rec));
             return r;
+        }
+
+        // The read-only wing of the trail: an analysis that changed nothing in the model (explain_value, blame_value, a
+        // baseline compare, an optimize that kept the original). Its record goes to SEMANTICUS_HOME, never into the model,
+        // so asking about a number never makes the model say it has unsaved changes. History reads it back from there.
+        // Same dry-run guard, same activity nudge as RecordVerifiedEditAsync; no hash chain (nothing here is an edit).
+        private async Task RecordAnalysisAsync(Session s, VerifiedEditRecord rec)
+        {
+            if (DryRunScope.Current != null) return;
+            var ctx = _sessions.CurrentContext;
+            var identity = PaneIdentity(s, ReferenceEquals(ctx.Session, s) ? ctx.Live : null);
+            AnalysisRecordStore.Append(identity, s.Id, rec);
+            try { await PublishActivityAsync(new ActivityEvent { Kind = "verified_edit", Origin = rec.Origin, Label = rec.Op, Ok = true }); } catch { /* nudge only */ }
+        }
+
+        /// <summary>Test seam: keep one analysis record for the open model the way explain_value and blame_value do.</summary>
+        internal Task RecordAnalysisForTest(VerifiedEditRecord rec) => RecordAnalysisAsync(_sessions.Require(), rec);
+
+        /// <summary>The read-only analysis records kept for the open model (see <see cref="RecordAnalysisAsync"/>).</summary>
+        internal VerifiedEditRecord[] AnalysisRecordsFor(Session s)
+        {
+            var ctx = _sessions.CurrentContext;
+            return AnalysisRecordStore.Read(PaneIdentity(s, ReferenceEquals(ctx.Session, s) ? ctx.Live : null), s.Id);
         }
 
         // Resolve the git HEAD the model's on-disk state PROVABLY sits on, for the audit git-anchor. FAIL-SOFT by
@@ -1738,7 +1781,8 @@ namespace Semanticus.Engine
                 seg = await live.ExecuteAsync("SELECT DIMENSION_NAME, COLUMN_ID, USED_SIZE FROM $SYSTEM.DISCOVER_STORAGE_TABLE_COLUMN_SEGMENTS", 5000000, 180);
                 col = await live.ExecuteAsync("SELECT DIMENSION_NAME, ATTRIBUTE_NAME, COLUMN_ID, COLUMN_ENCODING, DICTIONARY_SIZE, STRING_INDEX_SIZE FROM $SYSTEM.DISCOVER_STORAGE_TABLE_COLUMNS", 5000000, 180);
             }
-            var tbl = await live.ExecuteAsync("SELECT DIMENSION_NAME, ROWS_COUNT FROM $SYSTEM.DISCOVER_STORAGE_TABLES", 100000, 180);
+            var tbl = await live.ExecuteAsync("SELECT DIMENSION_NAME, TABLE_ID, ROWS_COUNT FROM $SYSTEM.DISCOVER_STORAGE_TABLES", 100000, 180);
+            if (!string.IsNullOrEmpty(tbl?.Error)) tbl = await live.ExecuteAsync("SELECT DIMENSION_NAME, ROWS_COUNT FROM $SYSTEM.DISCOVER_STORAGE_TABLES", 100000, 180);
             // Classify storage as import, directLake, or unknown, and classify the QUERY-TARGET model
             // (what these DMVs actually measured), not the editing session. The editing model's storage mode describes
             // the scanned model ONLY when they are the SAME live model: the session's authoritative LIVE ORIGIN
@@ -2318,7 +2362,7 @@ namespace Semanticus.Engine
                 if (recordOutcome)
                     // Revision 0: no mutation backs this record — stamping the CURRENT session revision would
                     // weld the verdict badge onto whatever unrelated edit happens to hold that revision.
-                    await RecordVerifiedEditAsync(s, new VerifiedEditRecord
+                    await RecordAnalysisAsync(s, new VerifiedEditRecord
                     {
                         SessionId = s.Id, Revision = 0, Origin = origin, Op = "optimize_measure", ObjectRef = measureRef,
                         Verdict = "needs-review", Summary = summary,
@@ -2352,7 +2396,7 @@ namespace Semanticus.Engine
             if (!improves)
             {
                 if (recordOutcome)
-                    await RecordVerifiedEditAsync(s, new VerifiedEditRecord
+                    await RecordAnalysisAsync(s, new VerifiedEditRecord
                     {
                         SessionId = s.Id, Revision = 0, Origin = origin, Op = "optimize_measure", ObjectRef = measureRef,   // 0: nothing mutated
                         Verdict = "proven", Summary = "no proven-equivalent candidate beat the baseline beyond the noise band. Kept the original",
@@ -2813,7 +2857,7 @@ namespace Semanticus.Engine
 
             // Audit: a real compare is real evidence (Revision=0 — no backing mutation; the badge must not
             // weld to an unrelated row). Recorded for BOTH verdicts: "safe" is the claim someone ships on.
-            await RecordVerifiedEditAsync(s, new VerifiedEditRecord
+            await RecordAnalysisAsync(s, new VerifiedEditRecord
             {
                 SessionId = s.Id, Revision = 0, Origin = origin ?? "agent", Op = "compare_baseline", ObjectRef = state.Root,
                 Verdict = result.Safe ? "safe" : "impact", Summary = result.Message,
@@ -2897,7 +2941,7 @@ namespace Semanticus.Engine
             if (ctxDiff != null)
             {
                 var ncMsg = $"NOT CHECKABLE: {ctxDiff}. The certified figures for '{label}' were captured on a different model/context; re-checking them on this connection would compare unlike things. Reconnect to the model they were certified on. " + ToleranceNoteFor(bl.Tolerance);
-                await RecordVerifiedEditAsync(s, new VerifiedEditRecord
+                await RecordAnalysisAsync(s, new VerifiedEditRecord
                 {
                     SessionId = s.Id, Revision = 0, Origin = origin ?? "agent", Op = "compare_baseline", ObjectRef = label,
                     Verdict = "impact", Summary = ncMsg,
@@ -2934,7 +2978,7 @@ namespace Semanticus.Engine
             };
 
             // Audit (P2-8): reconstructable — records held/moved/missing/unclean COUNTS plus the moved/missing detail.
-            await RecordVerifiedEditAsync(s, new VerifiedEditRecord
+            await RecordAnalysisAsync(s, new VerifiedEditRecord
             {
                 SessionId = s.Id, Revision = 0, Origin = origin ?? "agent", Op = "compare_baseline", ObjectRef = label,
                 Verdict = result.Safe ? "safe" : "impact", Summary = result.Message,
@@ -3169,7 +3213,8 @@ namespace Semanticus.Engine
                         ModelName = m.Database?.Name ?? m.Name,
                         Tables = m.Tables.Count,
                         Measures = m.AllMeasures.Count(),
-                        Source = next.SourcePath                            // null for create — unsaved until save_model(path)
+                        Source = next.SourcePath,                           // null for create — unsaved until save_model(path)
+                        Note = next.OpenNote
                     });
                     _sessions.AttachObserver(next);                         // c. LAST fallible step — before any destruction
                     if (System.Threading.Interlocked.Read(ref _sessionIntent) != sessionTicket)   // c2. point of no return
@@ -3399,6 +3444,7 @@ namespace Semanticus.Engine
             // Use the VALIDATED tenant (never the raw tenantId): LiveOrigin.TenantId surfaces via SessionInfo.CurrentTenant,
             // so a secret-shaped tenant must never reach it (CRITICAL 1b).
             session.LiveOrigin = new LiveOrigin(endpoint, snap.DatabaseName, tenant, authMode, account, homeAccountId: prepared?.HomeAccountId);
+            session.AttachLiveRecovery();   // a copy a leaving engine kept of this model is offered back
             LiveModelExport.WriteOriginMarker(snap.BimPath, session.LiveOrigin);   // so a cold start that reopens this snapshot as a file still knows which model it is (identity only)
             }
             finally { System.Threading.Interlocked.Decrement(ref _liveOriginStampPending); }
@@ -4356,6 +4402,9 @@ namespace Semanticus.Engine
         /// <summary>Test seam: throw after a folder serialize, before the temp tree is swapped in.</summary>
         internal Exception FailFolderSaveBeforeSwapForTest;
 
+        /// <summary>Test seam: the home folder a live model's lasting save goes under when no folder is connected. Null in the product.</summary>
+        internal static string LastingHomeForTests;
+
         public async Task<SaveResult> SaveAsync(string path, string format, bool overwrite, string origin, bool pickedInDialog = false)
         {
             _sessions.Require();
@@ -4369,6 +4418,8 @@ namespace Semanticus.Engine
             // The file the person was asked about, every link followed (a link in a parent folder, or in a link's own target, as much as the last
             // part): the save writes THERE, so a link moved after the question cannot send it to another file.
             if (resolvedSave != null) path = resolvedSave;
+            // "folder/" and "folder" are the same place; a trailing separator made the staging folder land inside the target.
+            if (!string.IsNullOrEmpty(path) && path.Length > 1 && path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) is { Length: > 0 } bare) path = bare;
             // A permission whose marker was discarded unsaved (an engine restart's Discard) is written back first, so
             // this save carries it (LocalEngine.Decisions.cs, StampPendingConsentMarkerAsync).
             await StampPendingConsentMarkerAsync().ConfigureAwait(false);
@@ -4384,6 +4435,17 @@ namespace Semanticus.Engine
             // the TMDL-root guard below. Every format goes through one check: a first save writes only into a plain new
             // folder or a new file of its own.
             string firstSaveNote = null;
+            // A live model's file is Semanticus's own working copy in the temporary folder. A save never lands there: a copy aimed at it
+            // (the assistant derives that place from the model's own path) or a plain save of it goes to a lasting place instead.
+            var movesToLasting = false;
+            var ownLastingFile = false;
+            if (!string.IsNullOrEmpty(s.SourcePath) && LiveModelExport.IsInSnapshotRoot(s.SourcePath)
+                && (string.IsNullOrWhiteSpace(path) || LiveModelExport.IsInSnapshotRoot(path)))
+            {
+                movesToLasting = string.IsNullOrWhiteSpace(path);
+                path = LastingSaveTarget(s, s.SourcePath, path, out ownLastingFile);
+                firstSaveNote = "Saved to " + path + ", a lasting place. Semanticus keeps its own working copy of the published model in a temporary folder that is not for saving.";
+            }
             if (!string.IsNullOrEmpty(path) && string.IsNullOrEmpty(s.SourcePath))
                 (path, firstSaveNote) = await FirstSaveTargetAsync(s, path, fmt, pickedInDialog).ConfigureAwait(false);
             var target = string.IsNullOrEmpty(path) ? s.SourcePath : ModelPathResolver.Resolve(Path.GetFullPath(path));
@@ -4416,14 +4478,30 @@ namespace Semanticus.Engine
             if (File.Exists(target) && target.EndsWith(".bim", StringComparison.OrdinalIgnoreCase) && fmt == SaveFormat.TMDL)
                 fmt = SaveFormat.ModelSchemaOnly;
 
-            var replacingOpen = string.IsNullOrEmpty(path) || SameSavePath(target, s.SourcePath)
+            var replacingOpen = string.IsNullOrEmpty(path) || ownLastingFile || SameSavePath(target, s.SourcePath)
                 || (!string.IsNullOrEmpty(s.SourcePath) && SameSavePath(target, PathWitness.Real(s.SourcePath)));   // an open model reached through a link is the same file once the link is followed
             var oldSource = s.SourcePath;
+            // A copy folder this session wrote is the person's the moment anything in it changes. A refresh replaces it only while it is exactly
+            // what was written; otherwise the copy goes beside it under a new name, and the save says where (a redirect, never a refusal).
+            string copyMovedNote = null;
+            var refreshesCopyFolder = false;
+            if (!replacingOpen && !string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(oldSource) && Directory.Exists(target) && s.WroteCopyFolder(target))
+            {
+                if (s.CopyFolderUnchanged(target)) refreshesCopyFolder = true;
+                else if (!IsEmptyFolder(target)) (target, copyMovedNote) = CopyBesideChangedFolder(target);   // an empty folder is free to use, as any empty folder is
+            }
+            // A copy written INSIDE the open model's own folder is read as part of that model the next time it opens: it merges with the real
+            // files, the model stops opening, and the work sits only in the copy. Refused before anything is written, on both doors.
+            if (!replacingOpen && !string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(oldSource))
+                RefuseSaveInsideOpenModel(oldSource, target);
+            // A copy goes only to a new or empty place; it never merges into, replaces or cleans anything that is already there.
+            if (!replacingOpen && !string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(oldSource) && !s.WroteCopyFile(target) && !refreshesCopyFolder)
+                RefuseCopyOverExisting(oldSource, target);   // a copy this session already wrote, a file or a folder, is replaced, so one copy stays fresh (verifier 18 Oct, P4; Codex on pull request 402)
             // The assistant saving to another place while the model has a home is making a copy (a backup before a risky change). A copy is
             // written and left; the session keeps following the person's file, so the next plain save writes THAT file, not the backup
             // (hero run 20: the backup became the model's home and the later save wrote over it). The person's own Save As still moves the model.
             var asCopy = string.Equals(origin, "agent", StringComparison.Ordinal) && !string.IsNullOrEmpty(path)
-                         && !string.IsNullOrEmpty(oldSource) && !replacingOpen;
+                         && !string.IsNullOrEmpty(oldSource) && !replacingOpen && !movesToLasting;
             var folderSave = fmt == SaveFormat.TMDL || fmt == SaveFormat.TabularEditorFolder;
             string tempDir = null;
             // Whether this save wrote anybody's unsaved edits, read in the SAME dispatcher turn as the serialize, and the
@@ -4455,9 +4533,17 @@ namespace Semanticus.Engine
                         // The History's background write opens files in the model folder (its lock, its temp file), and on Windows an open file
                         // blocks the folder move below. Let it finish first; the move also tries again if another writer is still in there.
                         await _sessions.Ledger.FlushAsync().ConfigureAwait(false);
-                        PreserveUntouchedFiles(target, tempDir, fmt);
+                        // Only a save in place rewrites a folder that holds other things. A copy lands in a new or empty folder (checked above).
+                        if (replacingOpen) PreserveUntouchedFiles(target, tempDir, fmt);
+                        else if (refreshesCopyFolder)
+                        {
+                            // Read again at the last moment: someone may have put a file in since the check above. The new copy then goes beside the folder.
+                            if (Directory.Exists(target) && !s.CopyFolderUnchanged(target) && !IsEmptyFolder(target)) (target, copyMovedNote) = CopyBesideChangedFolder(target);
+                        }
+                        else if (Directory.Exists(target)) Directory.Delete(target, recursive: false);   // an empty folder (checked above)
                         SwapFolderSave(target, tempDir);
                         tempDir = null;
+                        if (asCopy) s.NoteCopyFolder(target);   // what this copy wrote, so the next copy can tell whether anything changed since
                         if (!asCopy) marked = await s.RunAsync(() => { s.MarkSavedToDisk(wroteEdits); savedSteps = s.UndoStateNow().Steps; savedRevision = s.Revision; return (s.SaveCount, s.PlanSawUnsaved); });
                     }
                     else
@@ -4501,7 +4587,14 @@ namespace Semanticus.Engine
                     if (!asCopy)
                     {
                         if (!string.IsNullOrEmpty(path)) { s.AddFormerIdentity(ModelIdentityOf(s)); s.SourcePath = target; }
+                        // A model saved to a file is somewhere the person comes back to, as one that was opened is: without a saved connection the next
+                        // start offered nothing and its kept copy was found only by opening the file by path (r2 fix 2). A published model keeps its own row.
+                        if (!string.IsNullOrEmpty(path) && s.LiveOrigin == null && !ThrowawayPaths.IsThrowaway(target))
+                            RememberConnection("file", Path.GetFullPath(target), null, await s.RunAsync(() => { try { return s.TomDatabase?.Name; } catch { return null; } }) ?? Path.GetFileNameWithoutExtension(target));
                         await s.RebaseSidecarsAsync(CarrySidecars(oldSource, target));
+                        // A published model saved to a file is still that model: the file says so beside it, and the work kept for the model
+                        // (checks, waivers, plan, Query rows) moves into the place it now has, so a reload that opens the file finds it all.
+                        if (s.LiveOrigin != null && !ExperienceStore.IsEphemeralAnchor(s.SourcePath)) PlaceFor(s);
                         switchesNotKept = CarryDecisionSwitches(s, switchesBefore);
                         await s.RunAsync(() => { s.ClearFileRecoveryAfterSave(onlyIfPathMoved: true); s.StartFileRecovery(); return true; });
                     }
@@ -4516,8 +4609,19 @@ namespace Semanticus.Engine
             if (asCopy)
             {
                 var copyCount = Directory.Exists(target) ? Directory.EnumerateFiles(target, "*.tmdl", SearchOption.AllDirectories).Count() : 0;
-                return new SaveResult { Revision = s.Revision, Path = target, Format = fmt.ToString(), FileCount = copyCount,
-                    Note = "Saved a copy. The open model still saves to " + oldSource + "." };
+                if (File.Exists(target)) s.NoteCopyFile(target);
+                // A copy of a model that lives on a service is not a save of the service. Say which one happened, in the words the person reads (UAT 18 Oct N23: the
+                // assistant said "The changes are saved" about a copy, while the footer still said unsaved), and let the footer and the Plan say the same.
+                var liveCopy = s.LiveOrigin != null || LiveModelExport.IsInSnapshotRoot(oldSource);
+                if (liveCopy)
+                {
+                    await s.RunAsync(() => { s.NoteKeptCopy(target); return true; });
+                    PublishSaveNotification(s, "keep copy", origin: origin);   // no edit follows a copy, so the window is told: its footer and the Plan read this fact
+                }
+                return new SaveResult { Revision = s.Revision, Path = target, Format = fmt.ToString(), FileCount = copyCount, InGit = await GitPresence.InGitAsync(target).ConfigureAwait(false), IsBackupCopy = true,
+                    Note = JoinNotes(copyMovedNote, liveCopy ? KeptCopyNote(target)
+                         : firstSaveNote != null ? firstSaveNote + " The open model's next save goes to " + LastingFolderFor(oldSource) + " too."
+                         : "Saved a copy. The open model still saves to " + oldSource + ".") };
             }
             _sessions.Ledger.EnsureLoaded(s.Id);
             // After the move: the History's file is found where the model now lives, never at the place a save-as just left (it is written from here on).
@@ -4534,7 +4638,116 @@ namespace Semanticus.Engine
             var count = Directory.Exists(target)
                 ? Directory.EnumerateFiles(target, "*.tmdl", SearchOption.AllDirectories).Count()
                 : 0;
-            return new SaveResult { Revision = s.Revision, Path = target, Format = fmt.ToString(), FileCount = count, Note = firstSaveNote };
+            return new SaveResult { Revision = s.Revision, Path = target, Format = fmt.ToString(), FileCount = count, Note = JoinNotes(copyMovedNote, firstSaveNote), InGit = await GitPresence.InGitAsync(target).ConfigureAwait(false) };
+        }
+
+        /// <summary>What a copy of a live model says: where it is, and that the service has not changed (publishing is what changes it).</summary>
+        internal static string KeptCopyNote(string path) => "Kept a copy at " + path + ". The service is not changed until you publish.";
+
+        /// <summary>The lasting place for a save of a live model: the connected folder when there is one, else ~/Semanticus/&lt;model&gt; (where Connect
+        /// already keeps a live model's files). The file keeps the name the save asked for, or the working copy's own name; a name already taken
+        /// gets a number, so a lasting file is never overwritten by a later session of the same published model.</summary>
+        private string LastingFolderFor(string workingCopy) =>
+            _workspaceIsFolder && !string.IsNullOrWhiteSpace(_workspaceDir) && Directory.Exists(_workspaceDir) && !LiveModelExport.IsInSnapshotRoot(_workspaceDir)
+                ? Path.GetFullPath(_workspaceDir)
+                : Path.Combine(LastingHomeForTests ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Semanticus",
+                    LiveModelExport.SafeName(Path.GetFileNameWithoutExtension(workingCopy)));
+
+        private string LastingSaveTarget(Session s, string workingCopy, string asked, out bool ownFile)
+        {
+            ownFile = false;
+            var name = Path.GetFileName(string.IsNullOrWhiteSpace(asked) ? workingCopy : asked.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var folder = LastingFolderFor(workingCopy);
+            Directory.CreateDirectory(folder);
+            var stem = Path.GetFileNameWithoutExtension(name); var ext = Path.GetExtension(name);
+            var target = Path.Combine(folder, name);
+            // A file Semanticus already saved THIS published model to is the model's file: the save goes there (UAT 18 Oct: the assistant's save wrote
+            // "Northstar Sales Working 2.bim" beside the person's own file). Only a file that says it was saved from this model counts; any other file
+            // that holds the name is somebody else's and gets the numbered name.
+            if (File.Exists(target) && LooksLikeBimFile(target) && s.LiveOrigin != null
+                && ModelHome.RecordedFor(target) is { } recorded && string.Equals(recorded.Identity, PaneIdentity(s, null), StringComparison.Ordinal))
+            { ownFile = true; return target; }
+            for (var n = 2; File.Exists(target) || Directory.Exists(target); n++) target = Path.Combine(folder, $"{stem} {n}{ext}");
+            return target;
+        }
+
+        /// <summary>The folder a save must never write into: the open model's own folder. A TMDL folder is its own; a PBIP's is its
+        /// <c>.SemanticModel</c> folder (the <c>definition/</c> the session follows sits in it); a .bim has no folder of its own, so its
+        /// folder counts only when that folder is itself a model (a legacy <c>.SemanticModel</c> holding model.bim). A copy
+        /// written beside a loose .bim is harmless and stays allowed. Null when there is none.</summary>
+        private static string OwnModelFolder(string source)
+        {
+            if (Directory.Exists(source))
+            {
+                for (var c = source; !string.IsNullOrEmpty(c); c = Path.GetDirectoryName(c))
+                    if (Path.GetFileName(c.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)).EndsWith(".SemanticModel", StringComparison.OrdinalIgnoreCase)) return c;
+                return source;
+            }
+            var dir = Path.GetDirectoryName(Path.GetFullPath(source));
+            return !string.IsNullOrEmpty(dir) && (ModelPathResolver.ShapeOf(dir) & ~ModelPathResolver.HostShapes) != ModelPathResolver.ModelShape.None ? dir : null;
+        }
+
+        private static void RefuseSaveInsideOpenModel(string source, string target)
+        {
+            var home = OwnModelFolder(source);
+            if (home == null) return;
+            var inside = Path.GetRelativePath(RealPath(Path.GetFullPath(home)), RealPath(Path.GetFullPath(target)));
+            if (inside == "." || inside == ".." || inside.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(inside)) return;
+            var name = Path.GetFileName(home.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var stem = name.EndsWith(".SemanticModel", StringComparison.OrdinalIgnoreCase) ? name.Substring(0, name.Length - ".SemanticModel".Length) : name;
+            var parent = Path.GetDirectoryName(home.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) ?? "";
+            throw new InvalidOperationException(
+                $"Nothing was saved. A copy inside the model's own folder ('{name}') would stop the model opening. Save it somewhere outside that folder, for example '{Path.Combine(parent, stem + " copy")}'.");
+        }
+
+        /// <summary>A copy (any save to a place that is not the open model's own home) goes only to a new folder, an empty folder, or a new
+        /// file. Anything else is refused before a byte is written, with one line that names a free "model copy" place beside it. Nothing is
+        /// merged, preserved or cleaned in the target: the save never reaches a file it did not write.</summary>
+        private static void RefuseCopyOverExisting(string source, string target)
+        {
+            var isFile = File.Exists(target);
+            if (!isFile)
+            {
+                if (!Directory.Exists(target)) return;
+                try { if (!Directory.EnumerateFileSystemEntries(target).Any()) return; }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
+            }
+            var trimmed = target.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var home = OwnModelFolder(source) ?? (Directory.Exists(source) ? source : Path.ChangeExtension(source, null));
+            var stem = Path.GetFileName(home.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (stem.EndsWith(".SemanticModel", StringComparison.OrdinalIgnoreCase)) stem = stem.Substring(0, stem.Length - ".SemanticModel".Length);
+            if (stem.Length == 0) stem = "model";
+            var free = FreeSibling(Path.GetDirectoryName(trimmed) ?? trimmed, stem + " copy", isFile ? Path.GetExtension(trimmed) : "");
+            throw new InvalidOperationException(isFile
+                ? $"Nothing was saved. '{Path.GetFileName(trimmed)}' already exists. A copy goes to a new file, for example '{free}'."
+                : $"Nothing was saved. '{Path.GetFileName(trimmed)}' already has things in it. A copy goes to a new or empty folder, for example '{free}'.");
+        }
+
+        /// <summary>The new place for a copy aimed at a copy folder that has changed since Semanticus wrote it, and the plain line that says so.
+        /// The changed folder is not touched.</summary>
+        private static (string Target, string Note) CopyBesideChangedFolder(string target)
+        {
+            var trimmed = target.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var free = FreeSibling(Path.GetDirectoryName(trimmed) ?? trimmed, Path.GetFileName(trimmed));
+            return (free, $"'{Path.GetFileName(trimmed)}' has files in it that changed since Semanticus wrote it, so it was left as it is. This copy is in '{free}'.");
+        }
+
+        private static bool IsEmptyFolder(string dir)
+        {
+            try { return !Directory.EnumerateFileSystemEntries(dir).Any(); }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { return false; }
+        }
+
+        private static string JoinNotes(string first, string second) =>
+            string.IsNullOrEmpty(first) ? second : string.IsNullOrEmpty(second) ? first : first + " " + second;
+
+        /// <summary>A name beside <paramref name="parent"/> that does not exist yet: "name", then "name 2", "name 3".</summary>
+        private static string FreeSibling(string parent, string name, string extension = "")
+        {
+            var candidate = Path.Combine(parent, name + extension);
+            for (var n = 2; (Directory.Exists(candidate) || File.Exists(candidate)) && n < 1000; n++)
+                candidate = Path.Combine(parent, name + " " + n + extension);
+            return candidate;
         }
 
         /// <summary>Where a never-saved model's first save really goes, in every format, and the plain sentence that says so when
@@ -4754,10 +4967,13 @@ namespace Semanticus.Engine
         {
             if ((fmt != SaveFormat.TMDL && fmt != SaveFormat.TabularEditorFolder)
                 || !Directory.Exists(target) || !Directory.Exists(tempDir)) return;
+            // A second model saved inside this folder (see RefuseSaveInsideOpenModel) is someone's work, not a table this model dropped: it stays whole.
+            var nested = ModelPathResolver.NestedModelRoots(target);
             foreach (var file in Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories))
             {
                 var relative = Path.GetRelativePath(target, file).Replace('\\', '/');
-                if (IsDefinitionFile(relative, fmt) || IsSaveTransient(relative) || IsTransientSidecar(relative)) continue;
+                var inNested = nested.Any(n => file.StartsWith(n + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+                if (!inNested && (IsDefinitionFile(relative, fmt) || IsSaveTransient(relative) || IsTransientSidecar(relative))) continue;
                 var dest = Path.Combine(tempDir, relative.Replace('/', Path.DirectorySeparatorChar));
                 if (File.Exists(dest)) continue;   // the save wrote this one; its bytes win
                 try
@@ -4991,6 +5207,7 @@ namespace Semanticus.Engine
                 KeepsUnsavedWork = true,
                 FileRecovery = s.FileRecovery,
                 DiskDiverged = diskDiverged,
+                KeptCopyPath = origin != null ? s.KeptCopyPath : null,
                 Tables = m.Tables.Count,
                 Measures = m.AllMeasures.Count(),
                 CompatibilityLevel = m.Database?.CompatibilityLevel ?? 0,
@@ -5333,6 +5550,9 @@ namespace Semanticus.Engine
         {
             var context = _sessions.CurrentContext;
             var s = context.RequireSession();
+            // Nothing to take back is not a change: publishing one said "Undone" and marked every result "The model changed".
+            var state = await s.ReadAsync(_ => s.UndoStateNow());
+            if (!state.CanUndo) return state;
             await s.UndoAsync(origin);
             await ReconcilePlanAfterHistoryAsync(context, s);
             await RefreshStartPlanAfterHistoryAsync(origin);
@@ -5343,6 +5563,8 @@ namespace Semanticus.Engine
         {
             var context = _sessions.CurrentContext;
             var s = context.RequireSession();
+            var state = await s.ReadAsync(_ => s.UndoStateNow());
+            if (!state.CanRedo) return state;
             await s.RedoAsync(origin);
             await ReconcilePlanAfterHistoryAsync(context, s);
             await RefreshStartPlanAfterHistoryAsync(origin);
@@ -6408,6 +6630,10 @@ namespace Semanticus.Engine
             // `az login` last used, so a workspace in ANOTHER tenant rejects it). A token-acquisition failure (not signed
             // in / cancelled sign-in / bad tenant) would otherwise throw a raw Azure.Identity error across the door —
             // catch it and return the SAME plain-language guidance as a login rejection, inside the introspection wrapper.
+            // A server the person typed is theirs; an assistant's is trusted only when the person has saved it, it is a Microsoft SQL host,
+            // or the person says yes to the question.
+            var hostRefusal = await SqlHostRefusalAsync(server, database, authMode, tenantId, origin, typedByPerson: !DeployGuard.IsAgent(origin)).ConfigureAwait(false);
+            if (hostRefusal != null) throw new InvalidOperationException("Fabric SQL introspection failed: " + hostRefusal);
             string token;
             try
             {
@@ -6760,6 +6986,11 @@ namespace Semanticus.Engine
         {
             var dir = GitWorkingDirOrNull();
             if (dir == null) return new GitStatus { IsRepo = false, Note = "No model is open on disk." };
+            // A model opened from a workspace is Semanticus's working copy in a temporary folder: that folder is no place for git, and "not a repository"
+            // there must not read as a fact about where the person keeps the model. A save moves the model to a lasting folder; git is read there.
+            if (LiveModelExport.IsInSnapshotRoot(dir))
+                return new GitStatus { IsRepo = false, WorkingDir = dir, ModelDirty = _sessions.Current?.HasUnsavedChanges ?? false,
+                    Note = "This model is Semanticus's working copy of a published model, in a temporary folder. Save it (save_model) to put it in a lasting folder, then read git there." };
             var st = await GitCli.StatusAsync(dir);
             var s = _sessions.Current;
             if (s != null) st.ModelDirty = s.HasUnsavedChanges;
@@ -7760,6 +7991,32 @@ namespace Semanticus.Engine
                 var outcome = new ModelCompare.ApplyOutcome();
                 if (restoreRefs.Length > 0)
                     outcome = ModelCompare.Apply(rdb.Model, ldb.Model, diff, new System.Collections.Generic.HashSet<string>(restoreRefs, StringComparer.Ordinal));
+                // A restore that clashes with an object the push added (a hierarchy renamed, then a new one made under its old name) cannot
+                // go back while the new one is still there. Take the removals out first, in their own save, then restore on a fresh read.
+                var removedFirst = System.Array.Empty<string>();
+                if (outcome.Failed.Count > 0 && removeItems.Count > 0)
+                {
+                    var (ldb0, _) = await SnapshotWorkspaceAsync(rp.Endpoint, rp.Database, authMode, cleanups, origin, refTenant);
+                    var bim0 = CreatePushStagingPath(cleanups);
+                    System.IO.File.WriteAllText(bim0, RawTom.JsonSerializer.SerializeDatabase(ldb0));
+                    var first = await PushWorkspaceAsync(bim0, rp.Endpoint, rp.Database, effectiveMode, removeItems.Select(LiveDeleteTarget.FromDiffItem).ToArray(), DeployGuard.IsAgent(origin), refTenant, (await SavedSignInForAsync(rp.Endpoint, rp.Database, authMode, refTenant)).Saved);
+                    if (first?.Committed == true && first.DeletedRefs.Length > 0)
+                    {
+                        removedFirst = first.DeletedRefs;
+                        (ldb, _) = await SnapshotWorkspaceAsync(rp.Endpoint, rp.Database, authMode, cleanups, origin, refTenant);
+                        diff = ModelCompare.Diff(rdb.Model, ldb.Model, "restore point " + rp.Id, tlabel);
+                        changed = diff.Items.Where(i => i.Action != "Equal").ToList();
+                        republished = changed.Where(i => i.LikelyRepublished).Select(i => i.Ref + " (republished under us: re-run rollback_push to diff against the current state)")
+                            .Distinct(StringComparer.Ordinal).ToList();
+                        items = changed.Where(i => !i.LikelyRepublished).ToList();
+                        removeItems = items.Where(i => i.Action == "Delete").ToList();
+                        restoreRefs = items.Where(i => i.Action != "Delete").Select(i => i.Ref).ToArray();
+                        removeRefs = removeItems.Select(i => i.Ref).ToArray();
+                        outcome = restoreRefs.Length > 0
+                            ? ModelCompare.Apply(rdb.Model, ldb.Model, diff, new System.Collections.Generic.HashSet<string>(restoreRefs, StringComparer.Ordinal))
+                            : new ModelCompare.ApplyOutcome();
+                    }
+                }
                 var failed = outcome.Failed.Select(f => f.Ref + " (" + f.Reason + ")").ToList();
                 failed.AddRange(republished);
 
@@ -7791,9 +8048,9 @@ namespace Semanticus.Engine
                         await RecordVerifiedEditAsync(sess, new VerifiedEditRecord
                         {
                             SessionId = sess.Id, Revision = 0, Origin = origin, Op = "rollback_push",
-                            Verdict = "deployed",
-                            Summary = $"rolled {rp.Endpoint}/{rp.Database} back to restore point {rp.Id}: restored {restoreRefs.Length}, removed {removeRefs.Length}",
-                            Evidence = System.Text.Json.JsonSerializer.Serialize(new { rp.Endpoint, rp.Database, restorePoint = rp.Id, rp.CapturedUtc, restored = restoreRefs, removed = rep.DeletedRefs, failed }),
+                            Verdict = failed.Count > 0 ? "needs-review" : "deployed",   // a rollback that left something behind is not "back to how it was"
+                            Summary = $"rolled {rp.Endpoint}/{rp.Database} back to restore point {rp.Id}: restored {restoreRefs.Length}, removed {removedFirst.Length + removeRefs.Length}" + (failed.Count > 0 ? $", could not restore {failed.Count}" : ""),
+                            Evidence = System.Text.Json.JsonSerializer.Serialize(new { rp.Endpoint, rp.Database, restorePoint = rp.Id, rp.CapturedUtc, restored = restoreRefs, removed = removedFirst.Concat(rep.DeletedRefs).ToArray(), failed }),
                         });
                     }
                     catch { /* the rollback succeeded; a failed audit write must not misreport it */ }
@@ -7803,15 +8060,16 @@ namespace Semanticus.Engine
                 // would read "3 of 5 removed" as a clean success. Surfaced structurally, not only in the note.
                 foreach (var r in rep.DeletesRefused) failed.Add(r + " (remove refused: republished under us; re-run rollback_push)");
 
-                var note = $"Rolled {tlabel} back to the snapshot taken {rp.CapturedUtc}: restored {restoreRefs.Length} object(s), removed {rep.DeletedRefs.Length}.";
+                var allRemoved = removedFirst.Concat(rep.DeletedRefs).ToArray();
+                var note = $"Rolled {tlabel} back to the snapshot taken {rp.CapturedUtc}: restored {restoreRefs.Length} object(s), removed {allRemoved.Length}.";
                 if (failed.Count > 0) note += " Not restored: " + string.Join("; ", failed);
                 var partialErr = rep.Error;   // Committed==true with an Error ⇒ the metadata landed, a recalc did not
                 if (partialErr != null) note += " Warning: " + partialErr;
 
                 return new RollbackResult
                 {
-                    Applied = true, Restored = restoreRefs.Length, Removed = rep.DeletedRefs.Length,
-                    RestoredRefs = restoreRefs, RemovedRefs = rep.DeletedRefs, FailedRefs = failed.ToArray(),
+                    Applied = true, Restored = restoreRefs.Length, Removed = allRemoved.Length,
+                    RestoredRefs = restoreRefs, RemovedRefs = allRemoved, FailedRefs = failed.ToArray(),
                     RestorePointId = rp.Id, Target = tlabel, Note = note, Error = partialErr,
                 };
             }
@@ -10431,6 +10689,10 @@ namespace Semanticus.Engine
             string reportWarn = null;
             var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
             long rev;
+            // A formula typed in the Properties grid is a DAX write like set_dax: in Verified Mode it leaves the same record. The mode is read
+            // once, before the write, like VerifiedGuardAsync does, so the record never claims a check the write did not get.
+            var verified = _verifiedMode && string.Equals(propertyName, "Expression", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(value);
+            var isDaxObject = false;
             try
             {
                 rev = await s.MutateAsync(origin, $"set {propertyName}", m =>
@@ -10440,9 +10702,11 @@ namespace Semanticus.Engine
                     if (expectedValue != null) GuardExpectedValue("value", expectedValue, GridValueOf(m, obj, propertyName), value);   // the grid's starting point against what is live NOW, in this turn
                     changed = ApplyObjectProperty(m, s, obj, propertyName, value, out reportWarn);
                     if (!changed) throw new NoopMutationException();
+                    isDaxObject = obj is Measure or CalculatedColumn or CalculatedTable or CalculationItem or Function;
                 }, cascade);
             }
             catch (NoopMutationException) { return Noop(s); }
+            if (changed) await RecordVerifiedModeEditAsync(verified && isDaxObject, s, "set_dax", objRef, value, rev, origin);
             return new SetResult { Revision = rev, Changed = changed, Warning = JoinWarnings(cascade, reportWarn) };
         }
 
@@ -10739,11 +11003,11 @@ namespace Semanticus.Engine
                     Name = "CompatibilityLevel",
                     DisplayName = "Compatibility level",
                     Category = "Basic",
-                    Description = "The model's compatibility level. Raising it is one-way. Calendars need 1701. Functions need 1702.",
+                    Description = "The model's compatibility level. Raising it can stop older tools opening the model. Calendars need 1701. Functions need 1702.",
                     Kind = "number",
                     Value = current.ToString(),
                     ReadOnly = false,
-                    Hint = "Raising this cannot be undone. Older tools may no longer open the model.",
+                    Hint = "Undo takes back a raise in this session. Older tools may no longer open a raised model.",
                 };
                 props = props.Concat(new[] { compatibility })
                     .OrderBy(d => d.Category, StringComparer.OrdinalIgnoreCase)
@@ -11785,6 +12049,8 @@ namespace Semanticus.Engine
         // Rule-level (objRef null/'*' = every instance, model-wide) and per-instance are both free.
         public async Task<SetResult> WaiveFindingAsync(string system, string ruleId, string objRef, string reason, string origin)
         {
+            // A Validation check that differs is waived through the same door and the same store: the "rule id" is the check's id.
+            if (string.Equals((system ?? "").Trim(), CheckWaivers.System, StringComparison.OrdinalIgnoreCase)) return await WaiveCheckAsync(ruleId, reason, origin);
             var context = _sessions.CurrentContext;
             var s = context.RequireSession();
             string warning = null;
@@ -11864,6 +12130,7 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> UnwaiveFindingAsync(string system, string ruleId, string objRef, string origin)
         {
+            if (string.Equals((system ?? "").Trim(), CheckWaivers.System, StringComparison.OrdinalIgnoreCase)) return await UnwaiveCheckAsync(ruleId, origin);
             system = (system ?? "").Trim().ToLowerInvariant();
             if (system != "bpa" && system != "air") throw new ArgumentException("system must be 'bpa' or 'air'.");
             if (string.IsNullOrWhiteSpace(ruleId)) throw new ArgumentException("A rule id is required.");
@@ -11883,7 +12150,16 @@ namespace Semanticus.Engine
         public Task<WaiverRecord[]> ListWaiversAsync()
         {
             var s = _sessions.Require();
-            return s.ReadAsync(m => WaiverStore.Load(m).ToArray());
+            return ListWaiversCoreAsync(s);
+        }
+
+        private async Task<WaiverRecord[]> ListWaiversCoreAsync(Session s)
+        {
+            // A finding's waiver is in the model; a Validation check's lives with the checks (CheckWaiverStore).
+            var inModel = await s.ReadAsync(m => WaiverStore.Load(m).Where(x => !string.Equals(x.System, CheckWaivers.System, StringComparison.OrdinalIgnoreCase)).ToList());
+            var (_, checks) = await LoadCheckWaiversAsync(s);
+            foreach (var r in checks) r.InForce = LatestOutcomeOf(r.RuleId)?.Waiver != null;
+            return inModel.Concat(checks).ToArray();
         }
 
         public Task<FixPrompt> BpaGetFixPromptAsync(string ruleId, string objRef)

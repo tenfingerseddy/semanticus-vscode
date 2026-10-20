@@ -1,9 +1,10 @@
-// queries.chart_kind: Jev's chart pick for a Queries result (docs/queries-chart-pick-bar.md). OFF by default.
+// queries.chart_kind: Jev's visual pick for a Query result (docs/queries-chart-pick-bar.md). OFF by default.
 //
-// The chart rules (Semanticus.VSCode/webview/src/chartpick.mjs) always pick first and say which kinds can show the
-// shape at all (`fits`). This point may only choose among those, or say the rules' pick is fine, so Jev can be wrong
+// The visual rules (Semanticus.VSCode/webview/src/query-model.ts queryVisualFits, lifted from Graphicus at 84812e04) always pick first
+// and say which visuals can draw the shape at all (`fits`). This point may only choose among those, or say the rules' pick is fine, so Jev can be wrong
 // but never broken. What leaves the machine is the question's words and the result's SHAPE: each split's display
-// name, whether it is a date and how many values it has, how many numbers, how many rows. Never a row, never a value.
+// name, whether it is a date and how many values it has, the display name of each number, how many rows, whether the numbers share a
+// unit and whether any is negative. Never a row, never a value. 1.6 (schema 2): the visual set replaced the old chart kinds.
 //
 // Jev writes no text (golden rule 1). The reason shown beside a pick is one fixed sentence per chart kind, written here.
 //
@@ -36,6 +37,12 @@ namespace Semanticus.Engine.Query
         public ChartPickDim[] Dims { get; set; }
         public int Measures { get; set; }
         public int Rows { get; set; }
+        /// <summary>The display name of each number (a model object name, like a split's), so the question names what it asks about.</summary>
+        public string[] MeasureNames { get; set; }
+        /// <summary>Every number is in one unit (same format), so two of them can be set against each other.</summary>
+        public bool SameUnit { get; set; }
+        /// <summary>A negative number is in the result (a bullet draws from zero).</summary>
+        public bool Negatives { get; set; }
     }
 
     public sealed class ChartPickDim
@@ -70,17 +77,17 @@ namespace Semanticus.Engine.Query
         /// <summary>The neutral option: "the rules' pick is fine". It maps to the rules' pick, by the rules.</summary>
         public const string RulesOption = "rules";
 
-        /// <summary>Every kind Queries can draw, as chartpick.mjs names them.</summary>
-        public static readonly IReadOnlyList<string> Kinds = new[] { "matrix", "line", "bar", "area", "table", "card", "scatter" };
+        /// <summary>Every visual the Query page can draw, as query-model.ts names them (the shared visual set).</summary>
+        public static readonly IReadOnlyList<string> Kinds = new[] { "total", "bars", "groups", "line", "variance", "dumbbell", "bullet", "slope", "multiples", "sparktable", "table" };
 
         public const int MaxDims = 8;
         public const int MaxNameChars = 200;
         public const int MaxWordsChars = 2000;
 
-        internal const string OffNote = "Jev's chart pick is off until it clears its bar.";
-        internal const string SwitchedOffNote = "Jev's chart pick is switched off for this model.";
-        internal const string NoFitsNote = "The chart rules left no chart to choose from, so the rules' pick stands.";
-        internal const string OneFitNote = "Only one chart fits this result, so there was nothing for Jev to choose.";
+        internal const string OffNote = "Jev's visual pick is off until it clears its bar.";
+        internal const string SwitchedOffNote = "Jev's visual pick is switched off for this model.";
+        internal const string NoFitsNote = "The visual rules left no visual to choose from, so the rules' pick stands.";
+        internal const string OneFitNote = "Only one visual fits this result, so there was nothing for Jev to choose.";
         internal const string NoModelNote = "Jev was not asked: no model is open.";
         internal const string NeutralNote = "Jev said the rules' pick is fine.";
 
@@ -88,14 +95,18 @@ namespace Semanticus.Engine.Query
         /// the kind travels in its own field, and Queries already writes "Jev picked Table:" before it.</summary>
         public static string ReasonFor(string kind) => kind switch
         {
-            "matrix" => "Rows and columns of numbers read best as a grid.",
+            "total" => "One number reads best on its own, large, with what it is set against.",
+            "bars" => "Ranked bars make it easy to compare the members side by side, biggest first.",
+            "groups" => "A cluster of bars for each member, one bar in it for each value of the second field, shows both splits at once.",
             "line" => "Numbers over time read best as a line from left to right.",
-            "bar" => "Bars make it easy to compare the numbers side by side.",
-            "area" => "A filled line shows how a total builds up over time.",
+            "variance" => "Bars from a zero line show how far each member is from the other number.",
+            "dumbbell" => "A dot for each value and the gap between them show where the two numbers differ.",
+            "bullet" => "Each value against its mark shows who is short and who is over.",
+            "slope" => "A line for each member from the first value to the second shows who moved most.",
+            "multiples" => "A small trend for each member keeps every trend readable on one scale.",
+            "sparktable" => "A trend beside each member's figures shows many members at once.",
             "table" => "The rows themselves are the clearest way to read this.",
-            "card" => "One number reads best on its own, large.",
-            "scatter" => "Two numbers plotted against each other show how they move together.",
-            _ => "The chart rules picked this chart.",
+            _ => "The visual rules picked this visual.",
         };
 
         /// <summary>The kinds as given, known ones only, each once, in the rules' order.</summary>
@@ -128,7 +139,15 @@ namespace Semanticus.Engine.Query
                     };
                 }).ToList(),
                 ["measures"] = Math.Max(0, shape?.Measures ?? 0),
+                ["measure_names"] = (shape?.MeasureNames ?? Array.Empty<string>()).Where(n => !string.IsNullOrWhiteSpace(n)).Take(MaxDims).Select(n =>
+                {
+                    var name = n.Trim();
+                    if (name.Length > MaxNameChars) throw new ArgumentException($"A number's name is longer than {MaxNameChars} characters.");
+                    return (object)name;
+                }).ToList(),
                 ["rows"] = Math.Max(0, shape?.Rows ?? 0),
+                ["same_unit"] = shape?.SameUnit ?? false,
+                ["has_negatives"] = shape?.Negatives ?? false,
             }));
             var snapshot = DecisionSnapshot.Build(point, fields);
             DecisionSnapshot.RequireWithin(snapshot, 16 * 1024);
@@ -142,24 +161,28 @@ namespace Semanticus.Engine.Query
             var seed = DecisionDigest.Sha256Hex(DecisionDigest.CanonicalSnapshotJson(snapshot));
             var ordered = fits.OrderBy(k => DecisionDigest.Sha256Hex(seed + ":" + k), StringComparer.Ordinal).ToList();
             var options = ordered.Select(k => new DecisionOption(k, Criterion(k))).ToList();
-            options.Add(new DecisionOption(RulesOption, "none of these is clearly better than the chart the rules would pick"));
+            options.Add(new DecisionOption(RulesOption, "none of these is clearly better than the visual the rules would pick"));
             return new[]
             {
                 new DecisionQuestion(Question, DecisionQuestionKind.Choice,
-                    "Which chart shows the answer to the question in question_words best, for a result shaped as result_shape describes?",
+                    "Which visual lets a model developer see the answer to the question in question_words in this result? The result is shaped as result_shape describes, and it names each split and each number.",
                     options),
             };
         }
 
         private static string Criterion(string kind) => kind switch
         {
-            "matrix" => "a grid of numbers, one row per value of one split and one column per value of another",
-            "line" => "a line across dates from left to right, one line per number or per value of a small split",
-            "bar" => "bars side by side, one per value of the split",
-            "area" => "a filled line across dates, for a total building up over time",
+            "total" => "one number shown large on its own, with what it is set against beside it",
+            "bars" => "bars side by side, one per member, biggest first",
+            "groups" => "a cluster of bars for each member, one bar in it for each value of a second field",
+            "line" => "a line across dates from left to right",
+            "variance" => "bars from a zero line, one per member, showing how far one number is from the other",
+            "dumbbell" => "two dots per member joined by a line, one dot per value, so the gap shows",
+            "bullet" => "a bar per member against a mark, to see who is under or over it",
+            "slope" => "one line per member from its first value to its second",
+            "multiples" => "one small trend per member, all on one scale",
+            "sparktable" => "a table of members with a small trend beside each one's figures",
             "table" => "the rows as they are, one line each",
-            "card" => "one number shown large on its own",
-            "scatter" => "each row as a dot, one number across and the other up",
             _ => kind,
         };
 
@@ -186,7 +209,7 @@ namespace Semanticus.Engine.Query
             if (string.Equals(a.Choice, RulesOption, StringComparison.Ordinal))
                 return WithConfidence(Rules(rulesPick, NeutralNote), a.Confidence);
             if (!fits.Contains(a.Choice, StringComparer.Ordinal))
-                return WithConfidence(Rules(rulesPick, "Jev named a chart the rules had ruled out, so it was not used and the rules' pick stands."), a.Confidence);
+                return WithConfidence(Rules(rulesPick, "Jev named a visual the rules had ruled out, so it was not used and the rules' pick stands."), a.Confidence);
             return new ChartPick { Kind = a.Choice, By = ChartPick.ByJev, Reason = ReasonFor(a.Choice), Confidence = a.Confidence };
         }
 

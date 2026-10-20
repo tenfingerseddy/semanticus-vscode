@@ -309,6 +309,35 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public void The_biggest_column_at_a_clear_share_is_a_finding_even_on_a_small_model()
+        {
+            // The UAT shape (P16): one text column is 54% of a model under 8 MB, and a smaller one is under the 1 MB floor of the other rules.
+            var report = new VpaqReport
+            {
+                ModelSize = 7_400_000, StorageMode = VpaqStorageMode.Import,
+                Tables = new[] { new VpaqTable { Name = "Sales", Size = 6_800_000, PctOfModel = 92 } },
+                TopColumns = new[]
+                {
+                    // Under 1 MB, so neither size rule fires; 40% of the model.
+                    new VpaqColumn { Table = "Sales", Column = "AuditNote", TotalSize = 900_000, DataSize = 400_000, DictionarySize = 300_000, HashIndexSize = 200_000, PctOfModel = 40, Encoding = "Hash" },
+                    new VpaqColumn { Table = "Sales", Column = "OrderNumber", TotalSize = 120_000, DataSize = 60_000, DictionarySize = 40_000, HashIndexSize = 20_000, PctOfModel = 2, Encoding = "Hash" },
+                },
+            };
+            var opps = StorageOpportunities.Compute(report, new UnusedResult(), Array.Empty<StorageColumnMeta>(), StorageEvidenceLevels.CurrentEditingModel);
+            var share = Assert.Single(opps);
+            Assert.Equal("STORAGE-SHARE", share.RuleId);
+            Assert.Equal("column:Sales/AuditNote", share.Ref);
+            Assert.Equal("AuditNote is 40% of the model", share.RuleName);
+
+            // The real shape (UAT P16): 4.0 MB, 54%, the dictionary rule names it too. The biggest cost is still named, first, and says how much of the model it is.
+            report.TopColumns[0].TotalSize = 4_000_000; report.TopColumns[0].DictionarySize = 3_900_000; report.TopColumns[0].PctOfModel = 54;
+            var both = StorageOpportunities.Compute(report, new UnusedResult(), Array.Empty<StorageColumnMeta>(), StorageEvidenceLevels.CurrentEditingModel);
+            Assert.Equal("STORAGE-SHARE", both[0].RuleId);
+            Assert.Equal("AuditNote is 54% of the model", both[0].RuleName);
+            Assert.Contains(both, o => o.RuleId == "STORAGE-DICT" && o.Column == "AuditNote");
+        }
+
+        [Fact]
         public async Task A_model_with_no_data_says_none_and_has_no_measured_blocks()
         {
             using var rig = await BuildAsync(connect: false);

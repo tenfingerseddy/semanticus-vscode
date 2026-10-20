@@ -326,6 +326,10 @@ namespace Semanticus.Engine
             DecisionRegistry.CleanupSuggest => true,
             // 1.5, the Next line: it only chooses among the steps the rules already found eligible, and every word is the rules'.
             DecisionRegistry.NextStep => NextStepJevLive,
+            // 1.5.1, the Copilot test: groups a round's misses. Off until its replay clears the bar (CopilotJevDecides).
+            DecisionRegistry.CopilotMisses => CopilotJevLive,
+            // 1.6, the Validation page: it only chooses among the visuals the page's rules leave, off until its replay clears its bar.
+            DecisionRegistry.CheckVisualKind => JevPicksCheckVisuals,
             _ => null,
         };
 
@@ -439,8 +443,8 @@ namespace Semanticus.Engine
             if (s == null) return null;
             if (!ExperienceStore.IsEphemeralAnchor(s.SourcePath)) return SavedModelSwitchPlace(s.SourcePath);
             var place = new DecisionSwitchPlace { Unsaved = s.LiveOrigin == null ? s : null };
-            if (_workspaceDir == null) return place;
-            var sidecar = Path.Combine(_workspaceDir, LayoutStore.DirName);
+            if (FolderDir == null) return place;   // never the window's start folder (UAT round 2, N1)
+            var sidecar = Path.Combine(FolderDir, LayoutStore.DirName);
             var folder = Path.Combine(sidecar, SwitchFolder);
             place.Folder = folder;
             var o = s.LiveOrigin;
@@ -1119,6 +1123,10 @@ namespace Semanticus.Engine
         // The scope is passed in rather than read again: it is the key the record beside it was just read or
         // written under, and reading it twice would let an edit between the two lines describe one model's
         // permission under another model's key.
+        /// <summary>The points whose fields join the "every detail" check only once the point is live in this build.</summary>
+        private static bool ConsentWaitsForLive(string field) =>
+            field.StartsWith(DecisionRegistry.CheckVisualKind + ":", StringComparison.Ordinal);
+
         private DecisionConsentInfo DescribeConsent(DecisionConsent consent, string scope)
         {
             string reason;
@@ -1130,7 +1138,11 @@ namespace Semanticus.Engine
             }
             if (current)
             {
-                var declared = new HashSet<string>(DecisionRegistry.DeclaredFields, StringComparer.Ordinal);
+                // A point that joined version 6 after it shipped and is OFF in this build asks for nothing yet (1.6, checks.visual_kind):
+                // its fields do not make a person's permission "not current", so an upgrade does not show the card again. The card is
+                // asked once, when the point goes live; DecisionConsent.Covers still refuses the point itself until then.
+                var declared = new HashSet<string>(DecisionRegistry.DeclaredFields
+                    .Where(f => !(ConsentWaitsForLive(f) && !DecisionPointLiveInThisBuild(f.Substring(0, f.IndexOf(':'))))), StringComparer.Ordinal);
                 var missing = declared.Where(f => !consent.ApprovedFields.Contains(f, StringComparer.Ordinal)).OrderBy(f => f, StringComparer.Ordinal).ToList();
                 if (missing.Count > 0)
                 {

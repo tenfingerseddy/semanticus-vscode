@@ -26,7 +26,7 @@ namespace Semanticus.Engine
         {
             var anchor = _sessions.Current?.SourcePath;
             var sidecar = !ExperienceStore.IsEphemeralAnchor(anchor) ? LayoutStore.DirFor(anchor)
-                        : _workspaceDir == null ? null : Path.Combine(_workspaceDir, LayoutStore.DirName);
+                        : NoFileSidecar(_sessions.Current);
             // Ephemeral (live/XMLA/unsaved) + no workspace → no project location. Rather than strand project-scope
             // insights as UNWRITABLE (the null case), borrow the GLOBAL knowledge DIR — but ScopeFile keeps the project
             // FILE scope-private (a per-model insights.project.<fp>.jsonl), never the shared global insights.jsonl. Scope
@@ -58,7 +58,7 @@ namespace Semanticus.Engine
         // True when the current session has no durable project location (ephemeral anchor + no workspace) — the project
         // insight store then borrows the GLOBAL knowledge dir and needs a scope-private file name (see ScopeFile).
         private bool ProjectFallsBackToGlobal()
-            => ExperienceStore.IsEphemeralAnchor(_sessions.Current?.SourcePath) && _workspaceDir == null;
+            => ExperienceStore.IsEphemeralAnchor(_sessions.Current?.SourcePath) && NoFileSidecar(_sessions.Current) == null;
 
         // The scope-private project file name for the fallback, keyed by a stable, cheap model identity so different
         // models keep SEPARATE project stores (a project purge only erases THIS model's file, and a model's project

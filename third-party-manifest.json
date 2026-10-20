@@ -212,6 +212,23 @@
       "upstreamEquivalence": "nuget-version-pin"
     },
     {
+      "path": "MessagePack",
+      "kind": "nuget",
+      "upstream": "MessagePack-CSharp/MessagePack-CSharp",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/MessagePack-CSharp/MessagePack-CSharp",
+      "author": "Yoshifumi Kawai and contributors",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "2.5.303",
+      "verifiedOn": "2026-10-16",
+      "evidence": "The shipped messagepack.nuspec (2.5.303) declares <license type=\"expression\">MIT</license> and records repository https://github.com/MessagePack-CSharp/MessagePack-CSharp commit 7fd78bbf3476e03beae8b0f7a521125525a8a64a. The package carries no licence file, so LICENSE was read at that commit (2,453 bytes, SHA-256 3c267c978e61b4ab...): MIT License, Copyright (c) 2017 Yoshifumi Kawai and contributors, with the full permission notice, followed by the BSD 2-Clause notice for lz4net (Copyright (c) 2013-2017, Milosz Krajewski), which MessagePack's LZ4 code is derived from. Both are reproduced in the notice. MessagePack was already in the payload as a transitive dependency of StreamJsonRpc at 2.5.302; it is now a direct pin at 2.5.303 because 2.5.302 carries GHSA-qhrr-8q5h-9q3h (NU1902).",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": "MessagePack",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
       "path": "Azure.Identity",
       "kind": "nuget",
       "upstream": "Azure/azure-sdk-for-net",

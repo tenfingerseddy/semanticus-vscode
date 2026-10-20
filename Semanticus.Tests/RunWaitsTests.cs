@@ -40,6 +40,8 @@ namespace Semanticus.Tests
                 {
                     await b.Engine.SetObjectPropertyAsync("column:Sales/Amount", "SummarizeBy", "None", "human");
                     await b.Engine.SetObjectPropertyAsync("column:Sales/Amount", "IsHidden", "true", "human");
+                    // A table whose only column is hidden and that holds measures reads as a home for measures (IsMeasureTablePlaceholder, 15 Oct), so Sales shows one real column.
+                    await b.Engine.CreateColumnAsync("table:Sales", "Region", "String", null, "human");
                 }
             }, file);
             f.UseNull();

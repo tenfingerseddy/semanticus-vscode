@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { shouldApplyDaxBuffer } from '../out/daxHeader.js';
+import { makeLoader } from './helpers/webview-load.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
@@ -141,7 +142,9 @@ test('ticks change the count: removals count apart, and a row that needs an unti
   // the engine's failed list, in plain words, matched by ref and never taken apart
   const reasons = copy.failureReasons([table.ref, `${margin.ref} (merged locally but the live deploy did not carry it: a metadata deploy doesn't push this object type)`], rows);
   assert.match(reasons.get(table.ref), /different object with this name/);
-  assert.match(reasons.get(margin.ref), /does not take this kind of change/);
+  // Kane, 17 Oct: a limit of ours is never put on Power BI
+  assert.equal(reasons.get(margin.ref), 'This change stays in your copy for now. Semanticus cannot send it to Power BI yet.');
+  assert.doesNotMatch(reasons.get(margin.ref), /Power BI does not/);
   // Kane, 13 Oct: no engine words reach the person, and the compatibility level is one plain row
   const engineWords = copy.failureReasons([`table:Date (table 'Date' carries authored shell metadata this apply path cannot copy yet; deploy it through TMDL/XMLA instead)`], [{ ref: 'table:Date', objectType: 'Table', name: 'Date', action: 'Update' }]).get('table:Date');
   assert.doesNotMatch(engineWords, /TMDL|XMLA|shell|metadata|apply path/);
@@ -512,6 +515,14 @@ test('role-diff: a role member is shown in words, and a role change that cannot 
 
   // The row says what it is, and the engine's reason reads as a plain line. Neither mentions JSON.
   assert.equal(copy.rowNote(row('Update', role([person, group]), role([group])), 'Contoso Sales'), 'role members changed');
+  // UAT 18 Oct N27: a role whose row filter was fixed up after a rename read only "role changed".
+  const filtered = (expr, extra = {}) => role([group], { tablePermissions: [{ name: 'Store', filterExpression: expr, ...extra }] });
+  assert.equal(copy.rowNote(row('Update', filtered("'Store'[Store Region] = \"North\""), filtered('Store[Region] = "North"', { errorMessage: "Column 'Region' in table 'Store' cannot be found" })), 'Contoso Sales'),
+    'row filter updated for the rename', 'the destination filter is broken by the rename and the copy carries the fix');
+  assert.equal(copy.rowNote(row('Update', filtered('Store[Region] = "South"'), filtered('Store[Region] = "North"')), 'Contoso Sales'), 'row filter changed', 'a filter the person edited is not a rename');
+  // The same filter with only a column name different (the real case on Northstar, 18 Oct: Store[Region] renamed to Store[Store Region], and the service filter still works).
+  assert.equal(copy.rowNote(row('Update', filtered('Store[Store Region] = "North"'), filtered('Store[Region] = "North"')), 'Contoso Sales'), 'row filter updated for the rename');
+  assert.equal(copy.rowNote(row('Update', filtered("'Store Dim'[Store Region] = \"North\""), filtered('Store[Region] = "North"')), 'Contoso Sales'), 'row filter updated for the rename', 'a table name that moved is a rename too');
   assert.equal(copy.rowNote(row('Create', role([group]), null), 'Contoso Sales'), 'new role');
   assert.equal(copy.rowNote(row('Delete', null, role([group])), 'Contoso Sales'), 'only on Contoso Sales. Tick to remove it there', 'a role removal still goes');
   assert.equal(copy.heldReason, undefined, 'no role row is held back any more: a role goes like any other change');
@@ -613,6 +624,96 @@ test('a refused level raise shows the person\'s sentence and only the service\'s
   // nothing after the head: the head alone
   assert.equal(copy.plainPublishError(head), head);
   assert.equal(copy.plainPublishError('Power BI would not raise the compatibility level from 1600 to 1701, so nothing was published:'), head);
+});
+
+test('Kane 17 Oct: the button always ends in a plain result', async () => {
+  // Kane, 17 Oct: the button always ends in a plain result. A press that gets no answer is handed back after a ceiling, with a plain line.
+  assert.deepEqual(await copy.waitUpTo(new Promise(() => {}), 20), { late: true }, 'no answer within the ceiling: the press is handed back');
+  assert.deepEqual(await copy.waitUpTo(Promise.resolve(5), 20), { value: 5 }, 'an answer inside the ceiling is passed through');
+  await assert.rejects(copy.waitUpTo(Promise.reject(new Error('x')), 20), /x/, 'a failure inside the ceiling still fails');
+  assert.ok(copy.PUBLISH_WAIT_MS >= 60_000 && copy.PUBLISH_WAIT_MS < 600_000, 'longer than a normal push, shorter than the ten-minute call limit');
+  assert.equal(copy.stillPublishingLine('Contoso'), 'Contoso has not answered yet. The publish may still finish. The list below shows what is left.');
+  assert.doesNotMatch(copy.stillPublishingLine('Contoso'), /engine|timeout|timed out/i);
+  assert.match(changes, /waitUpTo\(/, 'the page hands a press back after the ceiling');
+  // Kane 17 Oct (round 2): when the late publish lands, the real result (and Undo publish) replaces "may still finish".
+  assert.match(changes, /const report = \(r: ApplyDiffResult\)/, 'one function turns an answer into the page line');
+  assert.match(changes, /press === pressNo\.current\) report\(r\)/, 'the late answer shows its real result unless a newer press took the page');
+});
+
+test('a language row says what changed in words: the AI instructions, not "en-US · language changed"', () => {
+  const { rowWords } = makeLoader({})('publish-rowwords.ts');
+  const culture = (instructions, extra = {}) => JSON.stringify({ name: 'en-US', linguisticMetadata: { contentType: 'json', content: JSON.stringify({ Version: '1.0.0', Language: 'en-US', CustomInstructions: instructions, ...extra }) } });
+  const row = { ref: 'culture:en-US', objectType: 'Culture', name: 'en-US', action: 'Update' };
+  assert.deepEqual(rowWords({ ...row, leftText: culture('Net sales means sales after returns.'), rightText: culture('') }, 'X'), { name: 'AI instructions changed', note: '' });
+  assert.deepEqual(rowWords({ ...row, leftText: culture('Same.', { Entities: { a: 1 } }), rightText: culture('Same.') }, 'X'), { name: 'en-US', note: 'words changed' });
+  const measure = { ref: 'measure:Sales/Net', objectType: 'Measure', name: 'Net', action: 'Create' };
+  assert.deepEqual(rowWords(measure, 'X'), { name: 'Net', note: 'new measure' }, 'every other row keeps its words');
+});
+
+
+test('Undo publish says back to how it was only when nothing was left behind', () => {
+  assert.deepEqual(copy.undoPublishResult({ failedRefs: [] }, 'Contoso Sales', '09:42'), { tone: 'good', text: 'Contoso Sales is back to how it was before 09:42.' });
+  const left = copy.undoPublishResult({ failedRefs: ['hierarchy:Customer/Geography (Item already exists)'] }, 'Contoso Sales', '09:42');
+  assert.equal(left.tone, 'bad');
+  assert.match(left.text, /not fully back to how it was before 09:42\. 1 object could not be put back: hierarchy:Customer\/Geography\./);
+  assert.equal(copy.undoPublishResult({ error: 'no' }, 'X', 'now').text, 'no');
+  assert.doesNotMatch(left.text, /—/);
+});
+
+test('a role left behind after a rename went out says plainly that the service role may use an old name, and names the role', () => {
+  const role = { ref: 'role:Regional Managers', objectType: 'Role', name: 'Regional Managers', action: 'Update' };
+  const column = { ref: 'column:Store/Store Region', objectType: 'Column', name: 'Store Region', table: 'Store', action: 'Update' };
+  const failed = new Map([[role.ref, 'x']]);
+  assert.equal(copy.brokenRoleLine(failed, [role, column], [column.ref]), 'The Regional Managers role on the service may still use an old column or table name. Publish again to fix it.');
+  assert.equal(copy.brokenRoleLine(failed, [role, column], []), '', 'nothing else went out, so the service role is as it was');
+  assert.equal(copy.brokenRoleLine(new Map([[column.ref, 'x']]), [role, column], [role.ref]), '', 'a column that did not go is not a role');
+  assert.match(changes, /brokenRoleLine\(failed, items, r\.appliedRefs\)/, 'the page says it after a publish that left a role behind');
+});
+
+
+test('a relationship whose key columns were only renamed is not listed as new plus "only on the service, remove it" (verifier, 18 Oct)', () => {
+  const rel = (from, to, extra = {}) => JSON.stringify({ name: 'r1', fromTable: 'Sales', fromColumn: from, toTable: 'Store', toColumn: to, crossFilteringBehavior: 'oneDirection', ...extra });
+  const create = (extra) => ({ ref: 'relationship:Sales[Store Key]->Store[Store Key]', objectType: 'Relationship', name: 'Sales[Store Key] → Store[Store Key]', action: 'Create', leftText: rel('Store Key', 'Store Key', extra), rightText: null });
+  const remove = { ref: 'relationship:Sales[StoreKey]->Store[StoreKey]', objectType: 'Relationship', name: 'Sales[StoreKey] → Store[StoreKey]', action: 'Delete', leftText: null, rightText: rel('StoreKey', 'StoreKey') };
+  const col = (table, now, was) => ({ ref: `column:${table}/${now}`, objectType: 'Column', name: now, table, action: 'Update', leftText: JSON.stringify({ name: now }), rightText: JSON.stringify({ name: was }) });
+  const renames = [col('Sales', 'Store Key', 'StoreKey'), col('Store', 'Store Key', 'StoreKey')];
+  const listed = (rows) => copy.publishableRows(rows).map((r) => r.ref);
+  assert.deepEqual(listed([...renames, create(), remove]), renames.map((r) => r.ref), 'the columns carry the relationship: only the two renames are listed');
+  assert.deepEqual(listed([renames[0], create(), remove]), [renames[0].ref, create().ref, remove.ref], 'one end renamed and the other end is not: not a pure rename, so it stays as it was');
+  assert.deepEqual(listed([...renames, create({ crossFilteringBehavior: 'bothDirections' }), remove]), [...renames, create({ crossFilteringBehavior: 'bothDirections' }), remove].map((r) => r.ref), 'a rename with a real change next to it stays listed');
+  assert.deepEqual(listed([create(), remove]), [create().ref, remove.ref], 'no rename behind it: new and removed are what they say');
+  assert.deepEqual(listed([{ ...create(), carriedByRename: true }, { ...remove, carriedByRename: true }]), [], 'the engine says the rename carries it: not listed, with or without the column rows');
+});
+
+test('a renamed relationship that also gained an ignore note is still carried by the rename, not new plus "remove it there" (UAT recheck, 19 Oct)', () => {
+  const note = [{ name: 'BestPracticeAnalyzer_IgnoreRules', value: '{"RuleIDs":["SEM_RELATIONSHIP_KEY_NAMES_SHOULD_MATCH"]}' }];
+  const rel = (from, to, extra = {}) => JSON.stringify({ name: 'r1', fromTable: 'Sales', fromColumn: from, toTable: 'Store', toColumn: to, crossFilteringBehavior: 'oneDirection', ...extra });
+  const create = (extra) => ({ ref: 'relationship:Sales[Store Key]->Store[Store Key]', objectType: 'Relationship', name: 'Sales[Store Key] → Store[Store Key]', action: 'Create', leftText: rel('Store Key', 'Store Key', extra), rightText: null });
+  const remove = { ref: 'relationship:Sales[StoreKey]->Store[StoreKey]', objectType: 'Relationship', name: 'Sales[StoreKey] → Store[StoreKey]', action: 'Delete', leftText: null, rightText: rel('StoreKey', 'StoreKey') };
+  const col = (table, now, was) => ({ ref: `column:${table}/${now}`, objectType: 'Column', name: now, table, action: 'Update', leftText: JSON.stringify({ name: now }), rightText: JSON.stringify({ name: was }) });
+  const renames = [col('Sales', 'Store Key', 'StoreKey'), col('Store', 'Store Key', 'StoreKey')];
+  const listed = (rows) => copy.publishableRows(rows).map((r) => r.ref);
+  assert.deepEqual(listed([...renames, create({ annotations: note }), remove]), renames.map((r) => r.ref), 'the note does not make it a different relationship');
+  assert.deepEqual(listed([...renames, create({ annotations: note, crossFilteringBehavior: 'bothDirections' }), remove]).length, 4, 'a note does not hide a real change next to it');
+});
+
+test('a REAL new or REAL removed relationship next to a key rename stays on the page (verifier, 19 Oct)', () => {
+  const rel = (ft, fc, tt, tc) => JSON.stringify({ name: 'r1', fromTable: ft, fromColumn: fc, toTable: tt, toColumn: tc, crossFilteringBehavior: 'oneDirection' });
+  const mk = (action, ft, fc, tt, tc) => ({ ref: `relationship:${ft}[${fc}]->${tt}[${tc}]`, objectType: 'Relationship', name: `${ft}[${fc}] → ${tt}[${tc}]`, action,
+    leftText: action === 'Create' ? rel(ft, fc, tt, tc) : null, rightText: action === 'Delete' ? rel(ft, fc, tt, tc) : null });
+  const col = (table, now, was) => ({ ref: `column:${table}/${now}`, objectType: 'Column', name: now, table, action: 'Update', leftText: JSON.stringify({ name: now }), rightText: JSON.stringify({ name: was }) });
+  const renames = [col('Sales', 'Store Key', 'StoreKey'), col('Store', 'Store Key', 'StoreKey')];
+  const carriedNew = mk('Create', 'Sales', 'Store Key', 'Store', 'Store Key');
+  const carriedOld = mk('Delete', 'Sales', 'StoreKey', 'Store', 'StoreKey');
+  const listed = (rows) => copy.publishableRows(rows).map((r) => r.ref);
+  const realNew = mk('Create', 'Sales', 'ProductKey', 'Product', 'ProductKey');
+  assert.deepEqual(listed([...renames, carriedNew, carriedOld, realNew]), [...renames, realNew].map((r) => r.ref), 'a new relationship beside the rename is listed');
+  const realGone = mk('Delete', 'Sales', 'ProductKey', 'Product', 'ProductKey');
+  assert.deepEqual(listed([...renames, carriedNew, carriedOld, realGone]), [...renames, realGone].map((r) => r.ref), 'a removed relationship beside the rename is listed');
+  assert.deepEqual(listed([...renames, carriedOld]), [...renames, carriedOld].map((r) => r.ref), 'the relationship on the renamed keys was removed: listed');
+  assert.deepEqual(listed([...renames, carriedNew]), [...renames, carriedNew].map((r) => r.ref), 'a relationship added on the renamed keys: listed');
+  const moved = mk('Create', 'Sales', 'Store Key', 'Store', 'Region');
+  assert.deepEqual(listed([...renames, moved, carriedOld]), [...renames, moved, carriedOld].map((r) => r.ref), 'moved to another column as well as renamed: listed');
 });
 
 console.log(`publish surface tests passed (${passed})`);

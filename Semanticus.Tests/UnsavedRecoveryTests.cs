@@ -155,6 +155,61 @@ namespace Semanticus.Tests
             Assert.Equal("recovered description", await reopened.Require().ReadAsync(m => m.Description));
         }
 
+        // Kane, 17 Oct: a new blank model with unsaved work was stranded in the engine of the window it was made in when a folder was opened by hand.
+        // The copy has no file to be named after, so it is named after the model, and making a model of that name again offers it back.
+        [Fact]
+        public async Task A_new_blank_model_keeps_its_unsaved_work_and_offers_it_when_a_model_of_that_name_is_made_again()
+        {
+            using (var sessions = new SessionManager())
+            using (var engine = new LocalEngine(sessions))
+            {
+                await engine.CreateModelAsync("Scratch Sales", 1604);
+                await sessions.Require().MutateAsync("human", "add table", m => m.AddCalculatedTable("Budget", "{ 1 }"));
+            }
+            using (var other = new SessionManager())
+            using (var otherEngine = new LocalEngine(other))
+            {
+                await otherEngine.CreateModelAsync("Another Model", 1604);
+                Assert.Null(Offer(await otherEngine.SessionInfoAsync()));      // a different name shares nothing
+            }
+            using var again = new SessionManager();
+            using var engine2 = new LocalEngine(again);
+            await engine2.CreateModelAsync("Scratch Sales", 1604);
+            var info = await engine2.SessionInfoAsync();
+            var offer = Offer(info);
+            Assert.NotNull(offer);
+            Assert.Equal("Scratch Sales", Path.GetFileName(offer!["Source"]!.Value<string>()!));   // the page names it by the model, not a path
+            await Resolve(engine2, info.SessionId, true);
+            Assert.True(await again.Require().ReadAsync(m => m.Tables.Contains("Budget")));
+            Assert.True((await engine2.SessionInfoAsync()).HasUnsavedEdits);
+        }
+
+        [Fact]
+        public async Task A_new_blank_model_with_no_edits_keeps_nothing_and_a_save_settles_its_copy()
+        {
+            using (var sessions = new SessionManager())
+            using (var engine = new LocalEngine(sessions))
+                await engine.CreateModelAsync("Empty One", 1604);
+            using (var check = new SessionManager())
+            using (var checkEngine = new LocalEngine(check))
+            {
+                await checkEngine.CreateModelAsync("Empty One", 1604);
+                Assert.Null(Offer(await checkEngine.SessionInfoAsync()));      // nothing to offer: nothing was changed
+            }
+            var path = Path.Combine(_root, "Saved One.bim");
+            using (var sessions = new SessionManager())
+            using (var engine = new LocalEngine(sessions))
+            {
+                await engine.CreateModelAsync("Saved One", 1604);
+                await sessions.Require().MutateAsync("human", "add table", m => m.AddCalculatedTable("Budget", "{ 1 }"));
+                await engine.SaveAsync(path, "BIM", false, "human");
+            }
+            using var after = new SessionManager();
+            using var afterEngine = new LocalEngine(after);
+            await afterEngine.CreateModelAsync("Saved One", 1604);
+            Assert.Null(Offer(await afterEngine.SessionInfoAsync()));          // saved: the kept copy is gone
+        }
+
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
@@ -221,14 +276,25 @@ namespace Semanticus.Tests
                     m.SetAnnotation("TabularEditor_SaveSensitive", "1");
                 });
             }
-            var files = Directory.GetFiles(RestorePointStore.Root(), "*", SearchOption.AllDirectories);
-            Assert.NotEmpty(files);
-            foreach (var file in files)
+            // A recovery write can still be finishing: its temp file may be renamed between the listing and the read (CI run 8 on PR #402).
+            // So the folder is read again until one listing reads whole, and every file in that listing is checked.
+            var checkedAll = false;
+            for (var attempt = 0; attempt < 20 && !checkedAll; attempt++)
             {
-                var text = File.ReadAllText(file);
-                Assert.DoesNotContain("never-persist-this", text);
-                Assert.DoesNotContain("second-secret", text);
+                var files = Directory.GetFiles(RestorePointStore.Root(), "*", SearchOption.AllDirectories);
+                Assert.NotEmpty(files);
+                checkedAll = true;
+                foreach (var file in files)
+                {
+                    string text;
+                    try { text = File.ReadAllText(file); }
+                    catch (Exception ex) when ((ex is FileNotFoundException or DirectoryNotFoundException) && !File.Exists(file)) { checkedAll = false; break; }
+                    Assert.DoesNotContain("never-persist-this", text);
+                    Assert.DoesNotContain("second-secret", text);
+                }
+                if (!checkedAll) await Task.Delay(100);
             }
+            Assert.True(checkedAll, "the recovery folder settled within two seconds");
             Assert.Empty(Directory.GetFiles(_root, ".semanticus-unsaved*"));
         }
 
@@ -315,6 +381,207 @@ namespace Semanticus.Tests
             Assert.True(await McpTools.ResolveFileRecovery(engine, info.SessionId, true));
             Assert.Equal("assistant restore", await reopened.Require().ReadAsync(m => m.Description));
             Assert.Equal(1, await reopened.Require().ReadAsync(m => reopened.Require().UndoStateNow().Steps));
+        }
+
+        // Round 2 UAT N26 follow-up: an engine that leaves after its hold cap must not lose unsaved LIVE work. It writes a kept copy first
+        // (named for the model, not for the engine's temp snapshot), and the next open of that live model offers it back.
+        [Fact]
+        public async Task Unsaved_live_edits_are_kept_when_the_engine_leaves_and_offered_when_the_model_opens_again()
+        {
+            var path = ModelPath();
+            var origin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/Test", "Northstar Sales Working", null, "interactive");
+            using (var sessions = new SessionManager())
+            {
+                await sessions.OpenAsync(path);
+                var s = sessions.Require();
+                s.LiveOrigin = origin;
+                s.AttachLiveRecovery();
+                await Edit(sessions, "live edit that must survive");
+                Assert.True(await s.RunAsync(() => s.FlushLiveRecovery()), "the leaving engine writes the kept copy");
+            }
+            var kept = RestorePointStore.ReadUnsaved(RestorePointStore.LiveSource(origin.Endpoint, origin.Database));
+            Assert.NotNull(kept);
+            Assert.Contains("live edit that must survive", kept!.BimJson);
+
+            using var reopened = new SessionManager();
+            await reopened.OpenAsync(path);
+            var again = reopened.Require();
+            again.LiveOrigin = origin;
+            again.AttachLiveRecovery();
+            var offer = again.FileRecovery;
+            Assert.NotNull(offer);
+            Assert.EndsWith("Northstar Sales Working", offer!.Source);   // the words the offer says: "kept your unsaved changes to Northstar Sales Working"
+            Assert.True(await again.ResolveFileRecoveryAsync(again.Id, true, "human"));
+            Assert.Equal("live edit that must survive", await again.ReadAsync(m => m.Description));
+        }
+
+        // Round 2 UAT (fix2-r2-start, item 3): a publish that landed settled the live model, but the kept copy of its earlier edits stayed on disk and
+        // was offered once more on the next open.
+        [Fact]
+        public async Task A_landed_live_publish_removes_the_kept_copy_of_that_live_model()
+        {
+            var path = ModelPath();
+            var origin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/Test", "Published Back", null, "interactive");
+            var key = RestorePointStore.LiveSource(origin.Endpoint, origin.Database);
+            using var sessions = new SessionManager();
+            await sessions.OpenAsync(path);
+            var s = sessions.Require();
+            s.LiveOrigin = origin;
+            s.AttachLiveRecovery();
+            await Edit(sessions, "edit that was published");
+            Assert.True(await s.RunAsync(() => s.FlushLiveRecovery()));
+            Assert.NotNull(RestorePointStore.ReadUnsaved(key));
+            await s.RunAsync(() => { s.MarkSavedToDisk(false); return true; });   // what a landed publish calls
+            Assert.Null(RestorePointStore.ReadUnsaved(key));
+        }
+
+        // F-294 (Codex on pull request 402): the leaving engine waited five seconds for the kept copy, then gave up and exited two seconds later,
+        // before a slow write (a large live model, a busy dispatcher) reached its move into place. The unpublished edits were lost.
+        [Fact]
+        public async Task A_slow_flush_on_leaving_still_lands_the_kept_copy_whole()
+        {
+            var path = ModelPath();
+            var origin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/Test", "Slow Write", null, "interactive");
+            var key = RestorePointStore.LiveSource(origin.Endpoint, origin.Database);
+            using var sessions = new SessionManager();
+            await sessions.OpenAsync(path);
+            var s = sessions.Require();
+            s.LiveOrigin = origin;
+            s.AttachLiveRecovery();
+            await Edit(sessions, "slow edit that must survive");
+            var calls = 0;
+            RestorePointStore.RecoveryIoHookForTest = f => { if (Interlocked.Increment(ref calls) == 1) Thread.Sleep(6500); };   // the write starts late: past the old five seconds
+
+            Program.KeepLiveWork(s);   // what the engine calls before it exits: it must not return while the write is still under way
+
+            RestorePointStore.RecoveryIoHookForTest = null;
+            // Read the file itself, at once: the store's own reader waits on the write's gate, so it would pass even if KeepLiveWork had given up early.
+            var file = RestorePointStore.UnsavedPath(key);
+            Assert.True(File.Exists(file), "KeepLiveWork returned before the delayed write landed");
+            Assert.Contains("slow edit that must survive", File.ReadAllText(file));
+            Assert.Empty(Directory.GetFiles(RecoveryDir(key), ".unsaved-*.tmp"));
+        }
+
+        // A write that never finishes cannot hold the engine for ever, and giving up on it leaves the good copy that was already there whole.
+        // The earlier copy is written by this session's own first flush, so the hung second flush targets the very file that holds it.
+        [Fact]
+        public async Task A_flush_that_never_finishes_is_given_up_on_and_leaves_the_earlier_kept_copy_whole()
+        {
+            var path = ModelPath();
+            var origin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/Test", "Hung Write", null, "interactive");
+            var key = RestorePointStore.LiveSource(origin.Endpoint, origin.Database);
+            using var sessions = new SessionManager();
+            await sessions.OpenAsync(path);
+            var s = sessions.Require();
+            s.LiveOrigin = origin;
+            s.AttachLiveRecovery();
+            await Edit(sessions, "the earlier good copy");
+            Program.KeepLiveWork(s);
+            var file = RestorePointStore.UnsavedPath(key);
+            Assert.Contains("the earlier good copy", File.ReadAllText(file));
+            await Edit(sessions, "edit behind a hung write");
+            using var release = new ManualResetEventSlim(false);
+            var calls = 0;
+            RestorePointStore.RecoveryIoHookForTest = f => { if (Interlocked.Increment(ref calls) == 1) release.Wait(TimeSpan.FromSeconds(30)); };
+            var oldCap = Program.LiveKeepCap;
+            Program.LiveKeepCap = TimeSpan.FromMilliseconds(400);
+            try
+            {
+                var started = DateTime.UtcNow;
+                Program.KeepLiveWork(s);
+                Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(10), "a hung write must not hold the engine");
+                // The file the hung write would replace, read directly (the store's reader waits behind the stuck write): still the earlier copy, whole.
+                var kept = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(file));
+                Assert.Contains("the earlier good copy", (string)kept["BimJson"] ?? (string)kept["bimJson"]);
+                Assert.DoesNotContain("edit behind a hung write", File.ReadAllText(file));
+                Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(file), ".unsaved-*.tmp"));
+            }
+            finally
+            {
+                Program.LiveKeepCap = oldCap;
+                release.Set();
+                await s.RunAsync(() => true);   // the released write finishes before the session goes
+                RestorePointStore.RecoveryIoHookForTest = null;
+            }
+        }
+
+        // Verifier v-fix-codex402 (F-294 bar), dropped from 21f0c88f and restored by v2: a close with nothing to keep leaves in seconds,
+        // even while the dispatcher is busy with unrelated work. A model from a file has no live copy to write.
+        [Fact]
+        public async Task Verifier_a_close_with_nothing_to_keep_does_not_wait_on_a_busy_dispatcher()
+        {
+            var path = ModelPath();
+            using var sessions = new SessionManager();
+            await sessions.OpenAsync(path);
+            var s = sessions.Require();
+            using var release = new ManualResetEventSlim(false);
+            var busy = s.RunAsync(() => { release.Wait(TimeSpan.FromSeconds(20)); return true; });
+            try
+            {
+                var started = DateTime.UtcNow;
+                Program.KeepLiveWork(s);
+                var took = DateTime.UtcNow - started;
+                Assert.True(took < TimeSpan.FromSeconds(3), $"a close with nothing to keep waited {took.TotalSeconds:0.0}s behind unrelated work");
+            }
+            finally { release.Set(); await busy; }
+        }
+
+        // V2: a LIVE model with no unsaved edits also leaves at once behind a busy dispatcher.
+        [Fact]
+        public async Task V2_a_live_model_with_no_unsaved_edits_leaves_at_once_behind_a_busy_dispatcher()
+        {
+            var path = ModelPath();
+            var origin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/Test", "Clean Live", null, "interactive");
+            using var sessions = new SessionManager();
+            await sessions.OpenAsync(path);
+            var s = sessions.Require();
+            s.LiveOrigin = origin;
+            s.AttachLiveRecovery();
+            using var release = new ManualResetEventSlim(false);
+            var busy = s.RunAsync(() => { release.Wait(TimeSpan.FromSeconds(20)); return true; });
+            try
+            {
+                var started = DateTime.UtcNow;
+                Program.KeepLiveWork(s);
+                Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(3), "a clean live close waited behind unrelated work");
+            }
+            finally { release.Set(); await busy; }
+        }
+
+        // V2: a live model WITH unsaved edits behind a dispatcher busy for 7 s (past the old 5 s) still waits, and the copy lands.
+        [Fact]
+        public async Task V2_live_unsaved_edits_behind_a_busy_dispatcher_are_waited_for_and_land()
+        {
+            var path = ModelPath();
+            var origin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/Test", "Busy Live", null, "interactive");
+            var key = RestorePointStore.LiveSource(origin.Endpoint, origin.Database);
+            using var sessions = new SessionManager();
+            await sessions.OpenAsync(path);
+            var s = sessions.Require();
+            s.LiveOrigin = origin;
+            s.AttachLiveRecovery();
+            await Edit(sessions, "edit behind a busy dispatcher");
+            var busy = s.RunAsync(() => { Thread.Sleep(7000); return true; });
+            Program.KeepLiveWork(s);
+            var file = RestorePointStore.UnsavedPath(key);
+            Assert.True(File.Exists(file), "the close did not wait for the write behind a busy dispatcher");
+            Assert.Contains("edit behind a busy dispatcher", File.ReadAllText(file));
+            await busy;
+        }
+
+        [Fact]
+        public async Task A_live_model_writes_no_kept_copy_until_the_engine_leaves()
+        {
+            var path = ModelPath();
+            var origin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/Test", "Quiet", null, "interactive");
+            using var sessions = new SessionManager();
+            await sessions.OpenAsync(path);
+            var s = sessions.Require();
+            s.LiveOrigin = origin;
+            s.AttachLiveRecovery();
+            await Edit(sessions, "edit");
+            await Task.Delay(3600);   // longer than the file-model autosave delay
+            Assert.Null(RestorePointStore.ReadUnsaved(RestorePointStore.LiveSource(origin.Endpoint, origin.Database)));
         }
 
         [Fact]

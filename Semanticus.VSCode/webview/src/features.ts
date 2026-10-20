@@ -11,8 +11,8 @@
 // choose what to RENDER, so a locked tool shows a preview instead of loading paid data. A page that
 // disagreed with the engine would only be wrong on screen; it could never open a door the engine shut.
 
-// Ask your data joined on 26 September 2026 (Kane: build the page now). It is a whole page under Explore, and
-// the engine reports it as the wire id askData (ProFeatures.WireId).
+// The words box on the Query page (it began as the Ask your data page, 26 September 2026) is Pro. The engine reports it as the
+// wire id askData (ProFeatures.WireId). The page itself, with Build and DAX, is free.
 export type ProFeature = 'workflows' | 'askData';
 
 /** What a paid entitlement carries. get_entitlement.features will list exactly this (the engine lane).
@@ -33,11 +33,10 @@ export function isRetiredFeature(feature: string): feature is RetiredProFeature 
 }
 
 /** Which tool belongs to which feature. A tool that is not here is FREE, and that is the whole rule.
- *  Two entries, because two whole tabs are paid (Ask your data joined on 26 September). `deploy` is free and so is its Advanced mode; `dataagent` is
+ *  One entry: Workflows is the only whole tab that is paid. The Query page is free; only its Words mode is Pro (feature askData). `deploy` is free and so is its Advanced mode; `dataagent` is
  *  the legacy route into that same Advanced mode and is free with it. */
 export const FEATURE_OF_TOOL: Record<string, ProFeature> = {
   workflows: 'workflows',
-  askdata: 'askData',
 };
 
 /** The one place a caller asks "is this tool gated". Nobody rebuilds the map. */
@@ -48,7 +47,7 @@ export function featureOfTool(tool: string): ProFeature | null {
 /** What the feature is called on screen. Plain words, the same words the tabs use. */
 export const FEATURE_NAME: Record<ProFeature, string> = {
   workflows: 'Workflows',
-  askData: 'Ask your data',
+  askData: 'Asking in words',
 };
 
 /**
@@ -76,5 +75,5 @@ export function planRankingOf(tier: string): PlanRankingGrant {
 /** What a person on the free plan still has. Said on every preview, so a locked page is never a dead end. */
 export const FEATURE_STILL_FREE: Record<ProFeature, string> = {
   workflows: 'The app still shows any run already going and anything waiting for you.',
-  askData: 'Queries still runs any query you write, and your own assistant can still write and run one for you.',
+  askData: 'Build and DAX on the Query page still run any query you write, and your own assistant can still write and run one for you.',
 };

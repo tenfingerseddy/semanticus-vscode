@@ -119,7 +119,7 @@ function engineExtensionFolder(executable, platform) {
 ///   leave-foreign  a different version whose window is still open, or an older record that cannot prove it
 ///                  either way. Left running, and the caller must not start anything over the top of it.
 ///
-/// An engine whose recorded parent is dead is inside its own twenty-second grace (ParentLifetime) or already
+/// An engine whose recorded parent is dead is inside its own eight-second grace (ParentLifetime) or already
 /// leaving. It cannot be rescued by adoption, because the only window that would come back is this newer
 /// version and adoption never crosses install folders, so the grace can be cut short rather than waited out.
 ///

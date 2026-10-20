@@ -56,6 +56,8 @@ namespace Semanticus.Tests
                 await McpTools.SetModelPrimer(engine, starter.Replace("## Gotchas\n\n" + Placeholder, "## Gotchas\n\nFiscal year starts in July."));
                 await engine.SaveAsync(Path.Combine(dir, "b", "Model2.bim"), "bim", false, "human");
                 var inB = Directory.GetFiles(Path.Combine(dir, "b", ".semanticus", "primers"), "*.md").Single();
+                // A copy goes only to a new file (b3e60c8a): the old file is removed so the round trip lands back in folder a as a new file.
+                File.Delete(Path.Combine(dir, "a", "Model.bim"));
                 await engine.SaveAsync(Path.Combine(dir, "a", "Model.bim"), "bim", false, "human");
                 var shown = await engine.GetPrimerAsync();
                 Assert.True(shown.Exists && shown.Markdown.Contains("Fiscal year starts in July.", StringComparison.Ordinal));
@@ -91,7 +93,9 @@ namespace Semanticus.Tests
                 await McpTools.SetModelPrimer(engine, starter.Replace("## Gotchas\n\n" + Placeholder, "## Gotchas\n\nFiscal year starts in July."));
                 await engine.SaveAsync(Path.Combine(dir, "b", "Model2.bim"), "bim", false, "human");
                 var inB = Directory.GetFiles(Path.Combine(dir, "b", ".semanticus", "primers"), "*.md").Single();
-                await engine.SaveAsync(Path.Combine(dir, "a", "Model.bim"), "bim", false, "human");
+                // a copy goes only to a new file (b3e60c8a), so the session moves on to a third place instead of back over a/Model.bim
+                Directory.CreateDirectory(Path.Combine(dir, "c"));
+                await engine.SaveAsync(Path.Combine(dir, "c", "Model3.bim"), "bim", false, "human");
                 File.AppendAllText(inB, "\nNotes for Model2, saved in another window.\n");
 
                 for (var i = 0; i < 4 && (await engine.ListMeasuresAsync()).Any(m => m.Name == "Made Before The Primer"); i++)

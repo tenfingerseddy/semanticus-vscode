@@ -92,7 +92,8 @@ namespace Semanticus.Tests
             foreach (var tool in AskRouteCatalog.Tools)
                 foreach (var pattern in retired)
                 {
-                    var hit = pattern.Match(tool.Label);
+                    // Kane's name for the Review page that asks how Copilot answers (15 Oct 2026); copy-rules.test.mjs allows the same phrase.
+                    var hit = pattern.Match(tool.Label.Replace("Copilot test", "Copilot"));
                     if (hit.Success)
                         failures.Add(tool.Id + " is labelled \"" + tool.Label + "\", which carries the retired word \"" + hit.Value + "\"");
                 }
@@ -126,8 +127,8 @@ namespace Semanticus.Tests
             var strip = StripTools();
             var routableOnTheStrip = AskRouteCatalog.StripTools.Select(t => t.Id).ToArray();
 
-            Assert.Equal(17, strip.Count);                              // measured, then asserted (Ask your data joined, 26 Sep)
-            Assert.Equal(22, AskRouteCatalog.Tools.Count);              // the strip plus the five tabs
+            Assert.Equal(16, strip.Count);                              // measured, then asserted (Query replaced Ask your data and Queries, and the Copilot test joined Review, 15 Oct)
+            Assert.Equal(21, AskRouteCatalog.Tools.Count);              // the strip plus the five tabs
             Assert.Equal(strip.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
                 routableOnTheStrip.OrderBy(x => x, StringComparer.Ordinal).ToArray());
 
@@ -215,15 +216,14 @@ namespace Semanticus.Tests
         [InlineData("diagram", "explore", "Diagram")]
         [InlineData("lineage", "explore", "Lineage")]
         [InlineData("stats", "explore", "Size")]
-        [InlineData("askdata", "explore", "Ask your data")]
-        [InlineData("search", "edit", "Find and replace")]
-        [InlineData("daxlab", "edit", "Queries")]
+        [InlineData("query", "explore", "Query")]
         [InlineData("knowledge", "edit", "Model notes")]
         [InlineData("instructions", "edit", "AI instructions")]
         [InlineData("advmodels", "edit", "Advanced modelling")]
         [InlineData("mcode", "edit", "Power Query")]
         [InlineData("bpa", "review", "Model quality (BPA)")]
         [InlineData("readiness", "review", "AI readiness")]
+        [InlineData("copilottest", "review", "Copilot test")]
         [InlineData("tests", "review", "Validation")]
         [InlineData("evidence", "review", "Reports")]
         [InlineData("docs", "review", "Docs")]
@@ -247,7 +247,8 @@ namespace Semanticus.Tests
         [InlineData("ask your data")]
         public void A_data_question_lands_on_ask_your_data(string ask)
         {
-            Assert.Equal("askdata", AskRoutePoint.MatchWords(ask)!.Tool);
+            Assert.Equal("query", AskRoutePoint.MatchWords(ask)!.Tool);
+            Assert.Equal(AskRouteCatalog.DataTool, AskRoutePoint.MatchWords(ask)!.Group);
         }
 
         /// <summary>verify-askdata-r3 (27 September 2026, m11/askdata fa4fb162), left failing on purpose. Ctrl J now
@@ -268,7 +269,8 @@ namespace Semanticus.Tests
         [InlineData("net sales this year vs last year by region")]
         public void Verify_r3_a_data_question_ctrl_j_routes_lands_on_ask_your_data_on_words_alone(string ask)
         {
-            Assert.Equal("askdata", AskRoutePoint.MatchWords(ask)?.Tool);
+            Assert.Equal("query", AskRoutePoint.MatchWords(ask)?.Tool);
+            Assert.Equal(AskRouteCatalog.DataTool, AskRoutePoint.MatchWords(ask)?.Group);
         }
 
         /// <summary>fix-askdata-r4 (D2): a data question the words place lands on Ask your data with no permission, on both
@@ -295,10 +297,10 @@ namespace Semanticus.Tests
             })
             {
                 var question = AskRoutePoint.ReadingOf(result, AskRoutePoint.QuestionReading);
-                Assert.Equal("askdata", question?.Tool);
+                Assert.Equal("query", question?.Tool);
                 Assert.Equal(1, question.Confidence);
                 Assert.Equal(first ? AskRoutePoint.QuestionReading : AskRoutePoint.TaskReading, result.Reading);
-                Assert.Equal(first ? "askdata" : null, result.Tool);
+                Assert.Equal(first ? "query" : null, result.Tool);
                 Assert.Null(result.Fallback);
                 Assert.NotEqual(AskRoutePoint.NoMatchSentence, result.Sentence);
                 Assert.False(result.Asked);
@@ -408,7 +410,8 @@ namespace Semanticus.Tests
             foreach (var result in new[] { studio, assistant })
             {
                 Assert.True(result.Asked);
-                Assert.Equal("askdata", result.Tool);
+                Assert.Equal("query", result.Tool);
+                Assert.Equal(AskRoutePoint.QuestionReading, result.Reading);
                 Assert.Null(result.Fallback);
                 Assert.Equal(0.95, result.Confidence, 6);
             }
@@ -436,12 +439,12 @@ namespace Semanticus.Tests
             {
                 Assert.True(result.Asked);
                 // The task reading is first and agrees with the row Enter adds from the same words.
-                Assert.NotEqual("askdata", result.Tool);
+                Assert.NotEqual(AskRoutePoint.QuestionReading, result.Reading);
                 Assert.Equal(PlanTargets.JumpFor(words)?.Tool, result.Tool);
                 // Ask your data is still offered, at the service's own number, and is never the only answer.
                 Assert.NotNull(result.Other);
                 Assert.Equal(AskRoutePoint.QuestionReading, result.Other.Kind);
-                Assert.Equal("askdata", result.Other.Tool);
+                Assert.Equal("query", result.Other.Tool);
                 Assert.Equal(0.95, result.Other.Confidence, 6);
                 Assert.Equal(AskRoutePoint.AskItAsAQuestion, result.Other.Line);
                 Assert.Null(result.Reason);
@@ -571,7 +574,7 @@ namespace Semanticus.Tests
             // One reading only: it is never Ask your data, and it is the page the row names.
             if (placed.Other == null)
             {
-                Assert.True(!string.Equals(placed.Tool, "askdata", StringComparison.Ordinal),
+                Assert.True(!string.Equals(AskRoutePoint.MatchWords(words)?.Group, AskRouteCatalog.DataTool, StringComparison.Ordinal),
                     id + " \"" + words + "\" has Ask your data as its ONLY answer");
                 Assert.Equal(row, placed.Tool);
                 return;
@@ -583,7 +586,7 @@ namespace Semanticus.Tests
             var question = AskRoutePoint.ReadingOf(placed, AskRoutePoint.QuestionReading);
             Assert.NotNull(task);
             Assert.NotNull(question);
-            Assert.Equal("askdata", question.Tool);
+            Assert.Equal("query", question.Tool);
             Assert.Equal(row, task.Tool);
             // Every one of these is labelled a task, a where-question or a stray line, so the task reading comes
             // first: none of them plainly asks about the numbers.
@@ -678,7 +681,7 @@ namespace Semanticus.Tests
         /// the task reading is still what a person is shown first, because the line tells rather than asks; Ask your
         /// data is the second choice instead of being hidden.</summary>
         [Theory]
-        [InlineData("average order value per month in 2024?", "askdata", "askdata")]
+        [InlineData("average order value per month in 2024?", "askdata", "query")]
         // fix-askdata-final (verify-askdata-r6 F3): these two do not plainly ask, so the task is read first and names
         // the page its words won; Ask your data is still placed, as the second choice.
         [InlineData("average order value by customer segment", "askdata", "data")]
@@ -691,7 +694,8 @@ namespace Semanticus.Tests
         [InlineData("fix the blank values per region in Sales", "askdata", "data")]
         public void R4_a_question_shape_beats_the_data_page_s_nouns(string ask, string placed, string first)
         {
-            Assert.Equal(placed, AskRoutePoint.MatchWords(ask)?.Tool);
+            // `placed` is the word group that won; the page a person is sent to is Query for either Query group.
+            Assert.Equal(placed, AskRoutePoint.MatchWords(ask)?.Group);
             Assert.Equal(first, AskRoutePoint.PlaceByWords(new AskRouteResult { Fallback = "menu" }, ask, askDataGranted: true)?.Tool);
         }
 
@@ -705,7 +709,7 @@ namespace Semanticus.Tests
         [InlineData("Net Sales by Region as a new measure")]
         public void R4_a_plan_target_that_says_by_is_not_sent_to_ask_your_data(string target)
         {
-            Assert.NotEqual("askdata", PlanTargets.JumpFor(target)?.Tool);
+            AssertJumpIsNotTheQuestion(target);
         }
 
         /// <summary>verify-askdata-r4 (targeted, 27 September 2026, m11/askdata f2f9996a), left failing on purpose. Ctrl J no
@@ -752,14 +756,14 @@ namespace Semanticus.Tests
             await f.SaveAsAsync("VerifyR4Tasks.bim");
             f.UseEmptyRecorded();
 
-            Assert.NotEqual("askdata", PlanTargets.JumpFor(words)?.Tool);
+            AssertJumpIsNotTheQuestion(words);
             foreach (var (door, result) in new[]
             {
                 ("the Plan field (Studio)", await new EngineRpcTarget(f.Engine).routeAsk(words)),
                 ("the assistant door", await McpTools.RouteAsk(f.Engine, words)),
             })
             {
-                Assert.True(!string.Equals(result.Tool, "askdata", StringComparison.Ordinal),
+                Assert.True(!string.Equals(result.Reading, AskRoutePoint.QuestionReading, StringComparison.Ordinal),
                     $"{door} sends the task \"{words}\" to Ask your data (sentence: {result.Sentence ?? "none"}), which answers questions and changes nothing; the row Enter adds from the same words has no jump");
             }
             Assert.Equal(0, f.Engine.Decisions.RequestsStarted);
@@ -790,7 +794,7 @@ namespace Semanticus.Tests
             await f.BuildModelAsync("VerifyR5Tasks.bim");
             f.UseEmptyRecorded();
 
-            Assert.NotEqual("askdata", PlanTargets.JumpFor(words)?.Tool);
+            AssertJumpIsNotTheQuestion(words);
             foreach (var (door, result) in new[]
             {
                 ("the Plan field (Studio)", await new EngineRpcTarget(f.Engine).routeAsk(words)),
@@ -798,13 +802,13 @@ namespace Semanticus.Tests
             })
             {
                 // KEPT FROM THE VERIFIER'S TEST: neither door may make Ask your data the answer to these three.
-                Assert.True(!string.Equals(result.Tool, "askdata", StringComparison.Ordinal),
+                Assert.True(!string.Equals(result.Reading, AskRoutePoint.QuestionReading, StringComparison.Ordinal),
                     $"{door} sends the task \"{words}\" to Ask your data (confidence {result.Confidence}, asked {result.Asked}) ahead of keeping it as a task; the row Enter adds from the same words names {PlanTargets.JumpFor(words)?.Tool ?? "no place"}");
                 // ADDED for the ruling that replaced the "never" one (coordinator, 28 September): the task reading is
                 // first and agrees with the row, and Ask your data is still named as the second choice.
                 Assert.Equal(AskRoutePoint.TaskReading, result.Reading);
                 Assert.Equal(PlanTargets.JumpFor(words)?.Tool, result.Tool);
-                Assert.Equal("askdata", result.Other?.Tool);
+                Assert.Equal("query", result.Other?.Tool);
                 Assert.Equal(AskRoutePoint.AskItAsAQuestion, result.Other?.Line);
             }
             Assert.Equal(0, f.Engine.Decisions.RequestsStarted);
@@ -847,7 +851,7 @@ namespace Semanticus.Tests
                 // doors"): each door places the data question on Ask your data. Round 5 had one reading, so "reaches" was
                 // the top tool; now it is either reading.
                 var question = AskRoutePoint.ReadingOf(result, AskRoutePoint.QuestionReading);
-                Assert.True(string.Equals(question?.Tool, "askdata", StringComparison.Ordinal),
+                Assert.True(string.Equals(question?.Tool, "query", StringComparison.Ordinal),
                     $"{door} does not place the data question \"{words}\" on Ask your data although the service did at 0.93 "
                     + $"(tool {result.Tool ?? "none"}, reason: {result.Reason ?? "none"})");
                 // And keeping it as a task is still named beside it.
@@ -891,7 +895,7 @@ namespace Semanticus.Tests
                 Assert.Equal(first ? AskRoutePoint.QuestionReading : AskRoutePoint.TaskReading, result.Reading);
                 var question = AskRoutePoint.ReadingOf(result, AskRoutePoint.QuestionReading);
                 var task = AskRoutePoint.ReadingOf(result, AskRoutePoint.TaskReading);
-                Assert.Equal("askdata", question?.Tool);
+                Assert.Equal("query", question?.Tool);
                 Assert.Equal(0.91, question.Confidence, 6);
                 Assert.Equal(PlanTargets.JumpFor(words)?.Tool, task?.Tool);
                 Assert.Equal(first ? 0.91 : 0, result.Confidence, 6);
@@ -908,17 +912,17 @@ namespace Semanticus.Tests
         /// Grants are all or nothing today, so this is the day a narrower tier is sold rather than any session shipping now.
         /// It replaces the test of AskRoutePoint.DataQuestionPlace, which had no engine caller left (verify-askdata-r6 L8).</summary>
         [Fact]
-        public void R6_without_ask_your_data_the_question_reading_goes_to_queries()
+        public void R6_without_ask_your_data_the_question_reading_goes_to_the_query_page()
         {
             var second = AskRoutePoint.PlaceByWords(new AskRouteResult { Fallback = "menu" }, "total sales by region", askDataGranted: false);
             Assert.Equal(AskRoutePoint.TaskReading, second.Reading);
             Assert.Null(second.Tool);
-            Assert.Equal("daxlab", second.Other?.Tool);
+            Assert.Equal("query", second.Other?.Tool);
             Assert.Equal(AskRoutePoint.AskItAsAQuestion + " " + AskRoutePoint.DataQuestionProLine, second.Other.Line);
 
             var first = AskRoutePoint.PlaceByWords(new AskRouteResult { Fallback = "menu" }, "show me total sales by region", askDataGranted: false);
             Assert.Equal(AskRoutePoint.QuestionReading, first.Reading);
-            Assert.Equal("daxlab", first.Tool);
+            Assert.Equal("query", first.Tool);
             Assert.Equal(AskRoutePoint.DataQuestionProLine, first.Sentence);
             Assert.Null(first.Fallback);
             Assert.Null(first.Reason);
@@ -941,6 +945,10 @@ namespace Semanticus.Tests
         [InlineData("where are the reports", "evidence")]
         [InlineData("where are the saved reports", "evidence")]
         [InlineData("which reports use Margin %", "lineage")]
+        // The Copilot test (15 Oct 2026) claims its own phrases, and a bare "copilot" stays with AI readiness.
+        [InlineData("run the copilot test", "copilottest")]
+        [InlineData("where is the question bank", "copilottest")]
+        [InlineData("is the model ready for copilot", "readiness")]
         public void R6_the_catalogue_names_the_page_the_words_are_actually_about(string words, string tool)
         {
             Assert.Equal(tool, AskRoutePoint.MatchCatalog(words)?.Tool);
@@ -1037,7 +1045,7 @@ namespace Semanticus.Tests
                 ("the assistant door", await McpTools.RouteAsk(f.Engine, words)),
             })
             {
-                Assert.Equal("askdata", AskRoutePoint.ReadingOf(result, AskRoutePoint.QuestionReading)?.Tool);
+                Assert.Equal("query", AskRoutePoint.ReadingOf(result, AskRoutePoint.QuestionReading)?.Tool);
                 Assert.True(string.Equals(result.Reading, AskRoutePoint.TaskReading, StringComparison.Ordinal),
                     $"{door} answers the task \"{words}\" with Ask your data FIRST (tool {result.Tool}, reading {result.Reading}; "
                     + "the field reads \"Ask your data is the place for that.\"), although the line does not plainly ask");
@@ -1080,7 +1088,7 @@ namespace Semanticus.Tests
             Assert.False(AskRoutePoint.AsksAQuestion(words));
 
             var result = await McpTools.RouteAsk(f.Engine, words);
-            Assert.Equal("askdata", AskRoutePoint.ReadingOf(result, AskRoutePoint.QuestionReading)?.Tool);
+            Assert.Equal("query", AskRoutePoint.ReadingOf(result, AskRoutePoint.QuestionReading)?.Tool);
             const string claim = "The question reading is shown first only when the line plainly asks";
             Assert.False(d.Contains(claim, StringComparison.Ordinal)
                     && string.Equals(result.Reading, AskRoutePoint.QuestionReading, StringComparison.Ordinal),
@@ -1120,12 +1128,96 @@ namespace Semanticus.Tests
             }
         }
 
+        /// <summary>A plan target is a task, so the Query page is only ever its place when the WRITING words won (create a
+        /// measure, speed up a formula). When the words of a question about the numbers won ("Speed up Net Sales by Region"
+        /// says "sales by"), the row names no page. Before the two pages became one this was "never Ask your data".</summary>
+        private static void AssertJumpIsNotTheQuestion(string words)
+        {
+            var jump = PlanTargets.JumpFor(words);
+            if (jump?.Tool == AskRouteCatalog.QueryPage)
+                Assert.Equal(AskRouteCatalog.QueriesTool, AskRoutePoint.MatchCatalog(words)?.Group);
+        }
+
+        /// <summary>1.6: Explore > Query replaced Ask your data and Queries. No id and no label of either old page leaves the
+        /// engine: not on the words' answer, not on a reading, not on the line a person reads, not on a create thing, not on
+        /// a plan jump. A saved link, plan or older extension that still names an old id lands on the Query page instead.</summary>
+        [Theory]
+        [InlineData("total sales by region", true)]
+        [InlineData("total sales by region", false)]
+        [InlineData("show me total sales by region", false)]
+        [InlineData("how much did we sell in March", true)]
+        [InlineData("create a measure", true)]
+        [InlineData("I want to write some DAX", false)]
+        [InlineData("average order value by customer segment", true)]
+        public void The_old_page_names_never_leave_the_engine(string ask, bool askData)
+        {
+            var retiredIds = new[] { AskRouteCatalog.DataTool, AskRouteCatalog.QueriesTool };
+            var retiredLabels = new[] { "Ask your data", "Queries" };
+            var placed = AskRoutePoint.PlaceByWords(new AskRouteResult { Fallback = "menu" }, ask, askData);
+            Assert.NotNull(placed);
+
+            var strings = new List<string> { placed.Tool, placed.Area, placed.Sentence, placed.Create };
+            var readings = new[] { AskRoutePoint.ReadingOf(placed, AskRoutePoint.TaskReading), AskRoutePoint.ReadingOf(placed, AskRoutePoint.QuestionReading) };
+            foreach (var reading in readings.Where(r => r != null))
+            {
+                strings.Add(reading.Tool); strings.Add(reading.Area); strings.Add(reading.Line);
+            }
+            foreach (var text in strings.Where(x => x != null))
+            {
+                Assert.DoesNotContain(text, retiredIds);
+                foreach (var label in retiredLabels) Assert.DoesNotContain(label, text, StringComparison.Ordinal);
+                Assert.DoesNotContain("\u2014", text, StringComparison.Ordinal);
+            }
+            // The question reading is always the Query page; a task reading names whatever page its words name (or none).
+            var question = readings[1];
+            if (question != null) Assert.Equal(AskRouteCatalog.QueryPage, question.Tool);
+        }
+
+        [Fact]
+        public void The_query_page_is_one_page_and_the_old_ids_are_aliases_that_land_on_it()
+        {
+            var query = AskRouteCatalog.Find("query");
+            Assert.NotNull(query);
+            Assert.Equal("explore", query!.Area);
+            Assert.Equal("Query", query.Label);
+            Assert.False(query.IsTab);
+            Assert.Same(query, AskRouteCatalog.Find("askdata"));
+            Assert.Same(query, AskRouteCatalog.Find("daxlab"));
+            Assert.Equal("explore", AskRouteCatalog.AreaOf("daxlab"));
+            Assert.DoesNotContain(AskRouteCatalog.Tools, t => t.Id == "askdata" || t.Id == "daxlab" || t.Label == "Queries" || t.Label == "Ask your data");
+
+            // The two word groups still exist underneath, with their old ids, so the question and the create request
+            // keep being told apart; the service is shown the same options as before.
+            Assert.Equal(new[] { "askdata", "daxlab" }, AskRouteCatalog.WordGroups.Where(g => AskRouteCatalog.PageOf(g.Id) == "query").Select(g => g.Id).ToArray());
+
+            foreach (var thing in AskRouteCatalog.CreateThings.Where(t => t.Group == AskRouteCatalog.QueriesTool))
+                Assert.Equal("query", thing.Tool);
+            Assert.DoesNotContain(AskRouteCatalog.CreateThings, t => t.Tool == "askdata" || t.Tool == "daxlab");
+            Assert.DoesNotContain("Ask your data", AskRoutePoint.DataQuestionProLine, StringComparison.Ordinal);
+            Assert.DoesNotContain("Queries", AskRoutePoint.DataQuestionProLine, StringComparison.Ordinal);
+            Assert.Contains("Query", AskRoutePoint.DataQuestionProLine, StringComparison.Ordinal);
+        }
+
+        /// <summary>A task saved from an old page still jumps and still reads as the page that replaced it.</summary>
+        [Fact]
+        public async Task A_task_saved_from_an_old_page_jumps_to_the_query_page()
+        {
+            using var f = new DecisionFixture();
+            await f.BuildModelAsync("QuerySourcePage.bim");
+            f.UseEmptyRecorded();
+            var added = await f.Engine.AddPlanTaskAsync(new PlanTaskRequest { Words = "Check the totals", SourcePage = "daxlab" });
+            var row = PlanQueueKit.Row(await f.Engine.GetModelPlanAsync(), added.ItemId);
+            Assert.Equal("query", row.Jump?.Tool);
+            Assert.Equal("Query", row.Jump?.Label);
+            Assert.Equal("query", row.SourcePage);
+        }
+
         /// <summary>The page the Plan's field shows for the TASK in an answer, which is what Enter sends with the words:
         /// the one reading's place where there is one reading, and the task reading's place where there are two. The same
         /// rule as askbox.tsx fieldTaskPage, which test/ask-box.test.mjs holds to these shapes.</summary>
         private static string FieldTaskPage(AskRouteResult result) =>
             result.Reading == null
-                ? (string.Equals(result.Tool, "askdata", StringComparison.Ordinal) ? null : result.Tool)
+                ? result.Tool
                 : AskRoutePoint.ReadingOf(result, AskRoutePoint.TaskReading)?.Tool;
 
         /// <summary>fix-askdata-final (verify-askdata-r6 F1). With Jev on, the six labelled tasks the verifier saw disagree
@@ -1212,7 +1304,11 @@ namespace Semanticus.Tests
             }
 
             Assert.Null((await Add(new PlanTaskRequest { Words = words })).Jump);
+            // "askdata" is the retired page that only answered a question; an older link may still send it, and it is dropped
+            // as before. "query" and the retired "daxlab" are where a calculation is written, so both are kept as Query.
             Assert.Null((await Add(new PlanTaskRequest { Words = words, FieldPage = "askdata" })).Jump);
+            Assert.Equal("query", (await Add(new PlanTaskRequest { Words = words, FieldPage = "query" })).Jump?.Tool);
+            Assert.Equal("Query", (await Add(new PlanTaskRequest { Words = words, FieldPage = "daxlab" })).Jump?.Label);
             Assert.Null((await Add(new PlanTaskRequest { Words = words, FieldPage = "no-such-page" })).Jump);
             Assert.Equal("advmodels", (await Add(new PlanTaskRequest { Words = words, FieldPage = " advmodels " })).Jump?.Tool);
             Assert.Equal("diagram", (await Add(new PlanTaskRequest { Words = words, SourcePage = "diagram", FieldPage = "advmodels" })).Jump?.Tool);
@@ -1307,11 +1403,11 @@ namespace Semanticus.Tests
                     var question = AskRoutePoint.ReadingOf(result, AskRoutePoint.QuestionReading);
                     if (question == null)
                     {
-                        Assert.True(!string.Equals(result.Tool, "askdata", StringComparison.Ordinal), $"{id} \"{words}\": Ask your data alone on {door}");
+                        Assert.True(!string.Equals(result.Reading, AskRoutePoint.QuestionReading, StringComparison.Ordinal), $"{id} \"{words}\": Ask your data alone on {door}");
                         continue;
                     }
                     placed++;
-                    Assert.Equal("askdata", question.Tool);
+                    Assert.Equal("query", question.Tool);
                     Assert.Equal(AskRoutePoint.AsksAQuestion(words) ? AskRoutePoint.QuestionReading : AskRoutePoint.TaskReading, result.Reading);
                     Assert.Equal(PlanTargets.JumpFor(words)?.Tool, AskRoutePoint.ReadingOf(result, AskRoutePoint.TaskReading)?.Tool);
                     if (label == "task" && !AskRoutePoint.AsksAQuestion(words))
@@ -1334,7 +1430,7 @@ namespace Semanticus.Tests
             Assert.Contains("never from what placed it", d, StringComparison.Ordinal);
             Assert.Contains("opens with what, which, how, why, when, who or where", d, StringComparison.Ordinal);
             Assert.Contains("opens with 'show me' or 'list'", d, StringComparison.Ordinal);
-            Assert.Contains("opens by asking for Ask your data by name", d, StringComparison.Ordinal);
+            Assert.Contains("opens by asking for the question box by name", d, StringComparison.Ordinal);
             Assert.Contains("ends in a question mark", d, StringComparison.Ordinal);
             Assert.Contains("'total sales by region' reads task first", d, StringComparison.Ordinal);
             // The code's lists hold exactly what the sentence names (and the three spellings of the same words).
@@ -1355,7 +1451,7 @@ namespace Semanticus.Tests
                     var words = opening + " net sales by region";
                     foreach (var result in new[] { await McpTools.RouteAsk(f.Engine, words), await new EngineRpcTarget(f.Engine).routeAsk(words) })
                     {
-                        Assert.Equal("askdata", AskRoutePoint.ReadingOf(result, AskRoutePoint.QuestionReading)?.Tool);
+                        Assert.Equal("query", AskRoutePoint.ReadingOf(result, AskRoutePoint.QuestionReading)?.Tool);
                         Assert.True((first ? AskRoutePoint.QuestionReading : AskRoutePoint.TaskReading) == result.Reading,
                             $"\"{words}\" reads {result.Reading} first; the description says {(first ? "question" : "task")}");
                     }
@@ -1481,7 +1577,10 @@ namespace Semanticus.Tests
         {
             var questions = AskRoutePoint.Questions();
             var options = Assert.Single(questions).Options;
-            Assert.Equal(AskRouteCatalog.Tools.Count + 1, options.Count);   // every place, plus none
+            // Every word group, plus none. The Query page is two groups (a question about the numbers, and writing a
+            // calculation), so there is one more option than there are places.
+            Assert.Equal(AskRouteCatalog.WordGroups.Count + 1, options.Count);
+            Assert.Equal(AskRouteCatalog.Tools.Count + 1, AskRouteCatalog.WordGroups.Count);
             Assert.Contains(options, o => o.Id == AskRouteCatalog.NoTool);
 
             foreach (var option in options)
@@ -1620,13 +1719,11 @@ namespace Semanticus.Tests
 
         [Theory]
         // The ask, the place it lands, and the thing it asks to make (null when it asks to make nothing).
-        [InlineData("create a measure", "daxlab", "measure")]
-        [InlineData("add a new measure", "daxlab", "measure")]
-        [InlineData("I want to write some DAX", "daxlab", null)]
+        [InlineData("create a measure", "query", "measure")]
+        [InlineData("add a new measure", "query", "measure")]
+        [InlineData("I want to write some DAX", "query", null)]
         // "breaks" is the noun carrying this one and "rename" is only the verb, so it is about impact.
         [InlineData("what breaks if I rename Total Sales", "lineage", null)]
-        // Here "rename" IS the thing being asked for, which is what Find and replace does.
-        [InlineData("rename Total Sales", "search", null)]
         [InlineData("mark the date table", "advmodels", null)]
         [InlineData("who can see this", "advmodels", null)]
         [InlineData("create a role", "advmodels", "role")]
@@ -1642,9 +1739,9 @@ namespace Semanticus.Tests
         [InlineData("run the best practice rules", "bpa", null)]
         // The five things the Model tree makes. Each one names itself, so the page can run the tree's own
         // command instead of opening a page that cannot make it (Kane, 22 September).
-        [InlineData("create a calculated column", "daxlab", "calculated column")]
-        [InlineData("create a calculated table", "daxlab", "calculated table")]
-        [InlineData("add a function", "daxlab", "function")]
+        [InlineData("create a calculated column", "query", "calculated column")]
+        [InlineData("create a calculated table", "query", "calculated table")]
+        [InlineData("add a function", "query", "function")]
         [InlineData("new calculation item", "advmodels", "calculation item")]
         // A DEPENDENCY QUESTION IS ABOUT THE DEPENDENCY, not about the kind of thing it names (Codex P2 on
         // PR 386). Every one of these used to land somewhere else, or nowhere, because the relation word
@@ -1664,6 +1761,7 @@ namespace Semanticus.Tests
             var match = AskRoutePoint.MatchWords(ask);
             Assert.True(match != null, "'" + ask + "' matched no place on words alone.");
             Assert.Equal(tool, match!.Tool);
+            Assert.Equal(tool == "query" ? AskRouteCatalog.QueriesTool : tool, match.Group);   // creating or writing is the writing group
             Assert.Equal(create, match.Create);
             Assert.True(match.Score >= 2, "the bar is 2; '" + ask + "' scored " + match.Score);
             Assert.True(match.Score > match.RunnerUp,
@@ -1711,18 +1809,14 @@ namespace Semanticus.Tests
             Assert.Equal("lineage", AskRoutePoint.MatchWords(ask)!.Tool);
         }
 
-        /// <summary>The scoring rule that separates the two rename asks, asserted as arithmetic rather than
-        /// as an outcome. A noun and a verb together must beat two nouns, or "what breaks if I rename Total
-        /// Sales" and "rename Total Sales" cannot be told apart.</summary>
+        /// <summary>The two rename asks. A question about impact still lands on Lineage. A bare "rename Total
+        /// Sales" claims no page now that Find and replace has left the Studio: one verb is not enough evidence,
+        /// so it is left for the assistant.</summary>
         [Fact]
-        public void A_noun_and_a_verb_together_outrank_two_nouns()
+        public void A_rename_that_asks_about_impact_lands_on_lineage_and_a_bare_rename_on_no_page()
         {
-            var impact = AskRoutePoint.MatchWords("what breaks if I rename Total Sales");
-            var replace = AskRoutePoint.MatchWords("rename Total Sales");
-            Assert.Equal("lineage", impact!.Tool);
-            Assert.Equal("search", replace!.Tool);
-            Assert.True(impact.Score > replace.Score,
-                "the impact question carries more evidence than the bare instruction");
+            Assert.Equal("lineage", AskRoutePoint.MatchWords("what breaks if I rename Total Sales")!.Tool);
+            Assert.Null(AskRoutePoint.MatchWords("rename Total Sales"));
         }
 
         [Theory]
@@ -1808,7 +1902,7 @@ namespace Semanticus.Tests
         /// create ask and the dependency ask are here, because they are the two the box gets most and they
         /// take different paths through the scoring.</summary>
         [Theory]
-        [InlineData("create a measure", "daxlab", "edit", "measure")]
+        [InlineData("create a measure", "query", "explore", "measure")]
         [InlineData("what uses this measure", "lineage", "explore", null)]
         public async Task A_word_match_never_reaches_the_service(string ask, string tool, string area, string create)
         {

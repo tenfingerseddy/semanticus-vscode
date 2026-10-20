@@ -1,6 +1,7 @@
 import { useLayoutEffect } from 'react';
 import { DriverBar } from './driver-bar';
 import { driverStore, type DriveMode } from './driver-store';
+import { copilotRounds } from './copilot-follow';
 import { onAssistantCall, onDriveMode, onReconnect, onStudioAnswer, onStudioShow, rpc } from '../bridge';
 import { setAssistantAnswer } from './answer-store';
 import { onPersonInput, postDriverMessage, setDriveMode } from './driver-wire';
@@ -9,9 +10,11 @@ import { StudioCursor } from './cursor';
 import { DriveEdge } from './drive-edge';
 import { usePlanChrome } from '../plan-chrome';
 
+/** A press that hands a step to the assistant (Ask your assistant, Give to your assistant) carries data-keeps-wheel: it is the person
+ *  talking to the assistant, not taking the screen, so the switch stays on Claude drives (UAT K7). */
 export function isPersonInput(target: EventTarget | null): boolean {
   return target instanceof Element && !!target.closest('.studio-root')
-    && !target.closest('[data-studio-driver-bar], [data-studio-note-strip]');
+    && !target.closest('[data-studio-driver-bar], [data-studio-note-strip], [data-keeps-wheel]');
 }
 
 // The host says the drive mode once per page load (studioReady). A new model remounts this layer under App's session-keyed
@@ -44,7 +47,7 @@ export function StudioLayer() {
         modeHeard = true;
         report();
       }),
-      onAssistantCall((call) => driverStore.noteAssistantCall(call.at, call.assistant)),
+      onAssistantCall((call) => driverStore.noteAssistantCall(call.at, call.assistant, copilotRounds.see(call))),
       onReconnect(() => { void loadAssistant(); }),
       onStudioShow((note) => { if (!note.update) driverStore.noteShow(); }),
       onStudioAnswer((answer) => setAssistantAnswer(answer)),

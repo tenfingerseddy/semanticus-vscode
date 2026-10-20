@@ -101,6 +101,30 @@ namespace Semanticus.Engine
         /// cap; this one keeps a run from queueing every measure on it at once.</summary>
         private const int JevAsksInFlight = 6;
 
+        /// <summary>Set the first time the relay refuses a request that spans many tables as too big (a relay older than this client, which
+        /// served thirty questions a request): from then on this engine asks a table at a time and at most the old relay questions (JevTableBatch.LegacyQuestions), so a client ahead of
+        /// its relay still works. False on every real path once the relay has been updated.</summary>
+        private volatile bool _jevRelayNeedsTables;
+
+        /// <summary>The single-request points (cleanup.suggest, query.summarize, compose.draft): a request the relay refuses as too big is asked again
+        /// in smaller ones (DecisionSplitter), so a relay rolled back to the release before the bounds were raised still answers them.</summary>
+        internal readonly DecisionSplitter Splitter = new DecisionSplitter();
+
+        /// <summary>What is out with Jev right now, in objects for each point, so the press can say what it waits for with a real count
+        /// ("Jev is choosing how 48 columns add up and what Copilot sees in 396 fields").</summary>
+        internal readonly JevChoosingTally JevChoosing = new JevChoosingTally();
+        internal bool JevRelayNeedsTablesForTest { get => _jevRelayNeedsTables; set => _jevRelayNeedsTables = value; }
+
+        /// <summary>A test's own ceiling on the objects one batched request asks about, so a small model can be asked in several requests (the
+        /// relay's answers and refusals request by request). Null on every real path, which cuts requests by Jev's context only.</summary>
+        internal int? JevRequestObjectsForTest;
+
+        /// <summary>A test's own switch back to one request a table (what the relay served before the bound was raised), for the tests that count
+        /// requests, budgets and refusals request by request. False on every real path.</summary>
+        internal bool JevPerTableForTest;
+
+        private bool JevPerTable => _jevRelayNeedsTables || JevPerTableForTest;
+
         /// <summary>One family's progress through the objects it is eligible to ask about. Every eligible object is exactly one of:
         /// answered (Jev gave a usable answer, now or earlier), tried without a usable answer (<see cref="Unusable"/>, which is
         /// also what a request that heard nothing counts as), or <see cref="Remaining"/> (not asked yet). So Total is always the
@@ -1662,6 +1686,17 @@ namespace Semanticus.Engine
             var columnSummarizePoint = DecisionRegistry.Require(DecisionRegistry.ColumnSummarize);
             var dateTablePoint = DecisionRegistry.Require(DecisionRegistry.DateTable);
             var decisions = Decisions;
+            // WHAT AN OBJECT'S OWN ANSWER IS REMEMBERED UNDER. The answer is Jev's to one object's own evidence (its per-object request digest) and
+            // it was bought under one permission: a withdrawal and a new grant, by this window or another, moves the permission's generation and
+            // the answer is no longer served (the same rule the answer store keeps for a whole request, DecisionAnswerStore).
+            var consentGeneration = 0L;
+            try
+            {
+                var consentScope = decisions.ReadScope == null ? null : await decisions.ReadScope().ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(consentScope)) consentGeneration = decisions.ReadConsent(consentScope).Generation;
+            }
+            catch { }
+            string MemoryKey(string digest) => consentGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture) + "|" + digest;
             // The snapshot the background run built for this revision, before anything was asked. Null means no
             // data or not measured, and the starter request then says so rather than sending zeros.
             var facts = starterLive || relationshipLive || columnCategoryLive || columnSummarizeLive ? target.Facts?.Invoke() : null;
@@ -1727,6 +1762,9 @@ namespace Semanticus.Engine
             // object whose answer was refused (or left out of the reply) reads as "not decided" and keeps whatever it had.
             static DecisionOutcome NarrowOutcome<TAsk>(DecisionOutcome outcome, TableBatch<TAsk> batch, TAsk ask) where TAsk : class =>
                 outcome == null || !outcome.Asked ? outcome : DecisionOutcome.Answered(outcome.Answers.Narrow(batch.Names[ask]));
+            // An object's share of a reply is kept only when each of its questions was answered.
+            static bool AnsweredWhole<TAsk>(TableBatch<TAsk> batch, TAsk ask, DecisionOutcome mine) where TAsk : class =>
+                mine != null && mine.Asked && mine.Answers.Decided && mine.Answers.Answers.Count >= batch.Names[ask].Count;
             (TAsk Ask, DecisionOutcome Outcome)[] Spread<TAsk>(IReadOnlyList<TAsk> asks, IEnumerable<(TableBatch<TAsk> Batch, DecisionOutcome Outcome)> results) where TAsk : class
             {
                 var byAsk = new Dictionary<TAsk, DecisionOutcome>(ReferenceEqualityComparer.Instance as IEqualityComparer<TAsk>);
@@ -1734,13 +1772,39 @@ namespace Semanticus.Engine
                     foreach (var ask in batch.Asks) byAsk[ask] = NarrowOutcome(outcome, batch, ask);
                 return asks.Select(a => (Ask: a, Outcome: byAsk.TryGetValue(a, out var o) ? o : null)).ToArray();
             }
-            async Task<(TAsk Ask, DecisionOutcome Outcome)[]> AskBatches<TAsk>(DecisionPoint point, IReadOnlyList<TAsk> asks,
-                IReadOnlyList<TableBatch<TAsk>> batches) where TAsk : class
+            // A request the relay refused as too big is a relay older than this client: the same asks go again a table at a time, once, and
+            // every request after it is cut that way from the start (_jevRelayNeedsTables).
+            static bool RefusedAsTooBig(DecisionOutcome o) =>
+                o != null && o.Asked && !o.Answers.Decided && JevDecisionOracle.IsTooBigRefusal(o.Answers.NotDecidedReason);
+            async Task<(TableBatch<TAsk> Batch, DecisionOutcome Outcome)[]> AskNarrowing<TAsk>(DecisionPoint point, IReadOnlyList<TableBatch<TAsk>> batches) where TAsk : class
             {
-                var asked = await Task.WhenAll(batches.Select(async b =>
-                    (Batch: b, Outcome: await AskOne(point.Name, b.Snapshot, b.Questions, perQuestion: true).ConfigureAwait(false)))).ConfigureAwait(false);
-                return Spread(asks, asked);
+                async Task<(TableBatch<TAsk> Batch, DecisionOutcome Outcome)[]> All(IEnumerable<TableBatch<TAsk>> these) =>
+                    await Task.WhenAll(these.Select(async b =>
+                    {
+                        // The objects of this request are what Jev is choosing until it comes back (JevChoosingTally).
+                        JevChoosing.Add(point.Name, b.Asks.Count);
+                        try { return (Batch: b, Outcome: await AskOne(point.Name, b.Snapshot, b.Questions, perQuestion: true).ConfigureAwait(false)); }
+                        finally { JevChoosing.Add(point.Name, -b.Asks.Count); }
+                    })).ConfigureAwait(false);
+                var asked = await All(batches).ConfigureAwait(false);
+                if (!asked.Any(a => RefusedAsTooBig(a.Outcome))) return asked;
+                _jevRelayNeedsTables = true;
+                // Narrow by QUESTIONS, not objects (a measure asks two): a table at a time and at most what the old relay took. A piece still refused
+                // is halved again, down to one object; an object alone that is still refused keeps its refusal, which the family reads as no answer.
+                var done = asked.Where(a => !RefusedAsTooBig(a.Outcome)).ToList();
+                var pieces = asked.Where(a => RefusedAsTooBig(a.Outcome)).SelectMany(a => a.Batch.Narrow(JevTableBatch.LegacyQuestionsFor(point.Name))).ToList();
+                while (pieces.Count > 0)
+                {
+                    var round = await All(pieces).ConfigureAwait(false);
+                    done.AddRange(round.Where(a => !RefusedAsTooBig(a.Outcome) || a.Batch.Asks.Count <= 1));
+                    pieces = round.Where(a => RefusedAsTooBig(a.Outcome) && a.Batch.Asks.Count > 1)
+                        .SelectMany(a => a.Batch.Narrow(Math.Max(1, a.Batch.Questions.Count / 2))).ToList();
+                }
+                return done.ToArray();
             }
+            async Task<(TAsk Ask, DecisionOutcome Outcome)[]> AskBatches<TAsk>(DecisionPoint point, IReadOnlyList<TAsk> asks,
+                IReadOnlyList<TableBatch<TAsk>> batches) where TAsk : class =>
+                Spread(asks, await AskNarrowing(point, batches).ConfigureAwait(false));
 
             // THE FAMILIES THAT LOOK AT EVERY ELIGIBLE OBJECT (measures and column format; m11/sf-progress). Prepare lists them all;
             // this asks a run's worth (the cap), the objects nobody has asked first, and the run's progress record says how many
@@ -1827,12 +1891,12 @@ namespace Semanticus.Engine
 
             Task<(MeasuresFamily.Ask Ask, DecisionOutcome Outcome)[]> AskSomeMeasures(IReadOnlyList<MeasuresFamily.Ask> some) =>
                 BatchedFor(DecisionRegistry.MeasureFolderAndFormat)
-                    ? AskBatches(measuresPoint, some, MeasuresFamily.Batches(new MeasuresFamily.Prepared { Asks = some.ToList(), Shares = prepared.Measures.Shares }))
+                    ? AskBatches(measuresPoint, some, MeasuresFamily.Batches(new MeasuresFamily.Prepared { Asks = some.ToList(), Shares = prepared.Measures.Shares }, JevRequestObjectsForTest ?? MeasuresFamily.ChunkSize, JevPerTable))
                     : Task.WhenAll(some.Select(async ask =>
                         (Ask: ask, Outcome: await AskOne(measuresPoint.Name, ask.Snapshot, ask.Questions).ConfigureAwait(false))));
             Task<(ColumnFormatFamily.Ask Ask, DecisionOutcome Outcome)[]> AskSomeColumnFormats(IReadOnlyList<ColumnFormatFamily.Ask> some) =>
                 BatchedFor(DecisionRegistry.ColumnFormat)
-                    ? AskBatches(columnFormatPoint, some, ColumnFormatFamily.Batches(new ColumnFormatFamily.Prepared { Asks = some.ToList(), TableColumns = prepared.ColumnFormat.TableColumns }))
+                    ? AskBatches(columnFormatPoint, some, ColumnFormatFamily.Batches(new ColumnFormatFamily.Prepared { Asks = some.ToList(), TableColumns = prepared.ColumnFormat.TableColumns }, JevRequestObjectsForTest ?? ColumnFormatFamily.ChunkSize, JevPerTable))
                     : Task.WhenAll(some.Select(async ask =>
                         (Ask: ask, Outcome: await AskOne(columnFormatPoint.Name, ask.Snapshot, ask.Questions).ConfigureAwait(false))));
             var measureAsks = AskEveryAsync(MeasuresFamily.Name, measuresPoint, prepared.Measures.Asks, target.UncappedAsks ? int.MaxValue : MeasuresCapForTest ?? MeasuresFamily.MaxMeasuresPerRun,
@@ -1910,18 +1974,29 @@ namespace Semanticus.Engine
                 else if (looked < total && stopReason != null) run.AiSchemaProgress = (looked, total, false, stopReason);
                 return all;
             }
-            // WHAT COPILOT SEES, ONE REQUEST PER TABLE. The same batches as above with a table's objects as the unit: the chunks are
-            // cut over every prepared object first (so the same model always cuts the same chunks), a chunk already answered (this
-            // session, an earlier batch of this revision, or kept on this computer) is read and sent nowhere, and then whole chunks
-            // of NEW objects are asked until the cap on objects is reached. The stop reasons are read the way the per-object run reads
-            // them: off what each asked request came back with, and what a whole object heard.
+            // WHAT COPILOT SEES, ONE REQUEST FOR THE MODEL (JevTableBatch.cs). What is already answered is read back and sent nowhere, an
+            // OBJECT at a time: an object heard by an earlier batch of this revision, or by an earlier run of this session whose own evidence
+            // has not changed, keeps its answer, so one edit in one table does not ask the whole model again. The rest are packed into as
+            // few requests as Jev's context allows, a request already answered whole (kept on this computer) is read and sent nowhere, and
+            // whole requests of NEW objects are asked until the cap on objects is reached. The stop reasons are read the way the per-object
+            // run reads them: off what each asked request came back with, and what a whole object heard.
             async Task<(AiSchemaFamily.Ask Ask, DecisionOutcome Outcome)[]> AiSchemaByTableAsync()
             {
-                var batches = AiSchemaFamily.Batches(prepared.AiSchema);
-                string DigestOf(TableBatch<AiSchemaFamily.Ask> b) => b.RequestFor(aiSchemaPoint).Digest;
+                var asks = prepared.AiSchema.Asks;
+                string DigestOf(AiSchemaFamily.Ask ask) =>
+                    new DecisionRequest(aiSchemaPoint.Name, aiSchemaPoint.SchemaVersion, ask.Snapshot, ask.Questions).Digest;
+                var heard = new Dictionary<AiSchemaFamily.Ask, DecisionOutcome>(ReferenceEqualityComparer.Instance as IEqualityComparer<AiSchemaFamily.Ask>);
+                var pending = new List<AiSchemaFamily.Ask>();
+                foreach (var ask in asks)
+                {
+                    var digest = MemoryKey(DigestOf(ask));
+                    if (carry != null && carry.TryGetValue(digest, out var carried)) heard[ask] = carried;
+                    else if (target.KnownAnswer(digest) is { } remembered) heard[ask] = remembered;
+                    else pending.Add(ask);
+                }
+                var batches = AiSchemaFamily.Batches(new AiSchemaFamily.Prepared { Asks = pending, Fields = prepared.AiSchema.Fields }, JevRequestObjectsForTest ?? AiSchemaFamily.ChunkSize, JevPerTable);
                 var known = await Task.WhenAll(batches.Select(async b =>
                 {
-                    if (carry != null && carry.TryGetValue(DigestOf(b), out var carried)) return (Batch: b, Outcome: carried);
                     try
                     {
                         return (Batch: b, Outcome: await decisions.AskAsync(aiSchemaPoint.Name, b.Snapshot, b.Questions,
@@ -1934,16 +2009,22 @@ namespace Semanticus.Engine
                                              && string.Equals(k.Outcome.SkippedReason, DecisionService.NotCachedReason, StringComparison.Ordinal))
                                  .Select(k => k.Batch).ToList();
                 var now = JevTableBatch.TakeWithinCap(fresh, cap);
-                var asked = await Task.WhenAll(now.Select(async b =>
-                    (Batch: b, Outcome: await AskOne(aiSchemaPoint.Name, b.Snapshot, b.Questions, perQuestion: true).ConfigureAwait(false)))).ConfigureAwait(false);
-                var byBatch = asked.ToDictionary(a => a.Batch, a => a.Outcome);
+                var asked = await AskNarrowing(aiSchemaPoint, now).ConfigureAwait(false);
                 var laterObjects = fresh.Where(b => !now.Contains(b)).Sum(b => b.Asks.Count);
-                var answered = known.Select(k => (k.Batch, Outcome: byBatch.TryGetValue(k.Batch, out var o) ? o : k.Outcome)).ToArray();
-                // Only a WHOLE reply is carried to the next batch: a request with an answer refused is asked again.
+                var answered = known.Where(k => !now.Contains(k.Batch)).Select(k => (k.Batch, k.Outcome)).Concat(asked).ToArray();
+                // An object's own answer, whole, is kept for the next batch of this revision and for the session: an answer with a question
+                // refused is asked again.
                 foreach (var (b, o) in answered)
-                    if (o != null && o.Asked && o.Answers.Complete) run.AiSchemaAnswers[DigestOf(b)] = o;
-                var all = Spread(prepared.AiSchema.Asks, answered);
-                var total = prepared.AiSchema.Asks.Count;
+                    foreach (var ask in b.Asks)
+                    {
+                        var mine = NarrowOutcome(o, b, ask);
+                        if (!AnsweredWhole(b, ask, mine)) continue;
+                        run.AiSchemaAnswers[MemoryKey(DigestOf(ask))] = mine;
+                        target.RememberAnswer(MemoryKey(DigestOf(ask)), mine);
+                    }
+                var spread = Spread(pending, answered).ToDictionary(x => x.Ask, x => x.Outcome, ReferenceEqualityComparer.Instance as IEqualityComparer<AiSchemaFamily.Ask>);
+                var all = asks.Select(a => (Ask: a, Outcome: heard.TryGetValue(a, out var h) ? h : spread[a])).ToArray();
+                var total = asks.Count;
                 var looked = all.Count(x => x.Outcome != null && x.Outcome.Asked && x.Outcome.Answers.Decided);
                 var more = laterObjects > 0 && asked.Any(a => a.Outcome != null && a.Outcome.Asked && a.Outcome.Answers.Decided);
                 var spent = asked.Any(a => a.Outcome != null
@@ -1992,32 +2073,37 @@ namespace Semanticus.Engine
             }
             var columnCategoryAsks = ColumnBatchAsync(ColumnCategoryFamily.Name, columnCategoryPoint, prepared.ColumnCategory.Asks,
                 a => a.Snapshot, a => a.Questions, target.UncappedAsks ? int.MaxValue : ColumnCategoryCapForTest ?? ColumnCategoryFamily.MaxColumnsPerRun);
-            // The same batching by table for the base-measure family: the chunks are cut over every prepared column, a chunk answered
-            // this session is read back and sent nowhere, and whole chunks of NEW columns are asked until the cap on columns is reached.
+            // The same batching for the base-measure family: a column whose own evidence was answered this session is read back and sent
+            // nowhere, the rest are packed into as few requests as Jev's context allows, and whole requests of NEW columns are asked until the
+            // cap on columns is reached.
             async Task<(ColumnSummarizeFamily.Ask Ask, DecisionOutcome Outcome)[]> ColumnSummarizeByTableAsync(int cap)
             {
                 var asks = prepared.ColumnSummarize.Asks;
                 var point = columnSummarizePoint;
-                var batches = ColumnSummarizeFamily.Batches(prepared.ColumnSummarize);
-                string DigestOf(TableBatch<ColumnSummarizeFamily.Ask> b) => b.RequestFor(point).Digest;
-                var known = new List<(TableBatch<ColumnSummarizeFamily.Ask> Batch, DecisionOutcome Outcome)>();
-                var fresh = new List<TableBatch<ColumnSummarizeFamily.Ask>>();
-                foreach (var b in batches)
+                string DigestOf(ColumnSummarizeFamily.Ask ask) => new DecisionRequest(point.Name, point.SchemaVersion, ask.Snapshot, ask.Questions).Digest;
+                var heard = new Dictionary<ColumnSummarizeFamily.Ask, DecisionOutcome>(ReferenceEqualityComparer.Instance as IEqualityComparer<ColumnSummarizeFamily.Ask>);
+                var pending = new List<ColumnSummarizeFamily.Ask>();
+                foreach (var ask in asks)
                 {
-                    if (target.KnownAnswer(DigestOf(b)) is { } heard) known.Add((b, heard));
-                    else fresh.Add(b);
+                    if (target.KnownAnswer(MemoryKey(DigestOf(ask))) is { } remembered) heard[ask] = remembered;
+                    else pending.Add(ask);
                 }
-                var now = JevTableBatch.TakeWithinCap(fresh, cap);
-                var asked = await Task.WhenAll(now.Select(async b =>
-                    (Batch: b, Outcome: await AskOne(point.Name, b.Snapshot, b.Questions, perQuestion: true).ConfigureAwait(false)))).ConfigureAwait(false);
-                // Only a WHOLE reply is remembered: a request with an answer refused is asked again on the next run.
+                var batches = ColumnSummarizeFamily.Batches(new ColumnSummarizeFamily.Prepared { Asks = pending, Shares = prepared.ColumnSummarize.Shares }, JevRequestObjectsForTest ?? ColumnSummarizeFamily.ChunkSize, JevPerTable);
+                var now = JevTableBatch.TakeWithinCap(batches, cap);
+                var asked = await AskNarrowing(point, now).ConfigureAwait(false);
+                // An object's own answer, whole, is remembered: an answer with a question refused is asked again on the next run.
                 foreach (var (b, o) in asked)
-                    if (o != null && o.Asked && o.Answers.Complete) target.RememberAnswer(DigestOf(b), o);
-                var laterObjects = fresh.Where(b => !now.Contains(b)).Sum(b => b.Asks.Count);
+                    foreach (var ask in b.Asks)
+                    {
+                        var mine = NarrowOutcome(o, b, ask);
+                        if (AnsweredWhole(b, ask, mine)) target.RememberAnswer(MemoryKey(DigestOf(ask)), mine);
+                    }
+                var laterObjects = batches.Where(b => !now.Contains(b)).Sum(b => b.Asks.Count);
                 // Only a batch that heard back carries on: a service that answered nothing is not asked again and again.
                 if (laterObjects > 0 && asked.Any(a => a.Outcome != null && a.Outcome.Asked && a.Outcome.Answers.Decided))
                     run.ColumnProgress[ColumnSummarizeFamily.Name] = (asks.Count - laterObjects, asks.Count);
-                return Spread(asks, known.Concat(asked));
+                var spread = Spread(pending, asked).ToDictionary(x => x.Ask, x => x.Outcome, ReferenceEqualityComparer.Instance as IEqualityComparer<ColumnSummarizeFamily.Ask>);
+                return asks.Select(a => (Ask: a, Outcome: heard.TryGetValue(a, out var h) ? h : spread[a])).ToArray();
             }
             var columnSummarizeAsks = BatchedFor(DecisionRegistry.ColumnSummarize)
                 ? ColumnSummarizeByTableAsync(target.UncappedAsks ? int.MaxValue : ColumnSummarizeCapForTest ?? ColumnSummarizeFamily.MaxColumnsPerRun)

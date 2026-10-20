@@ -216,4 +216,43 @@ const wsView = (extra = {}) => draw(V.WorkspacePickerView, {
   }
 }
 
+// ===================================================================================================
+// 5. A press is spent when the picker closes (UAT round 2: a no-folder window's Workspace model page started the browser sign-in on entry)
+// ===================================================================================================
+{
+  // The hub keeps its view while it is closed, and the picker is drawn only while the hub is open. The press that opened the picker was
+  // kept, so the next time the hub opened on that view the picker read the list as pressed and a sign-in window opened with no press.
+  const H = load(join(webview, 'src', 'connectionshub-model.ts'));
+  assert.equal(H.pickerStillPressed(true, true, 'workspace'), true, 'the open picker the button just drew keeps its press');
+  assert.equal(H.pickerStillPressed(true, false, 'workspace'), false, 'closing the hub spends the press');
+  assert.equal(H.pickerStillPressed(true, true, 'open'), false, 'leaving the picker spends the press');
+  assert.equal(H.pickerStillPressed(false, true, 'workspace'), false, 'a view nobody pressed stays automatic');
+  const hub = readFileSync(join(webview, 'src', 'connectionshub.tsx'), 'utf8');
+  assert.match(hub, /pickerPressed\.current = pickerStillPressed\(pickerPressed\.current, shown, view\)/, 'the hub spends the press when it closes or leaves the picker');
+}
+
+// ===================================================================================================
+// 6. A sign-in that worked is reused (round 2 UAT N13: Workspace model opened a browser sign-in after a service identity open)
+// ===================================================================================================
+{
+  const recs = [
+    { id: 'a', kind: 'xmla', authMode: 'interactive', lastUsedUtc: '2026-10-18T01:00:00Z' },
+    { id: 'b', kind: 'xmla', authMode: 'serviceprincipal', tenantId: 'contoso.com', lastUsedUtc: '2026-10-18T02:00:00Z' },
+    { id: 'c', kind: 'local', authMode: 'azcli', lastUsedUtc: '2026-10-18T03:00:00Z' },
+  ];
+  assert.deepEqual(M.signInToReuse(recs, 'a'), { authMode: 'interactive', tenantId: '' }, 'the model in play wins');
+  assert.deepEqual(M.signInToReuse(recs, null), { authMode: 'serviceprincipal', tenantId: 'contoso.com' }, 'else the published model opened last (a local copy has no sign-in)');
+  assert.deepEqual(M.signInToReuse([], null), { authMode: 'interactive', tenantId: '' }, 'nothing known starts at the browser');
+  assert.equal(M.signInToReuse([{ id: 'd', kind: 'xmla', authMode: 'devicecode' }], 'd').authMode, 'interactive', 'a way the picker does not offer falls back to the browser');
+  // The row of a model opened live does not claim a publish target nobody chose (round 2 UAT N22).
+  const Hub = load(join(webview, 'src', 'connectionshub-model.ts'));
+  const live = { id: 'a', kind: 'xmla' };
+  const ctxOf = (implied) => ({ editing: { available: true, connectionId: 'a' }, querying: { available: false }, publishing: { available: true, connectionId: 'a', implied } });
+  assert.deepEqual(Hub.rowJobs(live, ctxOf(true)), ['editing'], 'implied: editing only');
+  assert.deepEqual(Hub.rowJobs(live, ctxOf(false)), ['editing', 'publish target'], 'once chosen or published to: it is the publish target');
+  // One "Other ways to sign in" on screen after a sign-in that did not finish (round 2 UAT N14).
+  const unfinished = readable(wsView({ signIn: 'unfinished', workspaces: { kind: 'loading' } }));
+  assert.equal((unfinished.match(/Other ways to sign in/g) || []).length, 1, 'the words appear once');
+}
+
 console.log('connect pickers: rules, Desktop states, workspace states and wiring all hold');

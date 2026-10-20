@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CHECK = 'queries-redesign.test.mjs';
-const SOURCES = ['daxlab.tsx', 'queriesask.tsx', 'querywells.tsx'];
+const SOURCES = ['daxlab.tsx', 'query.tsx', 'query-notebook.tsx', 'queriesask.tsx', 'querywells.tsx'];
 
 const work = mkdtempSync(join(tmpdir(), 'semcrlf-'));
 try {

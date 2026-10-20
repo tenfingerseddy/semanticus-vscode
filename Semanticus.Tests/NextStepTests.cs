@@ -21,6 +21,8 @@ using Xunit;
 
 namespace Semanticus.Tests
 {
+    // The restore root is one process-wide setting this class swaps; it runs in the restore-root collection, one after another with the classes that read it.
+    [Collection("restore-root")]
     public sealed class NextStepTests
     {
         /// <summary>Answers next.step with a fixed kind and confidence, counts every next.step ask, and answers nothing else.</summary>
@@ -255,6 +257,100 @@ namespace Semanticus.Tests
             Assert.NotEqual("assistant", after.Step.Kind);
         }
 
+        [Fact]
+        public async Task A_publish_step_goes_once_the_words_are_published_and_the_others_stay()
+        {
+            var restoreRoot = Path.Combine(Path.GetTempPath(), "sem-ns-rp-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            var saved = RestorePointStore.RootOverride;
+            RestorePointStore.RootOverride = restoreRoot;
+            try
+            {
+                using var rig = await BuildAsync(pro: false);
+                await rig.Engine.SuggestNextAsync(new StudioSuggestRequest
+                {
+                    Say = "Here is what I would do next.",
+                    Steps = new[]
+                    {
+                        new StudioStep { Label = "Hide the old Margin %", Prompt = "Hide the old Margin %." },
+                        new StudioStep { Label = "Publish the new words", Prompt = "Publish the new words." },
+                        new StudioStep { Label = "Run the tests", Prompt = "Run the tests." },
+                    },
+                });
+                Assert.Equal(3, (await rig.Engine.GetStudioNotesAsync(null)).Suggestion.Steps.Length);
+
+                // A publish of this model that succeeded writes the audit record the engine reads (a failed or refused one writes none).
+                await Task.Delay(20);
+                Assert.True(LocalEngine.IsPublishLanded(new VerifiedEditRecord { Op = "deploy_live", Verdict = "deployed" }));
+                Assert.True(LocalEngine.IsPublishLanded(new VerifiedEditRecord { Op = "apply_model_diff", Verdict = "deployed" }));
+                Assert.False(LocalEngine.IsPublishLanded(new VerifiedEditRecord { Op = "apply_model_diff", Verdict = "overridden" }));
+                rig.Engine.NotePublished((await rig.Engine.SessionInfoAsync()).SessionId);
+
+                var after = (await rig.Engine.GetStudioNotesAsync(null)).Suggestion;
+                Assert.Equal(new[] { "Hide the old Margin %", "Run the tests" }, after.Steps.Select(s => s.Label).ToArray());
+                Assert.Equal(LocalEngine.StudioPublishedSuggestSay, after.Say);   // "It is not published" would be stale
+            }
+            finally { RestorePointStore.RootOverride = saved; try { Directory.Delete(restoreRoot, true); } catch { } }
+        }
+
+        [Fact]
+        public async Task VERIFIER_red_a_restore_point_of_ANOTHER_published_model_does_not_take_this_models_publish_step_away()
+        {
+            // The rule reads RestorePointStore.List() with no endpoint, so any restore point anywhere counts as "this suggestion's words are
+            // published". A restore point is also written BEFORE the push (LivePublish.cs:806, LiveHandle.cs:151), so a publish of another
+            // model, or a publish that then fails, takes the step away while the words are still not on the service.
+            var restoreRoot = Path.Combine(Path.GetTempPath(), "sem-ns-rpv-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            var saved = RestorePointStore.RootOverride;
+            RestorePointStore.RootOverride = restoreRoot;
+            try
+            {
+                using var rig = await BuildAsync(pro: false);
+                await rig.Engine.SuggestNextAsync(new StudioSuggestRequest
+                {
+                    Say = "Here is what I would do next.",
+                    Steps = new[]
+                    {
+                        new StudioStep { Label = "Hide the old Margin %", Prompt = "Hide the old Margin %." },
+                        new StudioStep { Label = "Publish the new words", Prompt = "Publish the new words." },
+                    },
+                });
+                await Task.Delay(1100);
+                RestorePointStore.Write("powerbi://api.powerbi.com/v1.0/myorg/OtherWorkspace", "SomeOtherModel", "{\"name\":\"SomeOtherModel\"}", "apply_model_diff", "1 change(s)", new[] { "measure:X/Y" }, Array.Empty<string>());
+                var labels = (await rig.Engine.GetStudioNotesAsync(null)).Suggestion.Steps.Select(s => s.Label).ToArray();
+                Assert.Equal(new[] { "Hide the old Margin %", "Publish the new words" }, labels);
+            }
+            finally { RestorePointStore.RootOverride = saved; try { Directory.Delete(restoreRoot, true); } catch { } }
+        }
+
+        [Fact]
+        public async Task VERIFIER2_red_after_Undo_publish_the_publish_step_comes_back_and_the_line_no_longer_says_Published()
+        {
+            // Live 18 Oct: the person pressed Publish (the step went, the line read "Published. Here is what is left."), then Undo publish.
+            // The Publish page said "back to how it was" and offered "Publish 7 changes" again, but the suggestion still said "Published."
+            // with no Publish step. The undo is the audit record rollback_push (verdict deployed); the rule only ever sets "published".
+            using var rig = await BuildAsync(pro: false);
+            await rig.Engine.SuggestNextAsync(new StudioSuggestRequest
+            {
+                Say = "The words are not published. Here is what I would do next.",
+                Steps = new[]
+                {
+                    new StudioStep { Label = "Hide the old Margin %", Prompt = "Hide the old Margin %." },
+                    new StudioStep { Label = "Publish the new words", Prompt = "Publish the new words." },
+                },
+            });
+            var record = typeof(LocalEngine).GetMethod("RecordVerifiedEditAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var session = rig.F.Sessions.Current;
+            await Task.Delay(20);
+            await (Task)record.Invoke(rig.Engine, new object[] { session, new VerifiedEditRecord { SessionId = session.Id, Op = "apply_model_diff", Verdict = "deployed", Summary = "pushed 7 change(s)" }, null });
+            Assert.Equal(LocalEngine.StudioPublishedSuggestSay, (await rig.Engine.GetStudioNotesAsync(null)).Suggestion.Say);   // the publish landed
+
+            await Task.Delay(20);
+            await (Task)record.Invoke(rig.Engine, new object[] { session, new VerifiedEditRecord { SessionId = session.Id, Op = "rollback_push", Verdict = "deployed", Summary = "rolled back" }, null });
+
+            var after = (await rig.Engine.GetStudioNotesAsync(null)).Suggestion;
+            Assert.Contains("Publish the new words", after.Steps.Select(s => s.Label));
+            Assert.NotEqual(LocalEngine.StudioPublishedSuggestSay, after.Say);
+        }
+
         // ---- Free asks nothing; a burst asks once ------------------------------------------------------------------------
 
         [Fact]
@@ -404,7 +500,7 @@ namespace Semanticus.Tests
             Assert.Equal(0.85, p.ConfidenceBar);
             Assert.Equal("get_next_step", p.Caller);
             Assert.Equal(new[] { "journey_stage", "journey_counts", "journey_flags", "candidate_kinds", "plan_top_kind" }, p.SnapshotFields.ToArray());
-            Assert.Equal(6, DecisionRegistry.ConsentSchemaVersion);
+            Assert.Equal(6, DecisionRegistry.ConsentSchemaVersion);   // 1.5.1: copilot.misses joined (the Copilot test) and the version stayed at the 6 next.step set: it ships off and sends nothing
             Assert.True(LocalEngine.NextStepJevDecides);
         }
     }

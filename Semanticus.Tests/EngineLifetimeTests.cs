@@ -148,6 +148,19 @@ namespace Semanticus.Tests
             Assert.True(lifetime.Expired);
         }
 
+        [Fact]
+        public void A_held_engine_still_leaves_once_the_hold_cap_runs_out()
+        {
+            // r2 UAT N26: the 1.5.105 engine held unsaved live work for an hour after its window closed (418 MB).
+            // A hold pauses the countdown, but only for a bounded time.
+            var expired = new ManualResetEventSlim(false);
+            using var lifetime = new ParentLifetime(4242, () => expired.Set(),
+                grace: TimeSpan.FromMilliseconds(100), poll: TimeSpan.FromMilliseconds(10),
+                isAlive: _ => false, holdOpen: () => true, holdCap: TimeSpan.FromMilliseconds(400));
+            Assert.True(expired.Wait(TimeSpan.FromSeconds(5)), "a held engine outlived its hold cap");
+            Assert.True(lifetime.Expired);
+        }
+
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public void Adopting_inside_the_grace_cancels_the_shutdown_and_switches_the_watch()
@@ -283,9 +296,9 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public void The_grace_defaults_to_twenty_seconds_and_the_test_hook_can_only_shorten_it()
+        public void The_grace_defaults_to_eight_seconds_and_the_test_hook_can_only_shorten_it()
         {
-            Assert.Equal(20_000, ParentLifetime.DefaultGraceMs);
+            Assert.Equal(8_000, ParentLifetime.DefaultGraceMs);
             var previous = Environment.GetEnvironmentVariable(ParentLifetime.GraceEnvironmentVariable);
             try
             {
@@ -415,6 +428,33 @@ namespace Semanticus.Tests
                 client = await HumanClient.ConnectAsync(EngineBroker.ReadInfo(workspace.Path));
                 Assert.True(await client.AdoptAsync(Environment.ProcessId));
                 Assert.Equal(1, (await client.InvokeAsync<SessionInfo>("sessionInfo")).Tables);
+            }
+            finally { client?.Dispose(); Kill(engine); Kill(parent); }
+        }
+
+        /// <summary>Round 2 UAT N26, the real process: an engine holding unsaved live work used to outlive its dead parent for an hour
+        /// (418 MB). The hold is bounded now, so the engine is gone within seconds of the cap, not kept for ever.</summary>
+        [EngineApphostFact]
+        public async Task An_engine_holding_unsaved_work_still_exits_once_its_hold_cap_runs_out()
+        {
+            var apphost = EngineApphost.Find();
+            using var workspace = new TempDir("smx-cap-");
+            using var parentDir = new TempDir("smx-cap-parent-");
+            var parent = StartSleeper(apphost, parentDir.Path);
+            Process engine = null;
+            HumanClient client = null;
+            try
+            {
+                engine = StartEngine(apphost, new[] { "serve", "--workspace", workspace.Path, "--ui-challenge-stdin", ParentWatchdog.Option, parent.Id.ToString() }, graceMs: 300, holdMs: 1500);
+                engine.StandardInput.WriteLine(Challenge);
+                engine.StandardInput.Flush();
+                var info = await WaitForOwnerAsync(workspace.Path, engine);
+                client = await HumanClient.ConnectAsync(info);
+                await client.InvokeAsync<OpenResult>("createModel", "Sales", 1604, false);
+                await client.InvokeAsync<string>("createTable", "Sales");
+                client.Dispose(); client = null;
+                parent.Kill(entireProcessTree: true); parent.WaitForExit(10000);
+                Assert.True(engine.WaitForExit(10000), "an engine holding unsaved work outlived its parent and its hold cap");
             }
             finally { client?.Dispose(); Kill(engine); Kill(parent); }
         }
@@ -759,7 +799,7 @@ namespace Semanticus.Tests
 
         /// <summary>The shipped apphost beside the test binaries:
         /// &lt;repo&gt;/Semanticus.Engine/bin/&lt;config&gt;/net8.0/. Null when nothing is built there.</summary>
-        private static Process StartEngine(string apphost, string[] args, int? graceMs = null, Action<string> onErr = null)
+        private static Process StartEngine(string apphost, string[] args, int? graceMs = null, Action<string> onErr = null, int? holdMs = null)
         {
             var psi = new ProcessStartInfo
             {
@@ -774,6 +814,7 @@ namespace Semanticus.Tests
             // The test hook. A real twenty-second grace per case is not a test; it can only shorten, so what
             // is being measured is still the shipped rule.
             if (graceMs.HasValue) psi.Environment[ParentLifetime.GraceEnvironmentVariable] = graceMs.Value.ToString();
+            if (holdMs.HasValue) psi.Environment[ParentLifetime.HoldCapEnvironmentVariable] = holdMs.Value.ToString();
             var p = Process.Start(psi) ?? throw new InvalidOperationException("could not start " + apphost);
             p.ErrorDataReceived += (_, e) => { if (e.Data != null) onErr?.Invoke(e.Data); };
             p.BeginErrorReadLine();   // drained: a full stderr pipe would stall the child

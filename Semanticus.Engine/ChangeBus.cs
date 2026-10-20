@@ -185,8 +185,22 @@ namespace Semanticus.Engine
 
         public void PublishEntitlement(Entitlement.EntitlementInfo info) => PublishIsolated(EntitlementChanged, info);
 
+        /// <summary>Fired when the assistant sets the personality, sounds or volume. The RpcServer re-broadcasts it as <c>host/settings</c>; the window writes the person's VS Code settings.</summary>
+        public event Action<HostSettingsView> HostSettings;
+
+        public void PublishHostSettings(HostSettingsView v) => PublishIsolated(HostSettings, v);
+
+        /// <summary>Fired when the assistant starts the free Pro month with the person's yes. The RpcServer re-broadcasts it as <c>host/startTrial</c>.</summary>
+        public event Action<string> HostStartTrial;
+
+        public void PublishHostStartTrial(string email) => PublishIsolated(HostStartTrial, email);
+
         /// <summary>Set by the RpcServer: true while a person's Studio connection is attached. show_in_studio answers "noStudio" without it.</summary>
         public Func<bool> HumanClientAttached { get; set; }
+
+        /// <summary>Asks the attached person's window a plain yes/no question about a SQL host (true yes, false no, null when nobody could answer).
+        /// Set by the RPC server; null in a headless engine, where the engine says nobody could be asked.</summary>
+        public Func<string, System.Threading.Tasks.Task<bool?>> SqlHostAsk { get; set; }
 
         // Observational, like progress: a broken listener must never fail the tool call or starve a healthy one.
         private static void PublishIsolated<T>(Action<T> evt, T value)

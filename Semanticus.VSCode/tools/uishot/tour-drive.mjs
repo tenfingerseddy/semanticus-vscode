@@ -95,10 +95,10 @@ try {
     await wait(300);
     await page.evaluate(() => window.postMessage({ type: 'learnReady', chapter: 'ask', modelName: 'Contoso Shop', sessionId: 'uishot' }, '*'));
     await page.waitForSelector('[data-testid="askdata-page"]', { timeout: 10000 });
-    await page.waitForSelector('[data-testid="askdata-example"]', { timeout: 20000 });
-    const tag = (await text(page, '[data-testid="askdata-example"]'))[0];
+    await page.waitForSelector('[data-testid="query-example"]', { timeout: 20000 });
+    const tag = (await text(page, '[data-testid="query-example"]'))[0];
     if (tag !== 'Example') failures.push(`${theme}: tag reads "${tag}"`);
-    const pageText = (await text(page, '[data-testid="askdata-examples"]'))[0] || '';
+    const pageText = (await text(page, '[data-testid="query-examples"]'))[0] || '';
     if (!pageText.includes('Example answer. Live answers need your own model.')) failures.push(`${theme}: the example line is missing`);
     if (!pageText.includes('Computers') || !pageText.includes('3,942,000')) failures.push(`${theme}: the recorded rows are not on screen`);
     await wait(1800);
@@ -113,7 +113,7 @@ try {
     if (!after.includes('semanticus.learn.end:undefined')) failures.push(`${theme}: leave sent ${JSON.stringify(after)}`);
     if (await page.$('[data-testid="tour-bar"]')) failures.push(`${theme}: the bar stayed after leaving`);
 
-    const all = (await text(page, '[data-testid="tour-bar"], [data-testid="note-strip"], [data-testid="askdata-examples"]')).join(' ');
+    const all = (await text(page, '[data-testid="tour-bar"], [data-testid="note-strip"], [data-testid="query-examples"]')).join(' ');
     if (all.includes(String.fromCharCode(0x2014))) failures.push(`${theme}: an em dash is on screen`);
     await page.close();
   }

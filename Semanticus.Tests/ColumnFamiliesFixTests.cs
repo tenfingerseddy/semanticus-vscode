@@ -314,6 +314,10 @@ namespace Semanticus.Tests
                 var answers = Enumerable.Range(1, 61).ToDictionary(i => "summarize_by|Rate " + i.ToString("00", CultureInfo.InvariantCulture), _ => ("average", 0.95), StringComparer.Ordinal);
                 var oracle = await AnswerAsync(f, answers);
                 await f.Engine.SetDecisionPointEnabledAsync(Category, false, "human");
+                // A run asks at most ColumnSummarizeFamily.MaxColumnsPerRun new columns (2,000) and the rest wait for the next read. A model that
+                // big is too slow for a test, so the cap is lowered to one full request (m16/jev-size: JevTableBatch.ColumnObjectsPerRequest, 60)
+                // and the 61st column is the one that waits.
+                f.Engine.ColumnSummarizeCapForTest = JevTableBatch.ColumnObjectsPerRequest;
 
                 await f.Engine.GetModelPlanAsync();
                 await f.Engine.JevSettledForTest();
@@ -330,10 +334,9 @@ namespace Semanticus.Tests
                 Assert.DoesNotContain(all.Why, w => w.StartsWith("Jev has looked at", StringComparison.Ordinal));
                 Assert.Equal(61, all.ChangeSet.Lines.Count(l => l.Op == "set_summarize_by"));
                 Assert.Equal(61, all.ChangeSet.Lines.Count(l => l.Op == "create_measure"));
-                // Every column asked exactly once over the two batches.
-                // Requests are per table chunk now (m11/jev-batch, ChunkSize 30): 61 columns are 30 + 30 (the first run's 60) and 1 (the second).
+                // Every column asked exactly once over the two batches: one request of 60 in the first run, one of 1 in the second.
                 var sent = oracle.Seen.Where(r => r.PointName == Summarize).ToArray();
-                Assert.Equal(3, sent.Length);
+                Assert.Equal(new[] { 60, 1 }, sent.Select(r => BatchedColumnAnswers.Columns(r).Count()).ToArray());
                 Assert.Equal(61, sent.SelectMany(BatchedColumnAnswers.Columns).Count());
                 Assert.Equal(61, sent.SelectMany(BatchedColumnAnswers.Columns).Distinct(StringComparer.Ordinal).Count());
             }

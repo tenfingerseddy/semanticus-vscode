@@ -41,7 +41,7 @@ function observeRpc(event: RpcObservation): void {
 // The host wire protocol is unchanged.
 const RPC_DEFAULT_TIMEOUT_MS = 30_000;
 const RPC_LONG_TIMEOUT_MS = 10 * 60_000;
-const LONG_RPC = /^(deploy|cicd|analyze|listReports|listWorkspaces|listDataAgents|listDeploymentPipelines|getDataAgent|getPipelineStages|createDataAgent|updateDataAgent|publishDataAgent|deleteDataAgent|generateDataAgentConfig|autogenerateSpecFrom|buildModelFromSpec|previewDeploy|previewTable|runDax|runSql|runTests|runInterview|evaluateAndLog|explainValue|profileDax|benchmark|verifyEquivalence|refreshPartition|captureQueryPlan|optimizeMeasure|aiReadinessScanLive|vertiPaqScan|exportVpax|applySchemaUpdate|diffSchema|getSourceSchema|makeModelAiReady|proposePlan|applyPlanItems|getModelPlan|fabricGit|connectLocal|connectXmla|openLive|openLocal|prepareWorkingCopy|gitPush|gitPull|gitClone|compareModels|applyDiff|daxLib|startModelFromSql|buildStartPlan|publishNewModel)/;
+const LONG_RPC = /^(deploy|cicd|analyze|listReports|listWorkspaces|listDataAgents|listDeploymentPipelines|getDataAgent|getPipelineStages|createDataAgent|updateDataAgent|publishDataAgent|deleteDataAgent|generateDataAgentConfig|autogenerateSpecFrom|buildModelFromSpec|previewDeploy|previewTable|runDax|runSql|runTests|runInterview|evaluateAndLog|explainValue|tryTest|testSqlSource|profileDax|benchmark|verifyEquivalence|refreshPartition|captureQueryPlan|optimizeMeasure|aiReadinessScanLive|vertiPaqScan|exportVpax|applySchemaUpdate|diffSchema|getSourceSchema|makeModelAiReady|proposePlan|applyPlanItems|getModelPlan|fabricGit|connectLocal|connectXmla|openLive|openLocal|prepareWorkingCopy|gitPush|gitPull|gitClone|compareModels|applyDiff|daxLib|startModelFromSql|buildStartPlan|publishNewModel)/;
 function rpcTimeoutMs(method: string): number {
   return LONG_RPC.test(method) ? RPC_LONG_TIMEOUT_MS : RPC_DEFAULT_TIMEOUT_MS;
 }
@@ -337,8 +337,8 @@ export function onConnectionChange(fn: () => void): () => void {
 // back empty, and the page fell through to the same "Open a model to begin" placeholder whose only button ALSO needs
 // the engine. The host announces both transitions and answers this on 'studioReady', so a panel that mounts while
 // the engine is down learns the truth instead of inferring it from a rejection.
-const engineStateListeners = new Set<(connected: boolean) => void>();
-export function onEngineState(fn: (connected: boolean) => void): () => void {
+const engineStateListeners = new Set<(connected: boolean, reason?: string) => void>();
+export function onEngineState(fn: (connected: boolean, reason?: string) => void): () => void {
   engineStateListeners.add(fn);
   return () => { engineStateListeners.delete(fn); };
 }
@@ -346,8 +346,8 @@ export function onEngineState(fn: (connected: boolean) => void): () => void {
 // A remembered published model that needs the person to sign in before it can open (a cold start). The host names it
 // ("Contoso") or sends null once it is open or gone, and answers this on studioReady like engineState, so a page that
 // mounts later still knows. Studio then shows that model with Sign in to reconnect instead of "Open a model to begin".
-const reconnectPendingListeners = new Set<(name: string | null) => void>();
-export function onReconnectPending(fn: (name: string | null) => void): () => void {
+const reconnectPendingListeners = new Set<(name: string | null, offer?: boolean) => void>();
+export function onReconnectPending(fn: (name: string | null, offer?: boolean) => void): () => void {
   reconnectPendingListeners.add(fn);
   return () => { reconnectPendingListeners.delete(fn); };
 }
@@ -413,8 +413,8 @@ export function setGuideFlag(flag: 'planTour' | 'whatChanged', cardId?: string):
 // The first-run choice (src/firstRun.ts): the host says whether to show it and whether this folder is already wired
 // to an assistant. No answer (an older host, a view closing) settles to null, and null shows nothing: a card that
 // cannot remember being closed must not appear.
-export type FirstRunState = { show: boolean; connected: boolean };
-export type FirstRunConnectResult = { ok: boolean; error?: string; note?: string };
+export type FirstRunState = { show: boolean; connected: boolean; say?: boolean; note?: string; folder?: string; folderPath?: string };
+export type FirstRunConnectResult = { ok: boolean; error?: string; note?: string; needsFolder?: boolean };
 const firstRunPending = new Map<number, (state: FirstRunState | null) => void>();
 const firstRunConnectPending = new Map<number, (result: FirstRunConnectResult) => void>();
 export function requestFirstRun(): Promise<FirstRunState | null> {
@@ -426,11 +426,11 @@ export function requestFirstRun(): Promise<FirstRunState | null> {
   });
 }
 /** One press: the host writes the connection and installs the skill, then answers. No timeout: the host always answers. */
-export function firstRunConnect(): Promise<FirstRunConnectResult> {
+export function firstRunConnect(pickFolder = false): Promise<FirstRunConnectResult> {
   const id = ++seq;
   return new Promise((resolve) => {
     firstRunConnectPending.set(id, resolve);
-    postToHostStamped({ type: 'firstRunConnect', id });
+    postToHostStamped({ type: 'firstRunConnect', id, pickFolder });
   });
 }
 // The header and the palette run the same Connect as the first-run card. The host then asks the page to show the say card.
@@ -514,7 +514,8 @@ window.addEventListener('message', (e: MessageEvent) => {
   }
   if (msg.type === 'firstRun') {
     const r = firstRunPending.get(msg.id);
-    if (r) { firstRunPending.delete(msg.id); r(msg.unavailable ? null : { show: msg.show === true, connected: msg.connected === true }); }
+    if (r) { firstRunPending.delete(msg.id); r(msg.unavailable ? null : { show: msg.show === true, connected: msg.connected === true, say: msg.say === true, note: typeof msg.note === 'string' ? msg.note : undefined,
+      folder: typeof msg.folder === 'string' ? msg.folder : undefined, folderPath: typeof msg.folderPath === 'string' ? msg.folderPath : undefined }); }
     return;
   }
   if (msg.type === 'firstRunSay') {
@@ -523,7 +524,7 @@ window.addEventListener('message', (e: MessageEvent) => {
   }
   if (msg.type === 'firstRunConnected') {
     const r = firstRunConnectPending.get(msg.id);
-    if (r) { firstRunConnectPending.delete(msg.id); r({ ok: msg.ok === true, error: typeof msg.error === 'string' ? msg.error : undefined, note: typeof msg.note === 'string' ? msg.note : undefined }); }
+    if (r) { firstRunConnectPending.delete(msg.id); r({ ok: msg.ok === true, error: typeof msg.error === 'string' ? msg.error : undefined, note: typeof msg.note === 'string' ? msg.note : undefined, needsFolder: msg.needsFolder === true }); }
     return;
   }
   if (msg.type === 'consentAsk') {
@@ -613,10 +614,12 @@ window.addEventListener('message', (e: MessageEvent) => {
     connectionChangeListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'engineState') {
     const connected = !!msg.connected;
-    engineStateListeners.forEach((l) => { try { l(connected); } catch { /* isolate a view's handler */ } });
+    const reason = typeof msg.reason === 'string' && msg.reason ? msg.reason : undefined;   // why a start failed, in a sentence a person can read
+    engineStateListeners.forEach((l) => { try { l(connected, reason); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'reconnectPending') {
     const name = typeof msg.name === 'string' && msg.name ? msg.name : null;
-    reconnectPendingListeners.forEach((l) => { try { l(name); } catch { /* isolate a view's handler */ } });
+    const offer = msg.offer === true;   // the last model offered to a window with no folder, not one waiting for a sign-in
+    reconnectPendingListeners.forEach((l) => { try { l(name, offer); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'entitlementChanged') {
     entitlementListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'reconnected') {

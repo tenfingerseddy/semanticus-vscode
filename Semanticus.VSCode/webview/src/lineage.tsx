@@ -6,6 +6,7 @@ import { LineageGraphView } from './lineagegraph';
 import { LineageTreeView } from './lineagetree';
 import { ToolRow } from './toolrow';
 import * as M from './lineage-model';
+import { defaultSignInMode } from './copy';
 import {
   CheckedStrip, ChooseReportsDrawer, CleanupList, ImpactCard, clockTime,
   type CloudReport, type FabricWorkspace, type ImpactAssessmentResult, type ImpactResult,
@@ -83,7 +84,7 @@ export function useLineageReportsBusy(): boolean {
  * the engine, asked fresh with no reports, said they had not.
  */
 export function LineageTabStateProvider({ children }: { children: React.ReactNode }) {
-  const { session } = useConnection();
+  const { session, context } = useConnection();
   const [mode, setMode] = useState<LineageMode>('tree');
   const [cleanup, setCleanup] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -94,7 +95,13 @@ export function LineageTabStateProvider({ children }: { children: React.ReactNod
   const [error, setError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<FabricWorkspace[] | null>(null);
   const [ws, setWs] = useState('');
-  const [signInMode, setSignInMode] = useState('azcli');
+  // Check reports signs in as the model already does, and asks nothing new. The Azure command line was the default and asked for a second
+  // sign-in the person had not set up (UAT P15). A way the person picks stays picked; a new model brings its own sign-in back.
+  const modelSignIn = [context?.editing, context?.publishing, context?.querying].find((c) => !!c?.authMode);
+  const signInOwner = useRef<'auto' | 'user'>('auto');
+  const [signInMode, setSignInModeState] = useState(() => defaultSignInMode(modelSignIn));
+  const setSignInMode: React.Dispatch<React.SetStateAction<string>> = (v) => { signInOwner.current = 'user'; setSignInModeState(v); };
+  useEffect(() => { if (signInOwner.current === 'auto') setSignInModeState(defaultSignInMode(modelSignIn)); }, [modelSignIn?.authMode]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [tenant, setTenant] = useState('');
   const [reports, setReports] = useState<CloudReport[] | null>(null);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -137,6 +144,7 @@ export function LineageTabStateProvider({ children }: { children: React.ReactNod
     const modelSwitched = prevIdentity.current !== undefined && prevIdentity.current !== ident;
     prevIdentity.current = ident;
     if (modelSwitched) {
+      signInOwner.current = 'auto';
       cloudGen.current++;
       activeCloudRunId.current = null;
       setBusy(null); setCloudProgress(null); setWorkspaces(null); setWs('');

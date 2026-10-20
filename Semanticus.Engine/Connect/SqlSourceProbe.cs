@@ -16,6 +16,8 @@ namespace Semanticus.Engine
         public string Database { get; set; }
         public bool Ok { get; set; }
         public string Note { get; set; }
+        /// <summary>The driver's own words behind a plain <see cref="Note"/>, for a Details view.</summary>
+        public string Detail { get; set; }
         public long ElapsedMs { get; set; }
         public string TestedUtc { get; set; }
     }
@@ -81,24 +83,35 @@ namespace Semanticus.Engine
             catch (Exception ex)
             {
                 sw.Stop();
-                return Finish(result, sw, false, "Semanticus signed in, but the source did not answer. " + Scrub(ex.Message));
+                return Unreachable(source, ex.Message) is string plain
+                    ? Finish(result, sw, false, plain, Scrub(ex.Message))
+                    : Finish(result, sw, false, "Semanticus signed in, but the source did not answer. " + Scrub(ex.Message));
             }
 
             sw.Stop();
             if (rs == null)
                 return Finish(result, sw, false, "Semanticus signed in, but the source did not answer.");
             if (!string.IsNullOrEmpty(rs.Error))
-                return Finish(result, sw, false, "Semanticus signed in, but the source did not answer. " + Scrub(rs.Error));
+                return Unreachable(source, rs.Error) is string plain
+                    ? Finish(result, sw, false, plain, Scrub(rs.Error))
+                    : Finish(result, sw, false, "Semanticus signed in, but the source did not answer. " + Scrub(rs.Error));
             if (rs.Rows == null || rs.Rows.Length != 1 || rs.Columns == null || rs.Columns.Length != 1)
                 return Finish(result, sw, false, "The source answered, but not with the single value the test asked for. Check that the database name is right.");
 
             return Finish(result, sw, true, $"Connected to {source.Database} on {source.Server}.");
         }
 
-        private static SqlSourceTestResult Finish(SqlSourceTestResult result, Stopwatch sw, bool ok, string note)
+        /// <summary>A server that cannot be reached, in one plain line; null for any other failure.</summary>
+        private static string Unreachable(SqlSourceRecord source, string error) =>
+            LocalEngine.SqlServerUnreachable(error) && !string.IsNullOrWhiteSpace(source.Server)
+                ? $"Could not reach the server {source.Server.Trim()}. Check the server name."
+                : null;
+
+        private static SqlSourceTestResult Finish(SqlSourceTestResult result, Stopwatch sw, bool ok, string note, string detail = null)
         {
             result.Ok = ok;
             result.Note = note;
+            result.Detail = detail;
             result.ElapsedMs = sw.ElapsedMilliseconds;
             var stamped = SqlSourceRegistry.RecordTest(result.Id, ok);
             result.TestedUtc = stamped?.LastTestedUtc ?? DateTimeOffset.UtcNow.ToString("O");

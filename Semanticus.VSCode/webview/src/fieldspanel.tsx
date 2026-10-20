@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DaxModel } from './dax';
 import { selectInProperties, focusSelectInProperties } from './bridge';
 import { RevealBtn, rowKeyProps } from './objectactions';
+import { fieldRank, rankFields } from './query-model';
 
 // The glyphs take the field kind colours (Kane, 8 Oct), the same ones the Queries wells use, so the drawer and the wells speak one
 // colour language: measure gold, column blue, table teal. The glyph's shape still says the kind in high contrast.
@@ -17,29 +18,44 @@ const columnObjRef = (table: string, name: string) => `column:${table}/${name}`;
 const tableObjRef = (name: string) => `table:${name}`;
 
 // inUse: the DAX references the result on screen is built from, marked in the list (Queries' mockup, option C).
-interface FieldsPanelProps { model: DaxModel; onInsert: (text: string) => void; inUse?: ReadonlySet<string>; }
+interface FieldItem { kind: 'measure' | 'column'; name: string; description: string }
+interface FieldsPanelProps { model: DaxModel; onInsert: (text: string) => void; inUse?: ReadonlySet<string>; /** Every table starts open (the Query page: options are expanded by default). A table the person closes stays closed. */ expanded?: boolean; }
 
 // A model-fields sidebar for the code editors: tables → their measures + columns. Click an item to insert its
 // DAX reference at the cursor, or drag it onto the editor (sets text/plain = the reference). Replaces the
 // "drag from the VS Code tree" idea, which isn't reliable across the webview boundary. A click also feeds the
 // selection bus so the Properties view follows what you're working with (focus stays here).
-export function FieldsPanel({ model, onInsert, inUse }: FieldsPanelProps) {
+export function FieldsPanel({ model, onInsert, inUse, expanded = false }: FieldsPanelProps) {
   const [filter, setFilter] = useState('');
-  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [open, setOpen] = useState<Set<string>>(() => new Set(expanded ? model.tables : []));
+  const seen = useRef<Set<string>>(new Set(expanded ? model.tables : []));
+  useEffect(() => {
+    if (!expanded) return;
+    const fresh = model.tables.filter((t) => !seen.current.has(t));
+    if (!fresh.length) return;
+    fresh.forEach((t) => seen.current.add(t));
+    setOpen((o) => new Set([...o, ...fresh]));
+  }, [expanded, model.tables]);
 
+  // Each table's fields, measures then columns. With a finder word they are ranked (exact name, then starts-with, then the rest) and the
+  // tables are ordered by their best field, so the first row on screen is the one Enter takes (UAT 18 Oct, N6: "year" took fiscal_year).
   const tables = useMemo(() => {
     const f = filter.trim().toLowerCase();
-    const byTable = model.tables.map((t) => ({
-      table: t,
-      measures: model.measures.filter((m) => m.table === t).map((m) => m.name),
-      columns: model.columns.filter((c) => c.table === t).map((c) => c.name),
-    }));
-    if (!f) return byTable.filter((g) => g.measures.length || g.columns.length);
-    // filter: keep tables whose name matches (all children) or that have matching children
+    const byTable = model.tables.map((t) => {
+      const items: FieldItem[] = [
+        ...model.measures.filter((m) => m.table === t).map((m) => ({ kind: 'measure' as const, name: m.name, description: m.description ?? '' })),
+        ...model.columns.filter((c) => c.table === t).map((c) => ({ kind: 'column' as const, name: c.name, description: c.description ?? '' })),
+      ];
+      return { table: t, items };
+    });
+    if (!f) return byTable.filter((g) => g.items.length);
     return byTable.map((g) => {
-      if (g.table.toLowerCase().includes(f)) return g;
-      return { ...g, measures: g.measures.filter((m) => m.toLowerCase().includes(f)), columns: g.columns.filter((c) => c.toLowerCase().includes(f)) };
-    }).filter((g) => g.measures.length || g.columns.length);
+      // By name, or by what the model says the field is (UAT 17 Oct, F41). A table whose own name matches keeps all its fields, after the matches.
+      const hits = rankFields(f, g.items);
+      return { ...g, items: g.table.toLowerCase().includes(f) ? [...hits, ...g.items.filter((x) => !hits.includes(x))] : hits };
+    }).filter((g) => g.items.length)
+      .map((g, i) => ({ g, i, k: fieldRank(f, g.items[0].name, g.items[0].description) }))
+      .sort((a, b) => b.k - a.k || a.i - b.i).map((e) => e.g);
   }, [model, filter]);
 
   const isOpen = (t: string) => filter.trim() !== '' || open.has(t);
@@ -51,6 +67,14 @@ export function FieldsPanel({ model, onInsert, inUse }: FieldsPanelProps) {
     // The panel draws no box of its own: the card it sits in (DAX Lab's Fields card) is the box.
     <div className="flex flex-col flex-1 min-h-0 gap-2">
       <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Fields… (click or drag to insert)" aria-label="Find a field"
+        // Enter adds the top match, so the person never has to reach for the mouse (UAT 17 Oct, F25).
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter' || !filter.trim()) return;
+          e.preventDefault();
+          const g = tables[0]; const top = g?.items[0]; if (!top) return;
+          if (top.kind === 'measure') { selectInProperties(measureObjRef(g.table, top.name)); onInsert(measureRef(top.name)); }
+          else { selectInProperties(columnObjRef(g.table, top.name)); onInsert(columnRef(g.table, top.name)); }
+        }}
         className="sem-field sem-field-sm w-full" />
       <div className="flex-1 min-h-0 overflow-auto text-xs">
         {tables.length === 0 && <div className="py-2 sem-text-meta">No fields.</div>}
@@ -70,12 +94,9 @@ export function FieldsPanel({ model, onInsert, inUse }: FieldsPanelProps) {
             </div>
             {isOpen(g.table) && (
               <div>
-                {g.measures.map((m) => (
-                  <Item key={'m' + m} icon="ƒ" iconColor="var(--sem-kind-measure)" label={m} ref_={measureRef(m)} objRef={measureObjRef(g.table, m)} onInsert={onInsert} onDragStart={drag(measureRef(m))} used={!!inUse?.has(measureRef(m))} />
-                ))}
-                {g.columns.map((c) => (
-                  <Item key={'c' + c} icon="▭" iconColor="var(--sem-kind-column)" label={c} ref_={columnRef(g.table, c)} objRef={columnObjRef(g.table, c)} onInsert={onInsert} onDragStart={drag(columnRef(g.table, c))} used={!!inUse?.has(columnRef(g.table, c))} />
-                ))}
+                {g.items.map((x) => x.kind === 'measure'
+                  ? <Item key={'m' + x.name} icon="ƒ" iconColor="var(--sem-kind-measure)" label={x.name} ref_={measureRef(x.name)} objRef={measureObjRef(g.table, x.name)} onInsert={onInsert} onDragStart={drag(measureRef(x.name))} used={!!inUse?.has(measureRef(x.name))} />
+                  : <Item key={'c' + x.name} icon="▭" iconColor="var(--sem-kind-column)" label={x.name} ref_={columnRef(g.table, x.name)} objRef={columnObjRef(g.table, x.name)} onInsert={onInsert} onDragStart={drag(columnRef(g.table, x.name))} used={!!inUse?.has(columnRef(g.table, x.name))} />)}
               </div>
             )}
           </div>

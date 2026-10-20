@@ -54,6 +54,8 @@ namespace Semanticus.Tests
         /// coordinator ordered every gap closed: a row either gets a witness above or says here why it needs none.)</summary>
         private static readonly Dictionary<string, string> ReadsOnlyOwnArguments = new(StringComparer.Ordinal)
         {
+            ["SetHostSettingsAsync"] = "it sets the personality, sounds and volume to the values in its arguments; the result is the same whatever they were before, and the window writes them to the person's VS Code settings",
+            ["StartTrialAsync"] = "it asks the window to send one confirm email to the address in its arguments, and only with personSaidYes; the address is the argument the approval binds, and the worker lets each address have one trial",
             ["ConnectAssistantAsync"] = "it adds one entry named semanticus to the settings file of the assistant its argument names and keeps a copy of that file; pressing it again changes nothing, so it reads nothing but its argument",
             ["SetDefaultAccountProfileAsync"] = "profileId fixes the saved identity to select; the write uses its current sign-in record, and CAS refuses a competing switch",
             ["RecordTestRunAsync"] = "it names a finished run by its unique id, and a finished run is an immutable snapshot, so the id is the content",
@@ -64,6 +66,8 @@ namespace Semanticus.Tests
             ["RemovePlanTargetAsync"] = "it removes the aim its id names, the id is the argument the approval binds, and Restore puts the row back",
             ["MarkPlanTargetDoneAsync"] = "it marks the row its id names done and the id is the argument the approval binds",
             ["AddPlanTaskAsync"] = "it adds a NEW task with the words in its request and changes no earlier row of the plan",
+            // The reading card (12 Oct 2026): the safe fixes go to the open model like ApplySafeFixesAsync, and the writing left goes to the plan as NEW assistant tasks.
+            ["FixThemAsync"] = "it applies the safe fixes to the open model as one undo step, and adds a NEW assistant task for each kind of writing left, skipping a kind already queued (its own key), and changes no earlier row of the plan",
             ["HoldPlanItemAsync"] = "it pauses or resumes the row its id names, and the id and the state are the arguments the approval binds",
             ["SetPlanItemDoerAsync"] = "it gives the row its id names to the doer in its arguments; the result is the same whatever the doer was before",
             ["MovePlanTaskUpAsync"] = "it moves the task its id names up the assistant's order and the id is the argument the approval binds; the order is a preference, not words the person wrote",
@@ -85,6 +89,9 @@ namespace Semanticus.Tests
             ["AddInsightAsync"] = (".semanticus/knowledge/insights.jsonl", "it appends one new note under a fresh id and rewrites no earlier line"),
             ["UpvoteInsightAsync"] = (".semanticus/knowledge/insights.jsonl", "it appends one vote line for a note; a vote is a count, and no earlier line is rewritten"),
             ["DownvoteInsightAsync"] = (".semanticus/knowledge/insights.jsonl", "it appends one vote line for a note; a vote is a count, and no earlier line is rewritten"),
+            // The Copilot test (15 Oct 2026): both only append, each to its own file, and replace or delete nothing.
+            ["AddInterviewQuestionsAsync"] = (".semanticus/interview/questions.jsonl", "it appends new questions under fresh ids, each with the right answer the engine just proved, and rewrites no earlier line"),
+            ["RunInterviewBatchAsync"] = (".semanticus/interview/rounds.jsonl", "it appends a new round and the graded answers of that round, and rewrites no earlier line; a call that adds to a round already made is not asked again"),
         };
 
         /// <summary>Rows whose write can reach a store beside the model, and which refuse inside the op when that store is not what the step or the claim expects. The
@@ -115,7 +122,7 @@ namespace Semanticus.Tests
             "CreatePerspectiveAsync", "CreateRelationshipAsync", "CreateRoleAsync", "CreateTableAsync", "DaxLibUninstallAsync",
             "DefineCalendarAsync", "DefineCalendarFromTemplateAsync", "DeleteCalendarAsync", "DeleteObjectAsync",
             "DeleteObjectsAsync", "DeleteRoleAsync", "DuplicateObjectAsync", "GenerateDateTableAsync",
-            "GenerateTimeIntelligenceAsync", "MakeAiReadyAsync", "FixThemAsync", "MarkDateTableAsync", "OptimizeMeasureAsync", 
+            "GenerateTimeIntelligenceAsync", "MakeAiReadyAsync", "MarkDateTableAsync", "OptimizeMeasureAsync", 
             "RemoveIncrementalRefreshPolicyAsync", "RemoveSafeObjectsAsync", "RenameDisplayFolderAsync",
             "RenameObjectAsync", "ReplaceInObjectAsync", "ResetBpaRulesAsync", "ResetReadinessRulesAsync", 
             "SetAiDataSchemaAsync", "SetAiInstructionsAsync", "SetCalcGroupPrecedenceAsync",

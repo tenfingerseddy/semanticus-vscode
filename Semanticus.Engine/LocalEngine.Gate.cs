@@ -120,6 +120,25 @@ namespace Semanticus.Engine
             if (held != null) throw new InvalidOperationException(held);
         }
 
+        /// <summary>An assistant is about to save a SQL source on a host no saved source names. A saved source is where a sign-in token may go, so
+        /// this is the person's question in every preset, with no ticket from the door covering it the sink asks for itself and refuses.
+        /// A person's own save is never asked.</summary>
+        private void HoldNewSqlHost(string origin, string server)
+        {
+            if (!IsAssistantOrigin(origin) && !GateContext.InAssistantCall) return;
+            if (GateSeams.Off("sql-host") || SqlHostTrust.IsSaved(server)) return;
+            var carried = GateContext.Ticket;
+            if (carried != null && string.Equals(carried.Method, nameof(SaveSqlSourceAsync), StringComparison.Ordinal)) return;
+            var host = SqlHostTrust.HostOf(server);
+            var intent = ApprovalLedger.IntentHash("sink", "sql-host", host);
+            try { if (ApprovalLedger.TryConsume(AgentCapability.DeployFile, "local", intent)) return; }
+            catch { /* fail closed: refuse below */ }
+            var words = $"Your assistant wants to save a SQL server you have not saved before: {server?.Trim()}. Semanticus would then be able to sign in to it for you.";
+            try { ApprovalLedger.Request(AgentCapability.DeployFile, "local", intent, words, "this machine"); }
+            catch { /* queueing is best-effort; the refusal still stands */ }
+            throw new InvalidOperationException("Saving the SQL server " + server?.Trim() + " needs the person's approval, in every preset. It has been added to the approvals queue: ask the user to approve it, then retry.");
+        }
+
         /// <summary>The commit sink's refusal (<see cref="Session"/>): an assistant's edit no ticket covers. The sink holds only the
         /// label, so the request it registers is for the person to see and is never one an approval can be spent on; the assistant's
         /// door is the way through, and it asks in words made from the request.</summary>

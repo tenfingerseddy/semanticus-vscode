@@ -229,7 +229,7 @@ namespace Semanticus.Tests
         [Theory]
         [InlineData("undo")]
         [InlineData("undo-to")]
-        public async Task A2_an_undo_already_running_when_another_model_opens_still_takes_the_permission_back(string path)
+        public async Task A2_an_undo_already_running_when_another_model_opens_leaves_the_permission_alone(string path)
         {
             using var f = new DecisionFixture();
             await f.BuildModelAsync("Sol2A2-" + path + ".bim");
@@ -262,7 +262,9 @@ namespace Semanticus.Tests
             await swap;
 
             await f.Engine.OpenAsync(Path.Combine(f.Workspace, "Sol2A2-" + path + ".bim"), true);
-            Assert.False((await f.Engine.GetConsentAsync()).Current, "the permission the person undid came back (" + path + ")");
+            // K19 (8 Oct, d1148fc3): permission is kept on this machine, not as a model edit, so an undo leaves it alone. The sibling
+            // VerifySol2EngineTests.V_A2 follows the same rule.
+            Assert.True((await f.Engine.GetConsentAsync()).Current, "an undo took the permission away (" + path + ")");
         }
 
         // ---- B1: a rule is the bundled rule only when it behaves the same -------------------------------------------------------------

@@ -148,9 +148,9 @@ const groupsBlock = /const TAB_GROUPS[\s\S]*?\n\];/.exec(app)[0];
 const editRow = /\{ id: 'edit', label: 'Edit', tabs: \[([\s\S]*?)\] \}/.exec(groupsBlock);
 assert.ok(editRow, 'the Edit row must still be findable');
 assert.deepEqual([...editRow[1].matchAll(/\{ id: '([a-z]+)', label: '([^']+)' \}/g)].map((m) => [m[1], m[2]]), [
-  ['search', 'Find and replace'], ['daxlab', 'Queries'], ['instructions', 'AI instructions'],
+  ['instructions', 'AI instructions'],
   ['advmodels', 'Advanced modelling'], ['mcode', 'Power Query'],
-], 'the Edit row is Find and replace, Queries, AI instructions, Advanced modelling and Power Query');
+], 'the Edit row is AI instructions, Advanced modelling and Power Query (Queries moved to Explore > Query)');
 assert.doesNotMatch(groupsBlock, /\{ id: 'knowledge', label: 'Model notes' \}/,
   'Model notes is a tab inside AI instructions now, so it is not a strip button anywhere');
 

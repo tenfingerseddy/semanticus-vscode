@@ -2486,6 +2486,12 @@ const REPRODUCED_LICENCE_TEXTS = [
   { doc: 'THIRD-PARTY-NOTICES.md', section: 'Model Context Protocol C# SDK', family: 'Apache-2.0', copyright: ['© Model Context Protocol a Series of LF Projects, LLC.'], digest: APACHE_2_0_DIGEST, from: UPSTREAM_APACHE },
   { doc: 'THIRD-PARTY-NOTICES.md', section: 'Model Context Protocol C# SDK', family: 'MIT', copyright: ['Copyright (c) Model Context Protocol a Series of LF Projects, LLC'], digest: MIT_CANONICAL_DIGEST, from: UPSTREAM_MIT },
   { doc: 'THIRD-PARTY-NOTICES.md', section: 'StreamJsonRpc', family: 'MIT', copyright: ['Copyright (c) Microsoft Corporation'], digest: MIT_CANONICAL_DIGEST, from: UPSTREAM_MIT },
+  // MessagePack's LICENSE is one file with TWO bodies: the MIT text (its permission notice differs from the canonical wording by the
+  // project's own header line) and the BSD 2-Clause notice for lz4net, which its LZ4 code is derived from. The gate's family detector
+  // files the second under BSD-3-Clause because both share the "Redistribution and use" opening; the text is the two-clause form.
+  // The nupkg ships no licence file, so both are pinned from LICENSE at the nuspec's commit (7fd78bbf), read over HTTPS on 2026-10-16.
+  { doc: 'THIRD-PARTY-NOTICES.md', section: 'MessagePack', family: 'MIT', copyright: ['Copyright (c) 2017 Yoshifumi Kawai and contributors'], digest: '6969814ff262823666e1f658056e7ad61379df1b1038a676ba41ee12eba21196', from: 'LICENSE at MessagePack-CSharp commit 7fd78bbf3476e03beae8b0f7a521125525a8a64a (the nuspec commit); the nupkg has no licence file' },
+  { doc: 'THIRD-PARTY-NOTICES.md', section: 'MessagePack', family: 'BSD-3-Clause', copyright: ['Copyright (c) 2013-2017, Milosz Krajewski'], digest: '4f61a7bc7704d3ecdd43d1b61e887d81a5e0468581a08a1a3beac62e0156da13', from: 'LICENSE at MessagePack-CSharp commit 7fd78bbf3476e03beae8b0f7a521125525a8a64a (lz4net, BSD 2-Clause wording)' },
   { doc: 'THIRD-PARTY-NOTICES.md', section: 'Azure.Identity', family: 'MIT', copyright: ['Copyright (c) 2015 Microsoft'], digest: MIT_CANONICAL_DIGEST, from: UPSTREAM_MIT },
   // ONE CHARACTER SHORT OF THE CANONICAL MIT, and recorded rather than silently normalized: this body ends
   // "IN THE SOFTWARE" with no full stop. That is how the text was written down here, the package ships no

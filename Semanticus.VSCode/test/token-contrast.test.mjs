@@ -641,7 +641,8 @@ check('the surfaces that draw several colours read the chart palette', () => {
   const want = {
     'webview/src/echart.tsx': /seriesColor|seriesVar/, 'webview/src/lineagetypes.ts': /--sem-series-1/, 'webview/src/lineagegraph.tsx': /--sem-series-1/,
     'webview/src/daxvisual.tsx': /seriesPalette\(/, 'webview/src/diagram.tsx': /--sem-series-3/, 'webview/src/spec.tsx': /--sem-series-2/,
-    'webview/src/objectbrowser.tsx': /--sem-kind-measure/, 'webview/src/knowledge.tsx': /--sem-series-1/, 'webview/src/daxlab.tsx': /--sem-series-2/,
+    'webview/src/objectbrowser.tsx': /--sem-kind-measure/, 'webview/src/knowledge.tsx': /--sem-series-1/,
+    // webview/src/daxlab.tsx drew its own colours until the Query page took its charts into visuals/visuals.tsx (m16/query-view); it holds none now.
   };
   const missing = Object.entries(want).filter(([f, re]) => !re.test(read(f))).map(([f]) => f);
   assert.deepEqual(missing, []);

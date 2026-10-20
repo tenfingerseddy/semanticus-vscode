@@ -8,19 +8,21 @@ import type { ApplyDiffResult, CompareSeed, ModelDiff } from './compare';
 import { KIND_ICON, ReviewCardBody } from './diffview';
 import {
   assistantPublish, assistantPublishLine, assistantPublishUndo, checkingCopy, leftAfterPublish, clockTime, failureReasons, groupRows, isRemoval, neededParent, notPublishedLine, nothingToPublishCopy,
-  couldNotGoLine, freeNewModelName, newModelLabel, newModelSignIn, plainPublishError, publishableRows, publishCounts, publishedLine, publishLabel, rowNote, undoneLine, unreachableCopy,
+  brokenRoleLine, couldNotGoLine, freeNewModelName, PUBLISH_WAIT_MS, stillPublishingLine, waitUpTo, newModelLabel, newModelSignIn, plainPublishError, publishableRows, publishCounts, publishedLine, publishLabel, undoPublishResult, unreachableCopy,
 } from './publishcopy';
 import { engineSentence, sortWorkspaces, workspaceName, type FabricWorkspace, type Load } from './connectpickers-model';
 import { PublishDraw } from './personality/motion';
+import { learnActive, useLearn } from './studio/learn-state';
 import { foldDeployProgress, deployStepLine, type DeployStepNow } from './publish-progress';
 import { usePublishAsk, clearPublishAsk } from './publish-ask';
+import { rowWords } from './publish-rowwords';
 
 // The Changes tab of the Publish page. It compares your copy with the destination, once, then answers every tick
 // from the list it already holds: a tick never reads the destination again. One dry run of the whole list names the
 // rows Power BI would refuse. One button, in the page header, writes the ticked rows. Nothing sits between the press
 // and the live model, because the label names the count and the place, and the write keeps a restore point.
 
-interface RollbackWire { applied: boolean; error?: string; note?: string }
+interface RollbackWire { applied: boolean; error?: string; note?: string; failedRefs?: string[] | null }
 type Line = { tone: 'good' | 'bad'; text: string; undo?: { id: string; when: string }; published?: boolean; first?: boolean };
 interface NewModelResult { workspace: string; endpoint: string; database: string; loaded: boolean; loadError?: string; signInNeeded?: boolean; note: string }
 // The line a new model's publish ends on. The page turns into the Changes view of the new destination as soon as the
@@ -63,6 +65,7 @@ export function PublishChanges({ seed, destination, stage, slot, onWrote, onReac
   const stepLine = deployStepLine(step, tick);
   const asking = usePublishAsk();   // the assistant waits on the person about a red check
   const seq = useRef(0);
+  const pressNo = useRef(0);
   const known = useRef<Set<string>>(new Set());   // refs of the last list, so a re-read keeps the person's ticks
   const wishNow = useRef(wish); wishNow.current = wish;
 
@@ -135,8 +138,8 @@ export function PublishChanges({ seed, destination, stage, slot, onWrote, onReac
     carried = null;
     setBusy('publish'); setLine(null);
     setVoicePublishContext(stage, items.some((i) => effective.has(i.ref) && isRemoval(i)));
-    try {
-      const r = await rpc<ApplyDiffResult>('applyDiff', left, right, [...effective], true, 'human');
+    // The one place a publish answer becomes the page's line, whether it came in time or after the 150 s line.
+    const report = (r: ApplyDiffResult) => {
       if (r.error) setLine({ tone: 'bad', text: plainPublishError(r.error) });
       else if (!r.applied) {
         const why = [...failureReasons(r.failedRefs, items).values()][0];
@@ -144,12 +147,27 @@ export function PublishChanges({ seed, destination, stage, slot, onWrote, onReac
       } else {
         clearPublishAsk();
         const failed = failureReasons(r.failedRefs, items);
-        const extra = failed.size > 0 ? ` ${couldNotGoLine(failed, items)} ${[...failed.values()][0]}` : '';
+        const broken = brokenRoleLine(failed, items, r.appliedRefs);
+        const extra = failed.size > 0 ? ` ${couldNotGoLine(failed, items)} ${[...failed.values()][0]}${broken ? ` ${broken}` : ''}` : '';
         // What went out leaves the list now; the compare below confirms it.
         if (r.count > 0) setDiff((d) => d ? { ...d, items: leftAfterPublish(d.items, r.appliedRefs, r.failedRefs) } : d);
         setLine({ tone: 'good', text: publishedLine(r.count, destination) + extra, undo: r.restorePointId && r.count > 0 ? { id: r.restorePointId, when } : undefined, published: failed.size === 0 && r.count > 0 });
         if (!failed.size && r.count > 0 && !items.some((i) => effective.has(i.ref) && isRemoval(i))) noteTestPublish(stage, publishedLine(r.count, destination));
       }
+    };
+    const press = ++pressNo.current;
+    try {
+      const call = rpc<ApplyDiffResult>('applyDiff', left, right, [...effective], true, 'human');
+      const got = await waitUpTo(call, PUBLISH_WAIT_MS);
+      if ('late' in got) {
+        // No answer yet. The button is handed back with a plain line, never left on "Publishing..." for ten minutes. When the answer does come, the page compares again.
+        setLine({ tone: 'bad', text: stillPublishingLine(destination) });
+        // The late answer replaces that line with the real result (and Undo publish), unless a newer press has taken the page.
+        const later = (r?: ApplyDiffResult) => { if (r && press === pressNo.current) report(r); onWrote?.(); void read(); };
+        void call.then(later, () => later());
+        return;
+      }
+      report(got.value);
       onWrote?.();
     } catch (e) { setLine({ tone: 'bad', text: String((e as Error).message ?? e) }); }
     finally { setVoicePublishContext(); setBusy(null); }
@@ -160,7 +178,7 @@ export function PublishChanges({ seed, destination, stage, slot, onWrote, onReac
     setBusy('undo');
     try {
       const r = await rpc<RollbackWire>('rollbackPush', point.id, true, null, 'human');
-      setLine(r.error ? { tone: 'bad', text: r.error } : { tone: 'good', text: undoneLine(destination, point.when) });
+      setLine(undoPublishResult(r, destination, point.when));
       onWrote?.();
     } catch (e) { setLine({ tone: 'bad', text: String((e as Error).message ?? e) }); }
     finally { setBusy(null); }
@@ -231,6 +249,7 @@ export function PublishChanges({ seed, destination, stage, slot, onWrote, onReac
                 const parent = needs.get(row.ref);
                 const reason = refused.get(row.ref);
                 const blocked = !!parent || !!reason;
+                const words = rowWords(row, destination);
                 return (
                   <div key={row.ref + ':' + row.action} data-testid="publish-row" data-ref={row.ref} className="px-4"
                     style={{ display: 'grid', gridTemplateColumns: 'var(--sem-space-4) var(--sem-space-4) minmax(0, 1fr)', columnGap: 'var(--sem-space-2)', alignItems: 'center',
@@ -241,8 +260,8 @@ export function PublishChanges({ seed, destination, stage, slot, onWrote, onReac
                     <button type="button" className="text-left min-w-0 truncate" title="Show what changed" aria-expanded={open === row.ref}
                       style={{ background: 'transparent', border: 'none', color: 'var(--sem-fg)', cursor: 'pointer', padding: 0, font: 'inherit', minHeight: 'var(--sem-row)' }}
                       onClick={() => setOpen(open === row.ref ? null : row.ref)}>
-                      {row.name}
-                      <span className="sem-text-meta"> · {rowNote(row, destination)}</span>
+                      {words.name}
+                      {words.note && <span className="sem-text-meta"> · {words.note}</span>}
                     </button>
                     {parent && (
                       <div className="sem-inline text-(length:--sem-text-meta) pb-2" style={{ gridColumn: 3 }} data-testid="publish-needs">
@@ -273,6 +292,8 @@ function NewModel({ slot, note, onChooseDestination, onWrote }: {
   slot: HTMLElement | null; note?: string; onChooseDestination: () => void; onWrote?: () => void;
 }) {
   const { context, session, refresh } = useConnection();
+  // The tour's demo has no sign-in, so it must not try one: a Learn step that reads the workspaces only says "The saved sign-in did not work" (r2 UAT N18).
+  const inTour = learnActive(useLearn());
   const [signIn, setSignIn] = useState<{ authMode: string; tenantId: string | null } | null>(null);
   const [workspaces, setWorkspaces] = useState<Load<FabricWorkspace>>({ kind: 'loading' });
   const [wsId, setWsId] = useState('');
@@ -302,6 +323,7 @@ function NewModel({ slot, note, onChooseDestination, onWrote }: {
   useEffect(() => { if (!name && session?.modelName) setName(session.modelName); }, [session?.modelName]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   async function load(pressed = false) {
+    if (inTour) { setWorkspaces({ kind: 'ready', items: [] }); return; }
     setWorkspaces({ kind: 'loading' });
     // The sign-in the model's SQL source was read with comes first: it is the one the person just used.
     const plan = await rpc<{ source?: { authMode?: string; tenantId?: string } }>('getStartPlan').catch(() => null);
@@ -368,7 +390,7 @@ function NewModel({ slot, note, onChooseDestination, onWrote }: {
                 <option value="">Choose a workspace</option>
                 {workspaces.items.map((w) => <option key={w.id} value={w.id}>{workspaceName(w)}</option>)}
               </select>
-            ) : <span className="sem-text-meta">{workspaces.kind === 'loading' ? 'Looking for your workspaces...' : workspaces.message}</span>}
+            ) : <span className="sem-text-meta">{workspaces.kind === 'loading' ? 'Looking for your workspaces...' : isSignInError(workspaces.message) ? 'Sign in to see your workspaces.' : workspaces.message}</span>}
           </label>
           <label className="sem-field-label">Name
             <input className="sem-field" data-testid="publish-new-name" value={name} disabled={busy || !!target} autoComplete="off" onChange={(e) => { typedName.current = true; setName(e.target.value); }} />

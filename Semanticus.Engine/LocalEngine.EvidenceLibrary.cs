@@ -65,7 +65,7 @@ namespace Semanticus.Engine
             var disk = !ExperienceStore.IsEphemeralAnchor(anchor);
             var paneIdentity = OpenModelIdentity();
             if (string.IsNullOrWhiteSpace(paneIdentity)) return (null, null);
-            var sidecar = disk ? LayoutStore.DirFor(anchor) : _workspaceDir == null ? null : Path.Combine(_workspaceDir, LayoutStore.DirName);
+            var sidecar = disk ? LayoutStore.DirFor(anchor) : NoFileSidecar(_sessions.Current);
             // Folder key stays repository-relative (file:name) so a clone still finds committed evidence.
             // The identity string is the pane identity shared with tests, interview and vitals.
             var folderKey = disk

@@ -92,7 +92,7 @@ namespace Semanticus.Tests
         /// the same day when the free line was reset. A change to any of these is a change to what is sold, so it
         /// fails here before it ships.</summary>
         [Fact]
-        public void The_Pro_surface_is_56_operations_in_four_features()
+        public void The_Pro_surface_is_57_operations_in_four_features()
         {
             // 35 on 24 September: the composer's four draft ops joined Workflows (lane L4; composer contract 5.1 and
             // Plan-heart contract 14, "draft ops stay Pro", ratified by Kane). The person's Approve and run on a held
@@ -108,15 +108,16 @@ namespace Semanticus.Tests
             // Pro only"). Both are new operations, so nothing that was free became paid.
             // 39 on 28 September: pick_chart_kind (D6, Jev's chart pick for a Queries result) joined Ask your data. A new
             // operation, so nothing that was free became paid.
-            Assert.Equal(new[] { "ask_data", "list_data_questions", "pick_chart_kind" }, FeatureMap.OperationsFor(ProFeature.AskData).ToArray());
+            // 40 on 1.6: pick_check_visuals (Jev picks each check's visual on Validation) joined Ask your data. A new operation, so nothing that was free became paid.
+            Assert.Equal(new[] { "ask_data", "list_data_questions", "pick_chart_kind", "pick_check_visuals" }, FeatureMap.OperationsFor(ProFeature.AskData).ToArray());
             Assert.Equal(new[] { "add_plan_items", "apply_fixes", "create_measures", "duplicate_objects", "edit_objects", "edit_start_plans", "plan_rows", "set_doc_sections", "set_object_permissions", "set_perspective_members", "set_plan_items", "unwaive_findings", "waive_findings", "write_words" }, FeatureMap.OperationsFor(ProFeature.Batch).OrderBy(x => x, StringComparer.Ordinal).ToArray());
-            Assert.Equal(56, FeatureMap.ProOperations.Count);
-            Assert.Equal(56, FeatureMap.ProRpcMethods.Count);
+            Assert.Equal(57, FeatureMap.ProOperations.Count);
+            Assert.Equal(57, FeatureMap.ProRpcMethods.Count);
             // 40, not 36: four Pro engine methods are person-only, with no MCP operation and no EngineRpcTarget entry.
             // Approve and run on a held draft (lane L4), Continue past a stop in a draft (lane author-gaps, B9) and the
             // repeat cards' add and change (lane RP, contract 1.7, Kane 24 Sep). What is sold on the two doors is 36
             // names; the gate keys on these 40. 42 with Ask your data's two, 43 with pick_chart_kind.
-            Assert.Equal(56, FeatureMap.ProEngineMethods.Count);
+            Assert.Equal(57, FeatureMap.ProEngineMethods.Count);
             Assert.Equal(new[] { "route_ask" }, FeatureMap.OperationsFor(ProFeature.Ask).ToArray());
         }
 

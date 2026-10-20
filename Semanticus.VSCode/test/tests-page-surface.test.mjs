@@ -27,19 +27,19 @@ assert.doesNotMatch(tests, /Run \+ record/, 'the separate Run + record button is
 // ---------------------------------------------------------------------------------------------------
 // 1. One 40px tool row.
 // ---------------------------------------------------------------------------------------------------
-assert.match(tests, /sem-tests-toolrow/, 'the page must have one named tool row');
-assert.match(tests, /Run checks/, 'Run is one button: Run checks, or Run N ticked while boxes are ticked');
-assert.match(tests, /Run \$\{tickedCount\.toLocaleString\(\)\} ticked/, 'ticked boxes put the count on the same button, so the menu has no ticked item');
+assert.match(tests, /className="va-tools" data-testid="v-head"/, 'the page must have one named tool group: the menu and Run checks');
+assert.match(tests, /Run checks/, 'Run is one button: Run checks');
+assert.match(tests, /Run \$\{ticked\.size\.toLocaleString\(\)\} chosen/, 'the chosen checks run from the chooser, so the run menu has no ticked item');
 assert.doesNotMatch(tests, /Only what I ticked|Run everything and record this run|includes<\/Eyebrow>/, 'the run menu lists only the families');
 assert.match(tests, /New check/, 'the authoring entry is New check');
-assert.match(tests, /function ReportButton\(/, 'Report is one button for the latest run');
+assert.match(tests, /Report of this run/, 'the report of the latest run is one item of the "..." menu');
 assert.match(tests, /Run the checks first\./, 'and says why it is off before a run');
-assert.doesNotMatch(tests, /function ReportMenu\(/, 'the kept reports are the Reports tab, not a second door on this row');
+assert.doesNotMatch(tests, /function ReportMenu\(/, 'the kept reports are one item of the "..." menu, not a second door');
 assert.doesNotMatch(tests, /Runs on |SQL sources: /, 'the footer names the test model and Connections counts the sources, so the tool row says neither');
 assert.match(authoring, /Add a SQL source/, 'Add a SQL source is the last item of New check');
 assert.match(tests, /onAddSqlSource=\{addSqlSource\}/, 'and New check is handed the same helper');
-assert.match(tests, /openSqlSources\(openConnections\)/, 'Add SQL source uses the Connections lane own helper');
-assert.doesNotMatch(tests, /'sqlsources'/, 'and never restates the section id this page does not own');
+assert.match(tests, /openAuthor\('measureReconcile', null, undefined, true\)/, 'Add SQL source opens a check against SQL with the add form showing, in the drawer (UAT 1.5.104: no trip to Connections)');
+assert.doesNotMatch(tests, /openSqlSources|'sqlsources'/, 'and never restates the section id this page does not own');
 assert.match(tests, /listSqlSources\(\)/, 'the count comes from the engine, through the one shared reader');
 // The hub opens OVER the drawer. Nothing here closes it and nothing reopens it, so a half-filled check
 // is exactly as it was when the hub goes away. The list is re-read at the only moment it can change.
@@ -57,14 +57,14 @@ assert.doesNotMatch(tests, /sections=\{\[sub\]\}|sections: \[sub\]/, 'the open s
 // ---------------------------------------------------------------------------------------------------
 // 2. One status line.
 // ---------------------------------------------------------------------------------------------------
-assert.match(tests, /sem-tests-status/, 'one status line, not a wall of tiles');
+assert.match(tests, /data-testid="v-verdict"/, 'one verdict line, not a wall of tiles');
 assert.doesNotMatch(tests, /function Kpi\(|function OverviewBand\(/, 'the six-tile overview band is replaced by the status line');
-assert.match(tests, /pass · /, 'the status line reads N of M pass, then differ, then could not check');
+assert.match(tests, /boardHeadline\(tally\)/, 'the verdict reads N of M pass, then differ, then could not check, then not run yet, and the parts add up (validation-model.ts)');
 assert.match(tests, /could not check/, 'unknowns stay distinct from failures on the status line');
 assert.match(tests, /coveragePct/, 'coverage comes from the engine and sits beside the grade');
-assert.match(tests, /not recorded/, 'an unrecorded run says so');
-assert.match(tests, /Record it/, 'and offers to record itself');
-assert.match(tests, /partRunSummary\(run\.scope\?\.gradeCovers, run\.scope\?\.skipped/,
+assert.match(tests, /This run is recorded\./, 'a recorded run says so, in run history and grade');
+assert.match(tests, /Record this run/, 'an unrecorded run offers to record itself');
+assert.match(tests, /partRunSummary\(run\.scope\.gradeCovers, run\.scope\.skipped/,
   'a part run says what its letter covers and what did not run, in the engine own words');
 assert.doesNotMatch(tests, /Partial/i, 'the engine stopped saying Partial, so the page must not say it either');
 assert.match(tests, /scope\?\.gradeCovers/, 'a part run shows its real letter with what it covers beside it');
@@ -74,14 +74,15 @@ assert.match(tests, /scope\?\.gradeCovers/, 'a part run shows its real letter wi
 // ---------------------------------------------------------------------------------------------------
 assert.doesNotMatch(tests, /function SavedTestsList\(/, 'the separate saved-definition list is folded into the one list');
 assert.doesNotMatch(tests, /function Measures\(/, 'there is no Measures section any more');
-assert.match(tests, /function SavedChecks\(/, 'one list of saved checks');
+assert.match(tests, /function ValidationBoard\(/, 'one board of checks: the verdict, then only what needs a look (Validation A, 1.6)');
+assert.match(tests, /function CheckDetail\(/, 'each saved check is one line that opens to its detail');
 assert.match(tests, /resultChip\(/, 'each row shows one of the five result chips');
-assert.match(tests, /Search checks and results/, 'search acts on the one list');
-assert.match(tests, /chipCounts/, 'the filter chips count the rows actually shown');
+assert.match(tests, /Show the \$\{passed\.toLocaleString\(\)\} that pass/, 'the checks that pass sit behind one link');
+assert.match(tests, /NEEDS_A_LOOK/, 'the list holds only what needs a look');
 assert.match(tests, /Run this one/, 'a row can run just itself');
 assert.match(tests, /Turn off/, 'a row can be turned off');
-assert.match(tests, /Open in DAX Lab/, 'an opened row offers the DAX Lab handoff');
-assert.match(tests, /Show the differing comparisons/, 'an opened row offers its differing comparisons');
+assert.match(tests, /Open in Query/, 'an opened row offers the hand-off to Query');
+assert.match(tests, /'All places'/, 'an opened row shows its differing places and offers all of them');
 assert.match(tests, /Edit this check/, 'an opened row offers Edit');
 assert.match(tests, /differenceSentence\(/, 'an opened row leads with one sentence of what differs');
 assert.match(tests, /comparisonSummary\(differCount, matchCount/, 'an opened row counts the comparisons and discloses any cap');
@@ -118,12 +119,12 @@ assert.match(tests, /Show details/, 'each relationship can open its own detail')
 // ---------------------------------------------------------------------------------------------------
 // 5. Table row counts, with one identity for a mapping.
 // ---------------------------------------------------------------------------------------------------
-assert.match(tests, /function TableRowCounts\(/, 'table row counts have their own card');
-assert.match(tests, /Map source/, 'an unmapped table offers Map source');
+assert.match(tests, /function RowCountsBody\(/, 'table row counts have their own opened body');
+assert.match(tests, /Choose source/, 'a table with no source offers Choose source');
 assert.match(tests, /Counts differ/, 'a difference is said as Counts differ, never as a proven fault');
 assert.match(tests, /Not checked/, 'an unmapped table is not checked');
 assert.match(tests, /TABLE_COUNT_FOOTER/, 'the card carries the exact approved footer');
-assert.match(tests, /openTableMapping/, 'Map source and New check > Table row count open the same setup');
+assert.match(tests, /openTableMapping/, 'Choose source and New check > Table row count open the same setup');
 assert.match(authoring, /tableRowCount/, 'the drawer knows the table row count kind');
 
 // ---------------------------------------------------------------------------------------------------
@@ -156,16 +157,15 @@ assert.match(tests, /All but \$\{count\.toLocaleString\(\)\} match/, 'the Rows t
 // Reports, not Results. Astra found "Results" misleading; Kane then moved the whole thing off the strip
 // on 22 September 2026 and made it Validation's second tab, so the word is now pinned where it is drawn.
 assert.doesNotMatch(app, /id: 'evidence', label:/, 'Reports is not a tab in the area strip any more');
-assert.match(tests, /data-page-tab="reports"[\s\S]{0,160}>Reports</, 'Validation names its second tab Reports');
+assert.match(tests, /onOpenReports=\{\(\) => onPage\?\.\('reports'\)\}/, 'Kept reports is the Reports route, reached from the "..." menu');
 assert.doesNotMatch(tests, />Results</, 'Results was the name Astra found misleading');
 
 // ---------------------------------------------------------------------------------------------------
 // 9. The states.
 // ---------------------------------------------------------------------------------------------------
-assert.match(tests, /No saved checks yet/, 'the first visit says there are none');
-// CHANGED 2026-09-15 (Astra, finding 3): "automatically on every run" was not true of a run that ticked
-// saved checks, which skips both automatic families. The sentence now says when they actually run.
-assert.match(tests, /Relationships and table row counts are checked when you run everything/, 'and that automatic checks still exist');
+// CHANGED 17 Oct 2026 (UAT 1.5.104): a first visit is one line that starts the first check. It does not explain automatic checks (a fresh model had
+// "1 check, not run yet" the person never made), and a person never sees a count of things hidden from them.
+assert.match(tests, /Start with a check: compare a number with your database, or save one you trust\./, 'the first visit is one line that starts the first check');
 assert.doesNotMatch(tests, /checked automatically on every run|Checked on every run/, 'nothing promises they always run');
 assert.match(tests, /Connect a test model/, 'a result that needs a live model offers to connect one');
 assert.match(tests, /Loading/, 'there is a loading state');

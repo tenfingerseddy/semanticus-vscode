@@ -54,7 +54,7 @@ namespace Semanticus.Engine.Query
             ("change", "the question asks how numbers changed, rose, fell, grew or shrank, or how they compare with another period, and the reading shows no periods or versions side by side to read that off",
                 "The question asks how the numbers changed, and Semanticus does not work out a change yet."),
             ("share", "the question asks for a share, a percent, a ratio, a rate or an average, and no measure in the reading is one",
-                "The question asks for a share or a percent, and Semanticus does not work that out yet."),
+                "The question asks for a share, a percent or an average that no measure here gives, and Semanticus does not work it out for you yet."),
             ("none_or_only", "the question asks about things with no rows, things that stopped, things sold only in one place, or things that were not sold, which totals cannot show",
                 "The question asks about things with no sales, or sold in one place only, and Semanticus does not work that out yet."),
             ("future_or_stock", "the question asks about the future, a forecast, a target, or what is held in stock now rather than what was sold",

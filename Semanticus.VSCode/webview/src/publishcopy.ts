@@ -30,6 +30,8 @@ export function publishChipText(input: PublishChipInput): string | null {
 export interface ChangeRow {
   ref: string; objectType: string; name: string; table?: string | null; action: string;
   leftText?: string | null; rightText?: string | null;
+  /** The engine's own word that a relationship is the same one with only its key columns renamed (ModelDiffItem.CarriedByRename). Absent from an older engine. */
+  carriedByRename?: boolean;
 }
 
 export const isRemoval = (row: ChangeRow): boolean => row.action === 'Delete';
@@ -91,8 +93,50 @@ export function isUnpublishable(row: ChangeRow): boolean {
   return names.length > 0 && names.every((n) => !CARRIED_ANNOTATIONS.has(n));
 }
 
+/**
+ * A relationship whose key columns were only renamed shows up in the compare as a new relationship plus the old one "only on the service", because a
+ * relationship is matched by its ends. It is neither: the renamed columns carry it, and one press sends it (verifier, 18 Oct: the page said "cannot send
+ * it" and offered a tick that removes a real relationship). Returns the refs of both halves of each such pair, so the page does not list them.
+ * Only a pure rename counts: every end is the same column or a listed column rename, and nothing but the ends, the name and any notes (annotations) differs.
+ */
+function renamedRelationshipRefs(rows: readonly ChangeRow[]): Set<string> {
+  const out = new Set<string>();
+  const creates = rows.filter((r) => r.objectType === 'Relationship' && r.action === 'Create');
+  const deletes = rows.filter((r) => r.objectType === 'Relationship' && r.action === 'Delete');
+  if (creates.length === 0 || deletes.length === 0) return out;
+  const nameOf = (row: ChangeRow, side: 'leftText' | 'rightText') => { const n = parseObject(row[side])?.name; return typeof n === 'string' ? n : null; };
+  const renamedTo = (kind: 'Table' | 'Column', table: string | null, now: string, was: string) =>
+    now === was || rows.some((r) => r.objectType === kind && r.action === 'Update' && (kind === 'Table' || r.table === table) && nameOf(r, 'leftText') === now && nameOf(r, 'rightText') === was);
+  const ENDS = ['name', 'fromTable', 'fromColumn', 'toTable', 'toColumn'];
+  const used = new Set<string>();
+  for (const c of creates) {
+    const l = parseObject(c.leftText);
+    if (!l) continue;
+    for (const d of deletes) {
+      if (used.has(d.ref)) continue;
+      const r = parseObject(d.rightText);
+      if (!r) continue;
+      const keys = new Set([...Object.keys(l), ...Object.keys(r)]);
+      // A note written onto the relationship (an accepted warning, a waiver) does not make it another relationship, so annotations are left out of the match.
+      if ([...keys].some((k) => !ENDS.includes(k) && k !== 'annotations' && JSON.stringify(l[k]) !== JSON.stringify(r[k]))) continue;
+      const end = (side: 'from' | 'to') => {
+        const [lt, lc, rt, rc] = [l[side + 'Table'], l[side + 'Column'], r[side + 'Table'], r[side + 'Column']];
+        if (![lt, lc, rt, rc].every((v) => typeof v === 'string')) return false;
+        return renamedTo('Table', null, lt as string, rt as string) && renamedTo('Column', lt as string, lc as string, rc as string);
+      };
+      if (!end('from') || !end('to')) continue;
+      used.add(d.ref); out.add(c.ref); out.add(d.ref);
+      break;
+    }
+  }
+  return out;
+}
+
 /** The rows the page lists: the changes that can go. */
-export function publishableRows<T extends ChangeRow>(rows: readonly T[]): T[] { return rows.filter((r) => !isUnpublishable(r)); }
+export function publishableRows<T extends ChangeRow>(rows: readonly T[]): T[] {
+  const carried = renamedRelationshipRefs(rows);
+  return rows.filter((r) => !isUnpublishable(r) && !r.carriedByRename && !(r.objectType === 'Relationship' && carried.has(r.ref)));
+}
 
 // ── Role members, in words ────────────────────────────────────────────────────────────────────────
 // A role member is a person or a group in Microsoft Entra. Power BI hands back a guid for each, so the stored name is
@@ -145,6 +189,30 @@ function tableExtras(row: ChangeRow): string | null {
   return parts.length ? parts.join(' and ') : null;
 }
 
+/** The two filters read the same once every table and column name is taken out: only a name differs, which is what a rename leaves behind. */
+function sameBesidesNames(a: string, b: string): boolean {
+  const bare = (t: string) => t.replace(/'[^']*'|\[[^\]]*\]|\b[A-Za-z_][A-Za-z0-9_]*(?=\[)/g, '#');
+  return a !== b && bare(a) === bare(b);
+}
+
+/** How a role's row filters differ between your copy (left) and the destination (right). 'rename' when only names differ, or when the destination's filter is one the service already marks
+ *  broken (it carries an error message: its column was renamed) and your copy holds the fix; 'edit' for any other difference; null when the filters are the same. */
+function roleFilterChange(leftText?: string | null, rightText?: string | null): 'rename' | 'edit' | null {
+  const perms = (text?: string | null) => {
+    const list = parseObject(text)?.tablePermissions;
+    return Array.isArray(list) ? list.filter((p): p is { name?: string; filterExpression?: string; errorMessage?: string } => !!p && typeof p === 'object') : [];
+  };
+  const left = perms(leftText), right = perms(rightText);
+  let change: 'rename' | 'edit' | null = null;
+  for (const l of left) {
+    const r = right.find((p) => p.name === l.name);
+    if (!r || (l.filterExpression ?? '') === (r.filterExpression ?? '')) continue;
+    if (r.errorMessage || sameBesidesNames(l.filterExpression ?? '', r.filterExpression ?? '')) return 'rename';
+    change = 'edit';
+  }
+  return change;
+}
+
 /** The few words beside a row: what kind of object it is and what happens to it. */
 export function rowNote(row: ChangeRow, destination: string): string {
   // The compatibility level is one change on the list. Your copy holds the higher level (left), the destination the lower (right).
@@ -152,6 +220,8 @@ export function rowNote(row: ChangeRow, destination: string): string {
   if (row.objectType === 'Role' && row.action === 'Update') {
     const lines = roleMemberLines(row.leftText, row.rightText);
     if (lines && (lines.added.length > 0 || lines.removed.length > 0)) return 'role members changed';
+    const filter = roleFilterChange(row.leftText, row.rightText);
+    if (filter) return filter === 'rename' ? 'row filter updated for the rename' : 'row filter changed';
   }
   // A new table is told with what comes with it, so a date table reads as the date table, its calendar and its hierarchy.
   if (row.objectType === 'Table') {
@@ -225,7 +295,8 @@ export function failureReasons(failed: readonly string[] | null | undefined, row
 export function plainFailure(reason: string): string {
   const r = (reason || '').toLowerCase();
   if (!r || r.includes('republish')) return 'Power BI has a different object with this name, so this change cannot replace it.';
-  if (r.includes('did not carry it') || r.includes('object type') || r.includes('did not sync')) return 'Power BI does not take this kind of change from here.';
+  // Our limit, never Power BI's: the push does not write this kind of change yet (Kane, 17 Oct).
+  if (r.includes('did not carry it') || r.includes('object type') || r.includes('did not sync')) return 'This change stays in your copy for now. Semanticus cannot send it to Power BI yet.';
   if (r.includes('delete refused')) return 'Power BI would not remove it. Compare again and try once more.';
   // Words the person should never read: how the engine moves a change, and the other tools it points at.
   if (/tmdl|xmla|shell|apply path|metadata|lineage|live deploy|deploy via|merged locally|\bTOM\b/i.test(reason)) return 'This change stays in your copy for now. Semanticus cannot send it to Power BI yet.';
@@ -271,6 +342,15 @@ export function couldNotGoLine(failed: ReadonlyMap<string, string>, rows: readon
   return `${count === 1 ? '1 change' : `${count} changes`} could not go${named}.`;
 }
 
+/** A role that did not go while something else did: its filters may still name a column or table that was renamed by the same press, which leaves the
+ *  role in error on the service until it goes. Said plainly, naming the role (UAT 18 Oct, P1). Empty when nothing else went out or no role was left. */
+export function brokenRoleLine(failed: ReadonlyMap<string, string>, rows: readonly ChangeRow[], appliedRefs: readonly string[] | null | undefined): string {
+  const roles = rows.filter((r) => r.objectType === 'Role' && failed.has(r.ref));
+  if (roles.length === 0 || !(appliedRefs ?? []).some((ref) => /^(column|table|hierarchy|measure):/.test(ref))) return '';
+  const names = roles.slice(0, 2).map((r) => r.name || r.ref).join(' and ') + (roles.length > 2 ? ` and ${roles.length - 2} more` : '');
+  return `The ${names} ${roles.length === 1 ? 'role' : 'roles'} on the service may still use an old column or table name. Publish again to fix ${roles.length === 1 ? 'it' : 'them'}.`;
+}
+
 // ── The one button and the lines around it ────────────────────────────────────────────────────────
 export type PublishLabelInput = { changes: number; removals: number; target: string; busy?: boolean; checking?: boolean; empty?: boolean };
 
@@ -311,6 +391,30 @@ export function publishedLine(count: number, target: string): string {
     : `Published ${count === 1 ? '1 change' : `${count} changes`} to ${t}. Your copy did not change.`;
 }
 export function undoneLine(target: string, when: string): string { return `${target || 'The destination'} is back to how it was before ${when}.`; }
+/** What Undo publish says. Back to how it was only when nothing was left behind: an object the rollback could not restore is named, never glossed. */
+export function undoPublishResult(r: { error?: string | null; failedRefs?: string[] | null }, target: string, when: string): { tone: 'good' | 'bad'; text: string } {
+  if (r.error) return { tone: 'bad', text: r.error };
+  const failed = r.failedRefs ?? [];
+  if (failed.length === 0) return { tone: 'good', text: undoneLine(target, when) };
+  const names = failed.slice(0, 3).map((f) => f.replace(/ \(.*$/, '')).join(', ') + (failed.length > 3 ? ` and ${failed.length - 3} more` : '');
+  return { tone: 'bad', text: `${target || 'The destination'} is not fully back to how it was before ${when}. ${failed.length} ${failed.length === 1 ? 'object' : 'objects'} could not be put back: ${names}.` };
+}
+/** A press the engine has not answered by now is handed back to the person. Longer than a normal push (about 15 seconds, a level raise on a big model
+ *  longer), shorter than the ten-minute call limit, whose text is the engine's own. */
+export const PUBLISH_WAIT_MS = 150_000;
+
+/** Wait for a call, but not for ever. A call that answers inside the ceiling passes through (failures too); one that does not is reported as late and
+ *  keeps running: its answer, when it comes, is still read by whoever holds the promise. */
+export function waitUpTo<T>(call: Promise<T>, ms: number): Promise<{ value: T } | { late: true }> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve({ late: true }), ms);
+    call.then((value) => { clearTimeout(timer); resolve({ value }); }, (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
+/** The line when the ceiling passes: no engine words, no blame, and the way to see where things stand. */
+export function stillPublishingLine(target: string): string { return `${target || 'The destination'} has not answered yet. The publish may still finish. The list below shows what is left.`; }
+
 export function notPublishedLine(target: string): string { return `Nothing was published to ${target || 'the destination'}.`; }
 
 /** The time of day, as "09:42", in the person's own clock. */

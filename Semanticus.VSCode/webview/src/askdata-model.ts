@@ -16,6 +16,8 @@ import type { ResultSet } from './wire';
 export interface DataAskFilter { column: string; op: string; values: string[] }
 export interface DataAsk {
   question?: string | null;
+  /** The id of the notebook row this ask opens again: the engine updates that row in place and adds nothing to the history. */
+  recordAs?: string | null;
   groupBy?: string[] | null;
   measures?: string[] | null;
   filters?: DataAskFilter[] | null;
@@ -35,6 +37,8 @@ export interface QueriesHandoff { parts: DataAsk; answer: DataAnswer; words?: st
 export type Outcome = 'answered' | 'built' | 'needs-you' | 'refused' | 'error';
 export interface DataAnswer {
   outcome: Outcome | string;
+  /** This question's id in the model's history and the notebook (null when the model keeps no history). */
+  questionId?: string | null;
   reading?: string | null;
   /** What this answer shows, in one sentence, from the query that will run ("This shows Net Sales for each Region, where Year
    *  is 2025."). The first line of every answer, so anything that still gets through is visible. */
@@ -44,6 +48,9 @@ export interface DataAnswer {
   /** What the answer assumed where the words left room, in one plain line ("Metric Category is not filtered."), when it
    *  assumed anything (K16). Each part it can change back is one of the others. */
   assumption?: string | null;
+  /** Set when the engine's own check named something the reading leaves out of the question: one plain line. The page shows that
+   *  line and no figure, so a number that answers another question is never the answer (UAT 17 Oct, P21). */
+  flagged?: string | null;
   others?: DataOther[];
   parts?: DataAsk | null;
   dax?: string | null;
@@ -73,7 +80,12 @@ export interface DataOther {
 export interface DataQuestionRecord {
   id: string; askedAt: string; question?: string | null; reading?: string | null; readBy?: string | null;
   outcome?: string; parts?: DataAsk | null; dax?: string | null; rowCount?: number; origin?: string;
+  // The Query notebook (1.6): the same record is a row of the notebook and an item of the full history.
+  kind?: 'words' | 'dax' | null; pinned?: boolean; inNotebook?: boolean;
+  headline?: string | null; dropped?: string | null; tookMs?: number | null; coldMs?: number | null; warmMs?: number | null;
 }
+/** What the notebook calls return: every row of the model's history, newest first, plus one plain line of what an action did. */
+export interface QueryNotebookView { questions: DataQuestionRecord[]; note?: string | null; done?: string | null }
 export interface DataQuestionHistory { questions: DataQuestionRecord[]; note?: string | null }
 
 export const ASK_METHOD = 'askData';
@@ -85,6 +97,8 @@ const failed = (e: unknown): DataAnswer => ({ outcome: 'error', error: String((e
 /** The parts only: the words, the run switch and the cap are the page's to set per send, not part of a question. */
 export function cleanParts(p: DataAsk | null | undefined): DataAsk {
   return {
+    // A reading the engine made from words alone (a count of customers by their orders) is asked again by its words.
+    ...(p?.question && !(p.measures ?? []).length && !(p.groupBy ?? []).length ? { question: p.question } : {}),
     measures: [...(p?.measures ?? [])], groupBy: [...(p?.groupBy ?? [])],
     filters: (p?.filters ?? []).map((f) => ({ column: f.column, op: f.op || 'is', values: [...(f.values ?? [])] })),
     top: p?.top ?? null, topBy: p?.topBy ?? null, lowest: !!p?.lowest, sortBy: p?.sortBy ?? null, descending: !!p?.descending,
@@ -313,6 +327,18 @@ export function needsData(a: DataAnswer | null | undefined): boolean {
   return lines.some((l) => l.includes(NO_DATA_LINE));
 }
 
+/** The rows a page may draw for an answer: the answer's own, unless the engine's check flagged the reading. A flagged reading has no
+ *  rows on the page, so it has no headline figure and no chart (UAT 17 Oct, P21: 25,669 shown for "how many customers bought twice"). */
+export function shownRowsOf(a: DataAnswer | null | undefined): ResultSet | null {
+  return a && outcomeOf(a) === 'answered' && !a.flagged ? resultSetOf(a) : null;
+}
+
+/** The one plain line a flagged reading says in place of a figure, or null when the reading is not flagged. */
+export function unreadLine(a: DataAnswer | null | undefined): string | null {
+  const why = (a?.flagged ?? '').trim();
+  return why ? `${why} So no figure is shown.` : null;
+}
+
 export function resultSetOf(a: DataAnswer): ResultSet {
   // The answer's formats ride on the columns, so every place that draws this result (the grid, a matrix, a card, a chart's
   // axis and tooltip) reads the same format and Return Rate % 0.0068 is 0.7% in all of them, never a rounded 0.01 (Sol 3.1).
@@ -332,6 +358,19 @@ export function pivotConfigOf(p: DataAsk, dax?: string | null): PivotConfig {
   const filters = p.filters ?? [];
   const context = lines.map((line, i) => ({ name: filters[i] ? columnName(filters[i].column) : 'Filter', value: filters[i] ? filterValueWords(filters[i]) : line, dax: line }));
   return { rows, cols: [], values, filters: [], ...(context.length ? { context } : {}) };
+}
+
+/** A question's fields as wells, for "Fields" on an asked question (pro UAT 18 Oct, N1 N2): its rows, columns and numbers. The wells cannot
+ *  hold a filter, a top or a sort the question carries, and showing the fields without them would run another question and change the number,
+ *  so such a question gets the reason in plain words and stays exactly as it is. */
+export function wellsOfQuestion(p: DataAsk | null | undefined): { config: PivotConfig; why?: undefined } | { config: null; why: string } {
+  if (!p || !(p.measures ?? []).length) return { config: null, why: 'This question is worked out from its words, so the fields cannot show it. It stays as it is.' };
+  const kept: string[] = [];
+  if ((p.filters ?? []).length) kept.push('a filter');
+  if (p.top) kept.push(`a top ${p.top}`);
+  if (p.sortBy) kept.push('a sort');
+  if (kept.length) return { config: null, why: `This question has ${kept.join(' and ')} that the fields cannot show, so it stays as it is. Use DAX to change it.` };
+  return { config: pivotConfigOf(p) };
 }
 
 /** The filter lines of an answer's query, word for word as the engine's template wrote them: one VAR __FilterN per
@@ -392,7 +431,7 @@ export function checkDraftOf(a: DataAnswer, row: number, measure: number, measur
   return {
     id: '', kind: 'measureValue', enabled: true, targetRef: measureRef,
     title: checkTitle(measureRef, expected, { expressionDax }),
-    paramsJson: JSON.stringify({ measureRef, expectedValue: expected, expressionDax, provenance: a.reading ? `Ask your data: ${a.reading}` : undefined }),
+    paramsJson: JSON.stringify({ measureRef, expectedValue: expected, expressionDax, provenance: a.reading ? `Query: ${a.reading}` : undefined }),
   };
 }
 
@@ -533,4 +572,17 @@ export function crowdedChart(rows: unknown[][], measureCol: number, measureName:
   const num = (r: unknown[]) => (typeof r[measureCol] === 'number' ? (r[measureCol] as number) : Number.NEGATIVE_INFINITY);
   const top = [...rows].sort((a, b) => num(b) - num(a)).slice(0, CHART_TOP_ROWS);
   return { rows: top, line: `${rows.length} rows are too many to read as bars, so the chart shows the top ${CHART_TOP_ROWS} by ${measureName}. The table has every row.` };
+}
+
+/** Hero 24 D2: the assistant asked a question and then pointed the Studio at the measure ("show_in_studio" with a measure focus). That focus used to
+ *  seed `EVALUATE ROW("Net Sales", [Net Sales])` over the answer's own query, so the DAX card showed the question without its filters and the page
+ *  said the person had changed the query by hand. When an answer the assistant asked for still holds the page, and it is about the focused
+ *  measure, the answer's query stays: the focus only says which measure is selected. Returns the seed query, or null to keep what the page holds. */
+export function seedForMeasureFocus(name: string, held: { byAssistant: boolean; owns: boolean; measures: string[] | undefined; assistantRun?: boolean } | null): string | null {
+  // Hero 25 H1: rows the assistant's own run_dax made hold the page: a measure focus only moves the selection, it never replaces their query.
+  if (held && held.assistantRun) return null;
+  if (held && held.byAssistant && held.owns && (held.measures ?? []).some((m) => m.toLowerCase() === name.toLowerCase())) return null;
+  const outputName = name.replace(/"/g, '""');
+  const identifier = name.replace(/]/g, ']]');
+  return `EVALUATE ROW("${outputName}", [${identifier}])`;
 }

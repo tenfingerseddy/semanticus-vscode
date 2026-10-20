@@ -2,7 +2,7 @@
 // For ANY plan the engine returns:
 //   (a) no job is listed twice: no two rows share a finding (Claims), and no two rows share a title and the same objects;
 //   (b) the strip counts come from the list: done == rows that read Done (+ the rows Refresh plan cleared, which a test passes in; and the applied tasks that left the plan, which the engine counts),
-//       total == done + the rows still to do (a set-aside row is not a task to do);
+//       total == done + the rows still to do (a set-aside row is not a task to do, and neither is the Save row: saving is not a task of the plan);
 //   (c) every open scored finding (Model quality severity 2 and up, AI readiness scored) is on an open row, or on the task that holds it.
 // A test calls CheckAsync after EVERY step it drives, not only at the end.
 
@@ -59,8 +59,10 @@ namespace Semanticus.Tests
             // (b) the strip is the list
             // Applied tasks that left the live plan count as done the moment they leave (hero run 21, N9), so Refresh plan changes no figure.
             cleared += await _e.VanishedAppliedCountForTest();
-            var done = live.Count(i => i.StateWord == PlanStateWords.Done) + cleared;
-            var total = live.Length + cleared;
+            // Saving is not a task of the plan (hero 26 N9): the Save row is listed but the strip leaves it out, so the figure does not fall when a run ends.
+            var tasks = live.Where(i => i.Id != LocalEngine.UnsavedItemId).ToArray();
+            var done = tasks.Count(i => i.StateWord == PlanStateWords.Done) + cleared;
+            var total = tasks.Length + cleared;
             if (plan.Strip == null) problems.Add("NO STRIP");
             else
             {

@@ -13,7 +13,7 @@ import { CANVAS_CHIP_MIN_H, CanvasChip, RowMenu, RowSep, ToolRow, canvasInsetSty
 import type { ColumnRow } from './wire';
 import { uiLabel } from './copy';
 import { NODE_W, NODE_H, sizeForAnchors, classifyRoles, baryOrder, roleOf, computeAnchors, busMatrixPositions, matrixPositions, matrixSizer, cellRels, cellSlots, matrixMarks, type Anchor, type Side } from './diagramlayout.mjs';
-import { reflowCards, clearDropped, roomSteps, keepBeside, linesBySide, CARD_GAP, changedPositions, toggleExpansion, setExpansionFor, layoutBox, boxChanges, sizesToCompare, changeReloadsDiagram, isLayoutChange, isArrangeChange, spreadStart, spreadKey, savedAfterDrag, savedSpots, filterHeldHeight, recordsHeight, readableFirstView, type FitSize, type SideLines } from './diagramfit.mjs';
+import { reflowCards, clearDropped, roomSteps, keepBeside, linesBySide, CARD_GAP, changedPositions, toggleExpansion, setExpansionFor, layoutBox, boxChanges, sizesToCompare, changeReloadsDiagram, isLayoutChange, isArrangeChange, spreadStart, spreadKey, savedAfterDrag, savedSpots, filterHeldHeight, recordsHeight, readableFirstView, zoomPinned, type FitSize, type SideLines } from './diagramfit.mjs';
 
 // The page's own how-to sentences. They used to sit on the toolbar as a long grey line, which cost the canvas a
 // whole row on every screen for something you read once. They live here as named constants so the tooltip of the
@@ -131,7 +131,7 @@ function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
   const hold = filterHeldHeight(data.expanded, data.filter, heldH.current);
 
   return (
-    <div ref={cardRef} data-object-ref={`table:${t.name}`} className="rounded-(--sem-radius-card) border text-(length:--sem-text-label) flex flex-col" style={{
+    <div ref={cardRef} data-object-ref={`table:${t.name}`} className="rounded-(--sem-radius-card) border text-(length:--sem-text-body) flex flex-col" style={{
       width: data.w, minHeight: Math.max(data.h, hold ?? 0), background: 'var(--sem-surface)',
       borderColor: selected ? 'var(--sem-strong-border)' : 'var(--sem-border)',
       boxShadow: [selected && '0 0 0 1px var(--sem-fg)', data.expanded && OPEN_CARD_SHADOW].filter(Boolean).join(', ') || 'var(--sem-elev)',
@@ -216,7 +216,7 @@ const tbBtn: React.CSSProperties = {
 
 const nodeTypes = { table: TableNode };
 // React Flow's fit margin: a fraction of the viewport left around the fitted graph, not a CSS length.
-const FIT_MARGIN = 0.2;
+const FIT_MARGIN = 0.08;   // was 0.2: a seven-table model drew at half size with a wide empty frame (UAT round 2, item 49)
 // The matrix is already tight and has nothing to avoid, so it frames closer: its cards read larger on the same screen.
 const MATRIX_FIT_MARGIN = 0.06;
 // Screen px left clear at the edge a readable first frame starts from (the page margin, --sem-page-margin).
@@ -574,11 +574,18 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     const ns = rf.getNodes();
     const bounds = ns.length ? rf.getNodesBounds(ns) : null;
     const full = bounds && width > 0 && height > 0 ? getViewportForBounds(bounds, width, height, MIN_ZOOM, 2, opts?.padding ?? FIT_MARGIN) : null;   // the margin the fit itself uses, so a frame that fits is never cut short
-    const view = bounds && full ? readableFirstView(bounds, width, height, full.zoom, FIRST_FRAME_PAD) : null;
+    const view = bounds && full ? readableFirstView(bounds, width, height, full.zoom, FIRST_FRAME_PAD, undefined, ns.map((n) => ({ x: n.position.x, w: n.measured?.width ?? 0 }))) : null;
     if (!view) { doFit(opts); return; }
     try { void rf.setViewport(view); } catch { /* not mounted */ }
     interactedSinceFit.current = false;
   }, [rf, flowStore, doFit]);
+  const zoomBy = useCallback((factor: number) => {
+    const { width, height } = flowStore.getState();
+    const ns = rf.getNodes();
+    if (!ns.length || !(width > 0) || !(height > 0)) { void (factor > 1 ? rf.zoomIn() : rf.zoomOut()); return; }
+    try { void rf.setViewport(zoomPinned(rf.getViewport(), rf.getNodesBounds(ns), width, height, factor, MIN_ZOOM, 2), { duration: 200 }); } catch { /* not mounted */ }
+    interactedSinceFit.current = true;
+  }, [rf, flowStore]);
   const fitWhenMeasured = useCallback((opts?: Parameters<typeof rf.fitView>[0], readable = false) => {
     let tries = 0;
     const tick = () => {
@@ -1547,14 +1554,19 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
           fitView minZoom={MIN_ZOOM} proOptions={{ hideAttribution: true }}
         >
           <Background color="var(--sem-border)" gap={20} />
-          {/* The dot grid keeps the same floor as its first frame: Fit never draws text below readable, it holds that zoom and you pan.
-              React Flow queues its own fit and would run it after ours, so in the grid its Fit button is swapped for one that frames readably. */}
-          <Controls showInteractive={false} showFitView={layout !== 'matrix'}>
-            {layout === 'matrix' && (
-              <ControlButton className="react-flow__controls-fitview" title="Fit View" aria-label="Fit View" onClick={() => readableFit({ padding: MATRIX_FIT_MARGIN })}>
-                <svg viewBox="0 0 32 30"><path d="M3.692 4.63c0-.53.4-.938.939-.938h5.215V0H4.708C2.13 0 0 2.054 0 4.63v5.216h3.692V4.631zM27.354 0h-5.2v3.692h5.17c.53 0 .984.4.984.939v5.215H32V4.631A4.624 4.624 0 0027.354 0zm.954 24.83c0 .532-.4.94-.939.94h-5.215v3.768h5.215c2.577 0 4.631-2.13 4.631-4.707v-5.139h-3.692v5.139zm-23.677.94c-.531 0-.939-.4-.939-.94v-5.138H0v5.139c0 2.577 2.13 4.707 4.708 4.707h5.138V25.77H4.631z" /></svg>
-              </ControlButton>
-            )}
+          {/* Fit shows every table in every layout: a diagram too wide for readable text is drawn small as an overview and the person zooms in.
+              React Flow queues its own fit and would run it after ours, so its Fit and zoom buttons are swapped for ones that call ours. The zoom
+              buttons keep a left-anchored first frame on its left edge, so zooming out does not slide the cards sideways. */}
+          <Controls showInteractive={false} showFitView={false} showZoom={false}>
+            <ControlButton className="react-flow__controls-zoomin" title="Zoom In" aria-label="Zoom In" onClick={() => zoomBy(1.2)}>
+              <svg viewBox="0 0 32 32"><path d="M32 18.133H18.133V32h-4.266V18.133H0v-4.266h13.867V0h4.266v13.867H32z" /></svg>
+            </ControlButton>
+            <ControlButton className="react-flow__controls-zoomout" title="Zoom Out" aria-label="Zoom Out" onClick={() => zoomBy(1 / 1.2)}>
+              <svg viewBox="0 0 32 5"><path d="M0 0h32v4.2H0z" /></svg>
+            </ControlButton>
+            <ControlButton className="react-flow__controls-fitview" title="Fit View" aria-label="Fit View" onClick={() => readableFit({ padding: layout === 'matrix' ? MATRIX_FIT_MARGIN : FIT_MARGIN, duration: 300 })}>
+              <svg viewBox="0 0 32 30"><path d="M3.692 4.63c0-.53.4-.938.939-.938h5.215V0H4.708C2.13 0 0 2.054 0 4.63v5.216h3.692V4.631zM27.354 0h-5.2v3.692h5.17c.53 0 .984.4.984.939v5.215H32V4.631A4.624 4.624 0 0027.354 0zm.954 24.83c0 .532-.4.94-.939.94h-5.215v3.768h5.215c2.577 0 4.631-2.13 4.631-4.707v-5.139h-3.692v5.139zm-23.677.94c-.531 0-.939-.4-.939-.94v-5.138H0v5.139c0 2.577 2.13 4.707 4.708 4.707h5.138V25.77H4.631z" /></svg>
+            </ControlButton>
           </Controls>
           {layout === 'matrix' && <MatrixGuides />}
         </ReactFlow>

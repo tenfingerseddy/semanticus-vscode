@@ -54,6 +54,9 @@ namespace Semanticus.Tests
         {
             var f = new DecisionFixture(pro ? TestEntitlements.Pro : TestEntitlements.Free);
             var e = f.Engine;
+            // These tests count requests, refusals and budgets request by request, and were written for one request a table. The model's
+            // whole-model packing is JevBatchAcrossTablesTests'.
+            e.JevPerTableForTest = true;
             await e.CreateModelAsync("Contoso", 1604);
             await e.CreateTableAsync("Customer", "human");
             await e.CreateColumnAsync("table:Customer", "CustomerKey", "Int64", null, "human");
@@ -88,7 +91,7 @@ namespace Semanticus.Tests
         private static async Task<List<TableBatch<AiSchemaFamily.Ask>>> BatchesAsync(DecisionFixture f)
         {
             var prepared = await f.Sessions.Current.ReadAsync(m => AiSchemaFamily.Prepare(m));
-            return AiSchemaFamily.Batches(prepared);
+            return AiSchemaFamily.Batches(prepared, perTable: true);   // these tests count requests one a table (ModelAsync switches the engine to it)
         }
 
         private static int EstimateOf(TableBatch<AiSchemaFamily.Ask> b, bool relay = false)
@@ -142,13 +145,13 @@ namespace Semanticus.Tests
             public Task<DecisionAnswers> AskAsync(DecisionRequest request, CancellationToken ct)
             {
                 if (request.PointName != Point) return Task.FromResult(DecisionAnswers.NotDecided(request, "not asked in this test"));
-                var table = request.Snapshot.TryGetValue("table_name", out var t) ? t?.ToString() : null;
                 using var objects = JsonDocument.Parse(JsonSerializer.Serialize(request.Snapshot["objects"]));
                 var names = objects.RootElement.EnumerateArray().Select(o => o.GetProperty("name").GetString()).ToArray();
+                var tables = objects.RootElement.EnumerateArray().Select(o => o.GetProperty("table").GetString()).ToArray();   // each entry names its table
                 var body = new StringBuilder("{");
                 for (var i = 0; i < request.Questions.Count; i++)
                 {
-                    var (choice, confidence) = _pick(table, names[i]);   // the question at i is about `objects[i]`
+                    var (choice, confidence) = _pick(tables[i], names[i]);   // the question at i is about `objects[i]`
                     if (i > 0) body.Append(',');
                     body.Append(JsonSerializer.Serialize(request.Questions[i].Name)).Append(":{\"type\":\"choice\",\"choice\":")
                         .Append(JsonSerializer.Serialize(choice)).Append(",\"confidence\":")
@@ -1292,8 +1295,10 @@ namespace Semanticus.Tests
                 using (var doc = JsonDocument.Parse(requestBody))
                 {
                     if (doc.RootElement.TryGetProperty("point", out var p) && p.ValueKind == JsonValueKind.String) point = p.GetString();
+                    // A request is one table's objects here (the tests' own per-table switch): its table is the table its first object names.
                     if (doc.RootElement.TryGetProperty("snapshot", out var s) && s.ValueKind == JsonValueKind.Object
-                        && s.TryGetProperty("table_name", out var o) && o.ValueKind == JsonValueKind.String) objectName = o.GetString();
+                        && s.TryGetProperty("objects", out var objs) && objs.ValueKind == JsonValueKind.Array && objs.GetArrayLength() > 0
+                        && objs[0].TryGetProperty("table", out var o) && o.ValueKind == JsonValueKind.String) objectName = o.GetString();
                 }
                 if (point == Point) Interlocked.Increment(ref _aiSchemaAsks);
                 if (point == Point) lock (_order) _order.Add(objectName);
@@ -1339,7 +1344,7 @@ namespace Semanticus.Tests
             // rest wait for the next session." That is untrue twice over: the service charged this session for four answers
             // and nothing else, and the next session meets the same month. Lane h on the Yoga showed it live on 27 Sep: 17
             // answers, 194 refusals, 199,962 of 200,000 counted as used, and every Copilot row flipped to the budget.
-            // One request per table (m11/jev-batch): four chunks, the relay answers the first two requests.
+            // One request per table (the tests' own switch, JevPerTableForTest): four chunks, the relay answers the first two requests.
             using var f = await ModelAsync("VerifyMonthThenEdits.bim", extra: MoreTables(2));
             await f.ConsentAsync();
             await AnswerAsync(f, new Dictionary<string, (string, double)>());   // switches the other families off

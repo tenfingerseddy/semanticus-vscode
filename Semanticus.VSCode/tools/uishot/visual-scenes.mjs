@@ -76,7 +76,6 @@ export const SCENES = [
   { id: 'explore-diagram', area: 'Explore', label: 'Explore, Diagram', q: PRO + '&tab=diagram' },
   { id: 'explore-lineage', area: 'Explore', label: 'Explore, Lineage', q: PRO + '&tab=lineage' },
   { id: 'explore-size', area: 'Explore', label: 'Explore, Size by table', q: PRO + '&tab=stats' },
-  { id: 'edit-find', area: 'Edit', label: 'Edit, Find and replace', q: PRO + '&tab=search' },
   { id: 'edit-queries', area: 'Edit', label: 'Edit, Queries', q: PRO + '&tab=daxlab' },
   { id: 'edit-instructions', area: 'Edit', label: 'Edit, AI instructions', q: PRO + '&tab=instructions' },
   { id: 'edit-advanced', area: 'Edit', label: 'Edit, Advanced modelling', q: PRO + '&tab=advmodels' },
@@ -243,8 +242,6 @@ export const SPACE_SCENES = [
   // under them. This one is the full-length feed the audit asked for: with three packages the check cannot catch a
   // revert, and only a long feed can push "Installed in this model" off the bottom.
   { id: 'adv-daxlib-long', area: 'Edit', label: 'Advanced modelling, DaxLib, a full feed', q: PRO + '&tab=advmodels', run: seg('DaxLib'), init: [manyPackages, 30] },
-  { id: 'edit-find-results', area: 'Edit', label: 'Edit, Find and replace, with results', q: PRO + '&tab=search',
-    run: async (p) => { await p.focus('input'); await p.keyboard.type('Sales'); await wait(1500); } },
   { id: 'settings', area: 'Settings', label: 'Settings, assistant permissions', q: PRO + '&tab=permissions' },
   { id: 'propgrid-long', area: 'Properties', label: 'Properties grid, long description', page: 'propgrid.html?s=measure&desc=long', root: 'body' },
   // The ratified design asked for about 45 scenes, not the 22 pages and their obvious sub-pages. These are the

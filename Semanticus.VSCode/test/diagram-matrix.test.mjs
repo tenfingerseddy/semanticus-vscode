@@ -173,8 +173,8 @@ test('the dot grid draws no long line: a link that is not a dot is a short mark 
 test('Fit in the dot grid holds a readable zoom and pans, and the first frame measures its fit with the margin it draws with', () => {
   const diagram = readFileSync(resolve(root, 'webview/src/diagram.tsx'), 'utf8');
   assert.match(diagram, /getViewportForBounds\(bounds, width, height, MIN_ZOOM, 2, opts\?\.padding \?\? FIT_MARGIN\)/, 'a frame that fits with the grid margin is not cut short by the wider default margin');
-  assert.match(diagram, /showFitView=\{layout !== 'matrix'\}/, 'React Flow queues its own fit, so the grid swaps its Fit button');
-  assert.match(diagram, /className="react-flow__controls-fitview"[^>]*onClick=\{\(\) => readableFit\(\{ padding: MATRIX_FIT_MARGIN \}\)\}/, 'the grid Fit button keeps the floor');
+  assert.match(diagram, /showFitView=\{false\}/, 'React Flow queues its own fit, so Fit is our own button in every layout');
+  assert.match(diagram, /className="react-flow__controls-fitview"[^>]*onClick=\{\(\) => readableFit\(\{ padding: layout === 'matrix' \? MATRIX_FIT_MARGIN : FIT_MARGIN/, 'the grid Fit button keeps its tighter margin and never frames below the readable zoom');
   assert.match(diagram, /layout === 'matrix' \? <div className="sem-chip-row">\{chips\}<\/div> : chips/, 'the grid counts and legend share one wrapping row, so the legend is never cut or laid over the counts');
 });
 

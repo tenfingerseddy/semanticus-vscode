@@ -88,7 +88,8 @@ export function rowJobs(r: HubRecord, ctx: HubContext | null | undefined): strin
   const out: string[] = [];
   if (sideId(ctx?.editing) === r.id) out.push('editing');
   if (sideId(ctx?.querying) === r.id) out.push('tests and queries');
-  if (sideId(ctx?.publishing) === r.id) out.push('publish target');
+  // A model opened live publishes back to where it came from, but that is not a target the person chose until a publish goes out.
+  if (sideId(ctx?.publishing) === r.id && !ctx?.publishing?.implied) out.push('publish target');
   return out;
 }
 
@@ -187,6 +188,13 @@ export function routeSection(section: string): { view: 'open' | 'history' | 'add
   }
 }
 
+/** Whether the press that opened the Workspace picker is still in force. A press is spent when the hub closes or the person leaves the picker: the hub keeps
+ *  its view while it is closed, so a press kept past that would read the workspace list as pressed the next time the hub opens, and a browser sign-in window
+ *  would open with no press (UAT round 2). */
+export function pickerStillPressed(pressed: boolean, shown: boolean, view: string): boolean {
+  return pressed && shown && view === 'workspace';
+}
+
 /** The search box shows once the list is long enough to need one (design: more than 8 models). */
 export const SEARCH_FROM = 9;
 
@@ -196,4 +204,16 @@ export const SEARCH_FROM = 9;
 export function startFormStaysOpen(formOpen: boolean, wasSessionId: string | null | undefined, nowSessionId: string | null | undefined): boolean {
   if (!formOpen) return false;
   return !(nowSessionId && nowSessionId !== (wasSessionId ?? null));
+}
+
+/** The Tests and queries model to put back after a second model is connected from the address form. Connecting is how a model is
+ *  saved there, and it moves the Tests slot to the new model; the model that was answering the checks keeps doing it. Nothing to put
+ *  back when no remote model was answering, when it is the model just added, or when it is a copy of Power BI Desktop. */
+export function testsTargetToKeep(querying: ConnectionContextModel | null | undefined, added: { endpoint: string; database: string }):
+  { endpoint: string; database: string; authMode: string; tenantId: string | null } | null {
+  if (!querying?.available || !querying.live || !querying.endpoint) return null;
+  if (querying.kind === 'localDesktop' || querying.kind === 'file') return null;
+  const same = (a?: string, b?: string) => (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+  if (same(querying.endpoint, added.endpoint) && (!added.database.trim() || same(querying.database, added.database))) return null;
+  return { endpoint: querying.endpoint, database: querying.database ?? '', authMode: querying.authMode || 'interactive', tenantId: querying.tenantId ?? null };
 }

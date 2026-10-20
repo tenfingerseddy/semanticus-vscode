@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { isTopSurface, popSurface, pushSurface } from './surface-stack';
+import { escapeClosesList, isTopSurface, popSurface, pushSurface } from './surface-stack';
 
 // The React half of surface-stack.ts. It is its own file so the RULE stays runnable in a plain Node test
 // without React on the import path.
@@ -20,6 +20,7 @@ export function useSurfaceEscape(onEscape: () => void, active = true): void {
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (!isTopSurface(token)) return;
+      if (escapeClosesList(document.activeElement)) return;   // the first Escape closes an open list (round 2 N14), not the whole surface
       handler.current();
     };
     window.addEventListener('keydown', onKey);

@@ -32,7 +32,7 @@ export declare function recordsHeight(expanded: boolean, filter: string): boolea
 export declare function filterHeldHeight(expanded: boolean, filter: string, held: number | undefined): number | undefined;
 export declare const FIRST_FIT_MIN_ZOOM: number;
 export declare function readableFirstView(bounds: { x: number; y: number; width: number; height: number }, width: number, height: number,
-  fittedZoom: number, pad: number, minZoom?: number): { x: number; y: number; zoom: number } | null;
+  fittedZoom: number, pad: number, minZoom?: number, cards?: ReadonlyArray<{ x: number; w: number }> | null): { x: number; y: number; zoom: number } | null;
 export declare function changedPositions(before: Record<string, { x: number; y: number }>, after: Record<string, { x: number; y: number }>): Record<string, { x: number; y: number }>;
 export declare function layoutBox(anchorBox: FitSize, measured?: { width?: number; height?: number }, open?: boolean): FitSize;
 export declare function boxChanges(cards: { id: string; w: number; h: number }[], last: Map<string, FitSize> | null): { prev: Record<string, FitSize>; changed: boolean };
@@ -54,3 +54,4 @@ export interface SavedSpots {
   release(): Record<string, { x: number; y: number }> | null;
 }
 export declare function savedSpots(): SavedSpots;
+export declare function zoomPinned(view: { x: number; y: number; zoom: number }, bounds: { x: number; y: number; width: number; height: number }, width: number, height: number, factor: number, minZoom?: number, maxZoom?: number): { x: number; y: number; zoom: number };

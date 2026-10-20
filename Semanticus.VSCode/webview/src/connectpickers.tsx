@@ -12,11 +12,11 @@
 // Each picker is a pure view (rendered state by state in test/connect-pickers.test.mjs) plus a thin stateful shell
 // that asks the engine. Neither view speaks engine words: no "XMLA", no "endpoint", no "dataset".
 import { useEffect, useRef, useState } from 'react';
-import { rpc, rpcPressed } from './bridge';
+import { onEngineState, rpc, rpcPressed, runHostCommand } from './bridge';
 import {
-  COPY, SIGN_IN_WAYS, WORKSPACE_ENV_OPTIONS, engineSentence, instanceDetail, instanceName, isAdvancedSignIn,
-  sortModels, sortWorkspaces, workspaceChoice, workspaceName,
-  type FabricWorkspace, type Load, type LocalInstance, type WorkspaceChoice, type WorkspaceModel,
+  COPY, OPTION_STYLE, SIGN_IN_WAYS, restartFits, WORKSPACE_ENV_OPTIONS, engineSentence, instanceDetail, instanceName, isAdvancedSignIn, isEngineAway,
+  signInSentence, sortModels, sortWorkspaces, waitForSignIn, workspaceChoice, workspaceName,
+  type EngineView, type FabricWorkspace, type Load, type LocalInstance, type WorkspaceChoice, type WorkspaceModel,
 } from './connectpickers-model';
 
 export type { WorkspaceChoice } from './connectpickers-model';
@@ -192,7 +192,7 @@ export function SignInCheck({ authMode, tenant }: { authMode: string; tenant: st
   return (
     <div className="sem-inset sem-stack sem-text-meta" data-testid="pick-signin-check">
       <div className="sem-inline">
-        <span style={{ color: 'var(--sem-fg)' }}>{sp ? 'Service identity setup' : 'Command-line sign-in'}</span>
+        <span style={{ color: 'var(--sem-fg)' }}>{sp ? 'Service identity setup' : 'Azure command line'}</span>
         {checking ? <span className="sem-push">Checking...</span>
           : probe && <span className={`sem-chip sem-push ${probe.ready ? 'sem-chip-ok' : 'sem-chip-warn'}`}>{probe.ready ? 'Ready' : 'Not ready'}</span>}
       </div>
@@ -215,6 +215,8 @@ export function SignInCheck({ authMode, tenant }: { authMode: string; tenant: st
 export interface WorkspacePickerViewProps {
   account?: string | null;
   workspaces: Load<FabricWorkspace>;
+  /** Where the engine is. Absent means fine. A starting engine is a wait; a failed one says why. */
+  engine?: EngineView;
   wsId: string | null;
   models: Load<WorkspaceModel> | null;
   modelId: string | null;
@@ -234,6 +236,10 @@ export interface WorkspacePickerViewProps {
   onToggleOther: () => void;
   onPasteAddress: () => void;
   onConnect: () => void;
+  /** A browser sign-in the person must finish in a window of its own: waiting (Cancel shows) or ended without a result. */
+  signIn?: 'waiting' | 'unfinished' | null;
+  onCancelSignIn?: () => void;
+  onOpenOther?: () => void;
 }
 
 function PickRow({ testid, label, selected, onPick, disabled }: { testid: string; label: string; selected: boolean; onPick: () => void; disabled?: boolean }) {
@@ -270,7 +276,22 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
         <span className="sem-text-meta sem-push truncate">{p.account ? `as ${p.account}` : 'You may be asked to sign in'}</span>
       </Head>
 
-      {p.workspaces.kind === 'failed' ? (
+      {p.engine?.state === 'starting' ? (
+        <div className="sem-list-row sem-text-meta" aria-live="polite" data-testid="pick-engine-starting">{COPY.engineStarting}</div>
+      ) : p.engine?.state === 'failed' ? (
+        <div className="sem-inline">
+          <Failure message={p.engine.reason || COPY.engineFailedFallback} testid="pick-ws-failed" />
+          <button type="button" className={`${BTN_SM} sem-push`} data-testid="pick-ws-retry" onClick={p.onRetry}>Try again</button>
+          {restartFits(p.engine.reason) && <button type="button" className={BTN_QUIET} data-testid="pick-engine-restart" onClick={() => runHostCommand('semanticus.restartEngine')}>Restart engine</button>}
+          <button type="button" className={BTN_QUIET} data-testid="pick-engine-details" onClick={() => runHostCommand('semanticus.showOutput')}>Show details</button>
+        </div>
+      ) : p.signIn === 'unfinished' ? (
+        <div className="sem-inline" data-testid="pick-signin-unfinished">
+          <span className="sem-text-body">{COPY.signInUnfinished}</span>
+          <button type="button" className={`${BTN_SM} sem-push`} data-testid="pick-ws-retry" onClick={p.onRetry}>Try again</button>
+          <button type="button" className={BTN_QUIET} data-testid="pick-signin-other" onClick={p.onOpenOther ?? p.onToggleOther}>Other ways to sign in</button>
+        </div>
+      ) : p.workspaces.kind === 'failed' ? (
         <div className="sem-inline">
           <Failure message={p.workspaces.message} testid="pick-ws-failed" />
           <button type="button" className={`${BTN_SM} sem-push`} data-testid="pick-ws-retry" onClick={p.onRetry}>Try again</button>
@@ -279,7 +300,12 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
         <>
           <div className="sem-card sem-card-flush sem-span-6" data-testid="pick-ws-list">
             <div className="sem-card-head"><h3 className="sem-card-title">Workspace</h3></div>
-            {p.workspaces.kind === 'loading' && <div className="sem-list-row sem-text-meta" aria-live="polite">{COPY.workspaceLooking}</div>}
+            {p.workspaces.kind === 'loading' && (p.signIn === 'waiting'
+              ? (<div className="sem-list-row sem-inline sem-text-meta" aria-live="polite" data-testid="pick-signin-waiting">
+                <span>{COPY.signInWaiting}</span>
+                <button type="button" className={`${BTN_QUIET} sem-push`} data-testid="pick-signin-cancel" onClick={p.onCancelSignIn}>Cancel</button>
+              </div>)
+              : <div className="sem-list-row sem-text-meta" aria-live="polite">{COPY.workspaceLooking}</div>)}
             {p.workspaces.kind === 'ready' && p.workspaces.items.length === 0 && (
               <div className="sem-list-row sem-text-body" data-testid="pick-ws-none">{COPY.workspaceNone}</div>)}
             {p.workspaces.kind === 'ready' && p.workspaces.items.map((w) => (
@@ -298,7 +324,7 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
       <div className="sem-inline">
         <label className="sem-field-label">{COPY.envLabel}
           <select data-testid="pick-env" className="sem-field" value={p.env} onChange={(e) => p.onEnv(e.target.value)}>
-            {WORKSPACE_ENV_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {WORKSPACE_ENV_OPTIONS.map((o) => <option key={o.value} value={o.value} style={OPTION_STYLE}>{o.label}</option>)}
           </select>
         </label>
         <button type="button" className={`${BTN_PRIMARY} sem-push`} data-testid="pick-connect" disabled={!canConnect} onClick={p.onConnect}>
@@ -307,15 +333,18 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
       {p.connectError && <Failure message={p.connectError} testid="pick-connect-error" />}
       </>)}
 
-      <div className="sem-inline">
-        <button type="button" className={BTN_QUIET} data-testid="pick-other-ways" aria-expanded={p.otherOpen} onClick={p.onToggleOther}>Other ways to sign in</button>
-      </div>
+      {/* The "Sign-in did not finish" row above already offers it: one button with this name on screen, not two (r2 UAT N14). */}
+      {p.signIn !== 'unfinished' && (
+        <div className="sem-inline">
+          <button type="button" className={BTN_QUIET} data-testid="pick-other-ways" aria-expanded={p.otherOpen} onClick={p.onToggleOther}>Other ways to sign in</button>
+        </div>
+      )}
       {p.otherOpen && (
         <div className="sem-card sem-stack" data-testid="pick-other">
           <div className="sem-inline">
             <label className="sem-field-label">Sign in with
               <select data-testid="pick-authmode" className="sem-field" value={p.authMode} onChange={(e) => p.onAuthMode(e.target.value)}>
-                {SIGN_IN_WAYS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {SIGN_IN_WAYS.map((o) => <option key={o.value} value={o.value} style={OPTION_STYLE}>{o.label}</option>)}
               </select>
             </label>
             {advanced && (
@@ -351,6 +380,11 @@ export function WorkspacePicker({ account, pressedFirst = false, initialAuthMode
   const [otherOpen, setOtherOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [engine, setEngine] = useState<EngineView>({ state: 'ok' });
+  const [signIn, setSignIn] = useState<'waiting' | 'unfinished' | null>(null);
+  const cancelSignIn = useRef<() => void>(() => {});
+  const engineWhy = useRef<string | undefined>(undefined);
+  const lastPressed = useRef(true);
   const wsGen = useRef(0);
   const modelGen = useRef(0);
   const live = useRef(true);
@@ -360,12 +394,47 @@ export function WorkspacePicker({ account, pressedFirst = false, initialAuthMode
   const loadWorkspaces = async (pressed = true) => {
     const mine = ++wsGen.current;
     ++modelGen.current;
-    setWorkspaces({ kind: 'loading' }); setWsId(null); setModels(null); setModelId(null); setConnectError(null);
+    lastPressed.current = pressed;
+    setWorkspaces({ kind: 'loading' }); setWsId(null); setModels(null); setModelId(null); setConnectError(null); setSignIn(null);
+    // A browser sign-in lives in a window of its own. When the person closes it nothing answers, so the wait is bounded and can be cancelled.
+    const bounded = pressed && authMode === 'interactive';
+    const showWaiting = bounded ? setTimeout(() => { if (mine === wsGen.current && live.current) setSignIn('waiting'); }, 1500) : undefined;
     try {
-      const list = (await (pressed ? rpcPressed : rpc)<FabricWorkspace[]>('listWorkspaces', authMode, tenantArg())) ?? [];
-      if (mine === wsGen.current && live.current) setWorkspaces({ kind: 'ready', items: sortWorkspaces(list) });
-    } catch (e) { if (mine === wsGen.current && live.current) setWorkspaces({ kind: 'failed', message: engineSentence(e) }); }
+      const call = (pressed ? rpcPressed : rpc)<FabricWorkspace[]>('listWorkspaces', authMode, tenantArg());
+      let list: FabricWorkspace[];
+      if (bounded) {
+        const wait = waitForSignIn(call);
+        cancelSignIn.current = wait.cancel;
+        const out = await wait.done;
+        if (mine !== wsGen.current || !live.current) return;
+        if (out.kind === 'unfinished') { setSignIn('unfinished'); return; }
+        list = out.value ?? [];
+      } else list = (await call) ?? [];
+      if (mine === wsGen.current && live.current) { setEngine({ state: 'ok' }); setSignIn(null); setWorkspaces({ kind: 'ready', items: sortWorkspaces(list) }); }
+    } catch (e) {
+      if (mine !== wsGen.current || !live.current) return;
+      // The host has already waited for an engine that was starting. Seeing its not-connected answer now means the engine is still
+      // coming up (wait, read again by ourselves) or could not start (say why, offer the way on). Never a bare "Engine not connected."
+      if (isEngineAway(e)) setEngine(engineWhy.current ? { state: 'failed', reason: engineWhy.current } : { state: 'starting' });
+      else setWorkspaces({ kind: 'failed', message: signInSentence(e) });
+    } finally { if (showWaiting) clearTimeout(showWaiting); }
   };
+  const cancelWorkspaces = () => cancelSignIn.current();
+  // The engine reports itself: up means read again at once; down with a reason means the wait is over and the reason is the answer.
+  const engineState = useRef<EngineView['state']>('ok');
+  engineState.current = engine.state;
+  useEffect(() => onEngineState((connected, reason) => {
+    engineWhy.current = connected ? undefined : reason;
+    if (connected && engineState.current !== 'ok') void loadWorkspaces(false);   // the engine coming back is not a press: it never opens a sign-in window
+    else if (!connected && reason && engineState.current === 'starting') setEngine({ state: 'failed', reason });
+  }), []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // A start that gives no word is asked again every few seconds, for a minute, then called a failure.
+  useEffect(() => {
+    if (engine.state !== 'starting') return;
+    let tries = 0;
+    const t = setInterval(() => { if (++tries > 20) { clearInterval(t); setEngine({ state: 'failed', reason: engineWhy.current }); } else void loadWorkspaces(false); }, 3000);
+    return () => clearInterval(t);
+  }, [engine.state]);   // eslint-disable-line react-hooks/exhaustive-deps
   // The list is read as the chosen sign-in. A change of sign-in way reads it again; a typed tenant waits for
   // "List workspaces", so a half-typed domain is never sent.
   // A page opened by a deep link reads with the saved sign-in only. One a person opened with a button (pressedFirst), or choosing another way to sign in, is the person's press.
@@ -398,10 +467,11 @@ export function WorkspacePicker({ account, pressedFirst = false, initialAuthMode
   };
 
   return (
-    <WorkspacePickerView account={account} workspaces={workspaces} wsId={wsId} models={models} modelId={modelId} env={env}
+    <WorkspacePickerView account={account} workspaces={workspaces} engine={engine} wsId={wsId} models={models} modelId={modelId} env={env}
       authMode={authMode} tenant={tenant} otherOpen={otherOpen} busy={busy} connectError={connectError}
       onBack={onBack} onRetry={() => void loadWorkspaces()} onPickWorkspace={(id) => void pickWorkspace(id)} onPickModel={setModelId}
       onEnv={setEnv} onAuthMode={(m) => { setAuthMode(m); if (!isAdvancedSignIn(m)) setTenant(''); }} onTenant={setTenant}
-      onToggleOther={() => setOtherOpen((v) => !v)} onPasteAddress={onPasteAddress} onConnect={() => void connect()} />
+      onToggleOther={() => setOtherOpen((v) => !v)} onPasteAddress={onPasteAddress} onConnect={() => void connect()}
+      signIn={signIn} onCancelSignIn={cancelWorkspaces} onOpenOther={() => setOtherOpen(true)} />
   );
 }

@@ -69,7 +69,7 @@ const tools = [...catalogSrc.matchAll(toolPattern)].map((m) => ({ id: m[1], labe
 // A parity test that parsed NOTHING would pass every time and police nothing, which is the failure mode
 // this pair of counts exists to stop. The declared count is read off the file itself, so adding a tool
 // does not need this number edited; a tool the regex cannot read does.
-const declared = (catalogSrc.match(/new AskRouteTool\(/g) || []).length;
+const declared = (catalogSrc.match(/new AskRouteTool\(\s*"/g) || []).length;   // a literal tool; the word groups build theirs from variables
 assert.ok(declared > 10, `AskRouteCatalog.cs should declare the router's tools; found ${declared}`);
 assert.equal(tools.length, declared,
   `every AskRouteTool must be readable here: ${declared} declared, ${tools.length} parsed. A tool whose `

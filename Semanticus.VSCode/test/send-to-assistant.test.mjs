@@ -117,7 +117,7 @@ assert.deepEqual(advice.originLink, { kind: 'finding', ref: 'INTEGER_FORMATTING|
 // Read-only and slot classes: your assistant says. Each carries its page as the link back.
 const explain = S.explainTask('Total Sales', '1,204', 'Explain why the measure "Total Sales" shows 1,204.');
 assert.equal(explain.doneWhen, 'assistant_says');
-assert.equal(explain.sourcePage, 'daxlab');
+assert.equal(explain.sourcePage, 'query');
 assert.equal(explain.words, 'Explain why Total Sales shows 1,204');
 const storage = S.storageTask({ ruleName: 'High cardinality column', ref: 'column:Sales/OrderId', table: 'Sales', column: 'OrderId' }, 'A column is flagged.');
 assert.equal(storage.doneWhen, 'assistant_says');

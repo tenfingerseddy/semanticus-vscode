@@ -20,7 +20,6 @@ These work while the Studio panel is the active editor — including when your c
 
 | Gesture | Action | Notes |
 |---|---|---|
-| `Ctrl+F` (`⌘F`) | Search & Replace across the model | Opens the Search tab and focuses the find box — names, descriptions, formats, and (opt-in) DAX & M |
 | `Ctrl+S` (`⌘S`) | Save the model to disk | The same save as the Model view’s save icon (TMDL beside the model). Studio and Properties forward this chord to the host, because a webview otherwise swallows it. |
 | `Ctrl+Z` (`⌘Z`) | Undo the last model change | When you are not typing in a box. Typing still undoes text. `Ctrl+Alt+Z` always undoes a model change. |
 | `Ctrl+Shift+P` (`⌘⇧P`) | Command palette | Forwarded out of Studio and Properties so the palette still opens with focus inside the webview. |
@@ -54,7 +53,7 @@ in-page handler checks the key target and stands down in any input, textarea, or
 
 | Gesture | Action | Notes |
 |---|---|---|
-| `Ctrl+F` (`⌘F`) | Find in Model | Quick-pick over every object — names, descriptions, DAX. Hands off to Search & Replace |
+| `Ctrl+F` (`⌘F`) | Find in Model | Quick-pick over every object: names, descriptions, DAX |
 | `Ctrl+S` (`⌘S`) | Save the model to disk | |
 | `Ctrl+Z` (`⌘Z`) | Undo the last model change | |
 | `Ctrl+Shift+Z` / `Ctrl+Y` | Redo a model change | |
@@ -80,7 +79,6 @@ Prefer different keys? These commands back the gestures — bind anything to the
 
 | Command | What it does |
 |---|---|
-| `semanticus.studioSearch` | Open Search & Replace and focus the find box |
 | `semanticus.studioNextTab` / `semanticus.studioPrevTab` | Cycle Studio tabs |
 | `semanticus.studioGoGroup` (arg: `build`/`inspect`/`improve`/`ship`) | Jump to a group |
 | `semanticus.studioGoTab` (arg: any tab id, e.g. `daxlab`, `lineage`, `deploy`) | Jump to any tab — including ones without a default key |

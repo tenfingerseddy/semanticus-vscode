@@ -5,8 +5,8 @@
 //      /trial/start and /trial/claim the way the contract (section A) says.
 //   2. The page's DECISIONS, executed: webview/src/propage-model.ts transpiled and run (which view, the ending line,
 //      the tally words, the first-week list).
-//   3. The WIRING, read off the source: the token goes through applyLicenseToken, the start is a page action and
-//      no assistant door reaches it, a locked button's press runs once Pro is on.
+//   3. The WIRING, read off the source: the token goes through applyLicenseToken, the start is one flow with two doors (the
+//      page button and the assistant's start_trial), a locked button's press runs once Pro is on.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
@@ -92,6 +92,53 @@ await test('claim: 410 is gone, cancel stops at once', async () => {
   w2.close();
 });
 
+// F-290: the claim survives a reload. The slot is a Map standing in for SecretStorage, so a second "window" sees what the first saved.
+function slotOver(map) {
+  return { get: async () => map.get('k'), set: async (v) => { map.set('k', v); }, delete: async () => { map.delete('k'); } };
+}
+await test('a pending claim saved before a reload is collected after it', async () => {
+  const w = await stubWorker({ start: () => ({ status: 200, body: { state: 'sent' } }), claim: [{ status: 425 }, { status: 200, body: { token: 'tok.sig' } }] });
+  const backing = new Map();
+  const nonce = T.newTrialNonce();
+  await T.savePendingClaim(slotOver(backing), { nonce, email: 'ana@contoso.com', startedAt: Date.now() });
+  // the reload: a new slot over the same storage, no memory of the first window
+  const out = await T.resumeTrialClaim(slotOver(backing), { base: w.base, gate: new CollectGate(), intervalMs: 5 });
+  assert.equal(out.kind, 'token');
+  assert.equal(out.token, 'tok.sig');
+  assert.equal(out.claim.email, 'ana@contoso.com');
+  assert.ok(w.seen.claim.every((n) => n === nonce), 'polled with the saved nonce');
+  assert.equal(backing.size, 0, 'the claim is cleared once collected');
+  w.close();
+});
+await test('a claim the worker says is gone is cleared; a cancel keeps it; nothing saved resumes nothing', async () => {
+  const w = await stubWorker({ start: () => ({ status: 200 }), claim: [{ status: 410 }] });
+  const backing = new Map();
+  await T.savePendingClaim(slotOver(backing), { nonce: T.newTrialNonce(), email: 'ana@contoso.com', startedAt: Date.now() });
+  assert.equal((await T.resumeTrialClaim(slotOver(backing), { base: w.base, gate: new CollectGate(), intervalMs: 5 })).kind, 'gone');
+  assert.equal(backing.size, 0);
+  w.close();
+  const w2 = await stubWorker({ start: () => ({ status: 200 }), claim: [{ status: 425 }] });
+  await T.savePendingClaim(slotOver(backing), { nonce: T.newTrialNonce(), email: 'ana@contoso.com', startedAt: Date.now() });
+  const gate = new CollectGate();
+  const run = T.resumeTrialClaim(slotOver(backing), { base: w2.base, gate, intervalMs: 60000 });
+  setTimeout(() => gate.cancel(), 30);
+  assert.equal((await run).kind, 'cancelled');
+  assert.equal(backing.size, 1, 'a cancelled wait keeps the claim: the link may still be pressed');
+  w2.close();
+  const empty = new Map();
+  assert.equal((await T.resumeTrialClaim(slotOver(empty), { base: 'http://127.0.0.1:1', gate: new CollectGate(), intervalMs: 5 })).kind, 'none');
+});
+await test('a claim older than the email link is dropped, and so is an unreadable one', async () => {
+  const backing = new Map();
+  const old = Date.now() - T.PENDING_CLAIM_LIFETIME_MS - 1000;
+  await T.savePendingClaim(slotOver(backing), { nonce: T.newTrialNonce(), email: 'ana@contoso.com', startedAt: old });
+  assert.equal(await T.loadPendingClaim(slotOver(backing)), undefined);
+  assert.equal(backing.size, 0);
+  backing.set('k', '{not json');
+  assert.equal(await T.loadPendingClaim(slotOver(backing)), undefined);
+  assert.equal(backing.size, 0);
+});
+
 await test('the address check still holds: a foreign host is refused before anything is sent', async () => {
   await assert.rejects(T.startTrial('https://example.com', 'ana@contoso.com', T.newTrialNonce()), /will not send/);
 });
@@ -146,9 +193,9 @@ await test('tally words, the span, and the first-week list ticks from true count
   assert.equal(M.trialSpan(Date.parse('2026-10-11T00:00:00Z') / 1000, Date.parse('2026-11-10T00:00:00Z') / 1000), '11 October to 10 November 2026');
   const start = Date.parse('2026-10-11T00:00:00Z') / 1000;
   const week = M.firstWeekOf({ startedAt: start, changesApplied: 38, steps: 1, jevChoices: 0, workflowsRun: 0 }, start + 86400);
-  assert.deepEqual(week.map((i) => i.done), [true, false, false]);
+  assert.deepEqual(week.map((i) => i.done), [true, false]);
   assert.equal(M.firstWeekOf({ startedAt: start, changesApplied: 38, steps: 1 }, start + 8 * 86400), null, 'gone after day 7');
-  assert.equal(M.firstWeekOf({ startedAt: start, changesApplied: 38, steps: 1, jevChoices: 2, workflowsRun: 1 }, start + 86400), null, 'gone when all three are done');
+  assert.equal(M.firstWeekOf({ startedAt: start, changesApplied: 38, steps: 1, jevChoices: 2, workflowsRun: 1 }, start + 86400), null, 'gone when both are done');
 });
 
 // ---- 3. the wiring, read off the source ---------------------------------------------------------------------
@@ -158,14 +205,27 @@ await test('the trial token goes through applyLicenseToken, the same path as a k
   assert.match(flow, /applyLicenseToken\(context, outcome\.token\.trim\(\), opened, canStore\)/);
   assert.match(flow, /reverifyAfterLicenseChange/);
 });
-await test('starting a trial is a page action only: no assistant door names it', async () => {
-  assert.match(ext, /case 'trialStart':/);
-  const mcpish = readFileSync(join(root, 'src', 'extension.ts'), 'utf8').match(/startTrial|trialStart/g) ?? [];
-  assert.ok(mcpish.length > 0);
-  for (const f of ['studio.ts', 'chat.ts']) {
-    const p = join(root, 'src', f);
-    if (existsSync(p)) assert.doesNotMatch(readFileSync(p, 'utf8'), /trialStart|startTrial/);
-  }
+await test('starting a trial has two doors and one flow: the page button and the assistant (F-293)', async () => {
+  assert.match(ext, /case 'trialStart':\s*await beginTrial\(context, msg\.email\);/, 'the page button runs beginTrial');
+  assert.match(ext, /onNotification\('host\/startTrial', .*beginTrial\(extCtx, v\?\.email\)/, 'the engine asks the window the same way');
+  const begin = ext.slice(ext.indexOf('async function beginTrial'), ext.indexOf('async function startTrialFlow'));
+  assert.match(begin, /trialEmailOf\(rawEmail\)/);
+  assert.match(begin, /startTrialFlow\(context, email\)/);
+  // the assistant's yes is checked in the engine, before the notification is ever sent: start_trial refuses without personSaidYes
+  const engine = readFileSync(join(root, '..', 'Semanticus.Engine', 'LocalEngine.HostRequests.cs'), 'utf8');
+  assert.ok(engine.indexOf('if (!personSaidYes)') < engine.indexOf('PublishHostStartTrial'), 'no yes, no email');
+});
+await test('the assistant sets personality, sounds and volume through the window, which also reports them (F-292)', async () => {
+  assert.match(ext, /onNotification\('host\/settings', .*applyHostPersonality/);
+  assert.match(ext, /sendRequest\('reportHostSettings', \.\.\.personalityReport\(\)\)/);
+  const ps = readFileSync(join(root, 'src', 'personalitySettings.ts'), 'utf8');
+  assert.match(ps, /export async function applyHostPersonality[\s\S]*writePersonalitySetting\(\{ key: 'personality'/, 'one write path for the page and the assistant');
+});
+await test('the pending claim is saved before the wait, cleared on cancel, and picked up when the engine connects (F-290)', async () => {
+  assert.match(flow, /savePendingClaim\(/, 'saved once the email is sent');
+  assert.ok(flow.indexOf('savePendingClaim(') < flow.indexOf('collectTrialToken('), 'saved before the wait starts');
+  assert.match(ext, /case 'trialCancel':[\s\S]{0,200}clearPendingClaim/, 'cancel forgets it');
+  assert.match(ext, /void resumePendingTrial\(/, 'resumed on start');
 });
 await test('a locked button press runs once Pro is on', async () => {
   const pro = readFileSync(join(root, 'webview', 'src', 'pro.tsx'), 'utf8');
@@ -173,7 +233,7 @@ await test('a locked button press runs once Pro is on', async () => {
   const plan = readFileSync(join(root, 'webview', 'src', 'plan.tsx'), 'utf8');
   assert.match(pro, /export function takePendingRun/);
   assert.match(page, /if \(tier !== 'pro'\) return;\s*const pending = takePendingRun\(\);/);
-  assert.match(plan, /upgradeToPro\(\{ label: 'Run the plan', tab: 'plan', run: onRun \}\)/);
+  assert.match(plan, /upgradeToPro\(\{ label: 'Run the plan', tab: 'plan', run: afterUnlock \?\? \(\(\) => undefined\) \}\)/, 'hero 25 H3: the press that asked for Pro is worked out after the unlock, never run');
 });
 await test('trial copy has no em dash and never says one click', async () => {
   for (const f of [join(root, 'src', 'proTrial.ts'), join(root, 'webview', 'src', 'trialline.tsx')]) {

@@ -18,13 +18,16 @@ export type LearnDeps = {
     forget(): void;
     /** The id of the session that is open right now. Undefined when no model is open. */
     currentSessionId(): string | undefined;
+    /** The name of the model open right now, for the tour's first line. */
+    currentModelName?(): string | undefined;
     postToStudio(message: unknown): Promise<void>;
     log(line: string): void;
 };
 
 export function createLearn(deps: LearnDeps): { start: (chapter: unknown) => Promise<void>; end: () => Promise<void>; modelChanged: (sessionId: string | undefined) => void } {
     // The model that was open before the FIRST chapter. A second chapter keeps it, so Leave always lands on the person's own model.
-    let session: { previous: unknown; hadPrevious: boolean; copy: string; demoSessionId: string } | undefined;
+    // `own`: the tour is about the person's own open model. Nothing was swapped, so Leave has nothing to put back.
+    let session: { previous: unknown; hadPrevious: boolean; copy: string; demoSessionId: string; own?: boolean } | undefined;
     // True while a chapter opens its demo copy: that open is the tour's own, so it must not end the tour.
     let starting = false;
 
@@ -32,6 +35,14 @@ export function createLearn(deps: LearnDeps): { start: (chapter: unknown) => Pro
         if (!isLearnChapter(chapter)) return;
         starting = true;
         try {
+            // A model is open: the tour is about that model. The demo is only for a person with nothing open, and it never
+            // closes anyone's work (a tour that swapped the model away lost the person's place and had no data to show).
+            const openNow = session?.own ? session.demoSessionId : (session ? undefined : deps.currentSessionId());
+            if (openNow && deps.currentSessionId() === openNow) {
+                session = { previous: undefined, hadPrevious: false, copy: '', demoSessionId: openNow, own: true };
+                await deps.postToStudio({ type: 'learnReady', chapter, modelName: deps.currentModelName?.() ?? '', sessionId: openNow, own: true });
+                return;
+            }
             const hadPrevious = session ? session.hadPrevious : deps.remembered() !== undefined;
             const previous = session ? session.previous : deps.remembered();
             const copy = makeScratchCopy(deps.assetsDir, deps.storageDir, chapter);
@@ -52,7 +63,7 @@ export function createLearn(deps: LearnDeps): { start: (chapter: unknown) => Pro
         try {
             // Reopening discards what is open (the demo copy's edits are scratch). That is only safe while the demo copy is what is open:
             // after the person opened another model, that model has their work in it, so the tour is just forgotten.
-            if (deps.currentSessionId() === left.demoSessionId) {
+            if (!left.own && deps.currentSessionId() === left.demoSessionId) {
                 if (left.hadPrevious) await deps.restore(left.previous);
                 else deps.forget();
             }

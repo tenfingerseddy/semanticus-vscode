@@ -40,6 +40,11 @@ const viewBox = drawn.svg.match(/viewBox="(-?\d+) (-?\d+) (\d+) (\d+)"/);
 assert.ok(viewBox && Number(viewBox[3]) > 0 && Number(viewBox[4]) > 0, 'the diagram must expose finite layout dimensions');
 assert.ok(Number(viewBox[4]) < 1400, `the stress graph must not become a multi-screen stack (height ${viewBox[4]})`);
 
+// UAT round 2 (N27): in a narrow preview the diagram drew at full size and its first card was cut at the edge, and in a wide one it shrank until the
+// names were unreadable. The picture now keeps at least 60% of its size (the names stay readable) and scrolls from its left edge; print shows it whole.
+assert.match(drawn.svg, /min-width:calc\(var\(--dgw\)\*0\.77px\)/, 'the diagram keeps the same readable floor as the Diagram tab (diagramfit FIRST_FIT_MIN_ZOOM): it scrolls instead of shrinking past 77%');
+assert.match(source, /@media print\{[^}]*[\s\S]*\.diagram \.dg\{min-width:0/, 'a printed page still shows the whole diagram');
+
 const dto = {
   header: { name: 'Stress model', compatibilityLevel: 1701, tableCount: graph.tables.length, measureCount: 0, columnCount: 0, relationshipCount: 2, liveConnected: false },
   graph, tables: [], measures: [], columns: [], roles: [], kpis: [], dataSources: [], expressions: [], storageAvailable: false,

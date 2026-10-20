@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { DaxModel } from './dax';
 import { describe, FilterPopover, type ColumnFilter, type FilterFamily } from './gridfilter';
+import { fieldRank, rankFields } from './query-model';
 import { familyByName, parseRef, type FieldKind, type PivotConfig, type WellField } from './daxwells';
 import { useSurfaceEscape } from './surface-escape';
 
@@ -138,16 +139,21 @@ function AddMenu({ well, model, config, alignRight, onPick, onClose }: {
   const f = find.trim().toLowerCase();
   const used = new Set([...config.values, ...config.rows, ...config.cols].map((x) => x.ref).concat(config.filters.map((x) => x.ref)));
   const options = useMemo(() => {
-    if (well.key === 'values') return model.measures.filter((m) => !f || m.name.toLowerCase().includes(f)).slice(0, 60)
+    // Exact name first, then starts-with, then the rest, then by description: the finder reads what the model says a field is, not only what
+    // it is called (UAT 17 Oct, F41), and Enter takes the first (18 Oct, N6).
+    if (well.key === 'values') return rankFields(f, model.measures).slice(0, 60)
       .map((m): WellField => ({ kind: 'measure', ref: `[${m.name}]`, name: m.name, table: m.table }));
-    return model.columns.filter((c) => !f || `${c.table} ${c.name}`.toLowerCase().includes(f)).slice(0, 60)
-      .map((c): WellField => ({ kind: 'column', ref: `'${c.table}'[${c.name}]`, name: c.name, table: c.table }));
+    // A column is found by its own name first, and by "Table name" words (Date year) after the names that match.
+    return model.columns.map((c, i) => ({ c, i, k: fieldRank(f, c.name, c.description) || (`${c.table} ${c.name}`.toLowerCase().includes(f) ? 1.5 : 0) }))
+      .filter((e) => e.k > 0).sort((a, b) => b.k - a.k || a.i - b.i).slice(0, 60)
+      .map(({ c }): WellField => ({ kind: 'column', ref: `'${c.table}'[${c.name}]`, name: c.name, table: c.table }));
   }, [well, model, f]);
   return (
     <div role="menu" aria-label={well.add} className="sem-card sem-stack absolute z-30 overflow-auto" data-testid="well-add-menu"
       style={{ top: '100%', ...(alignRight ? { right: 0 } : { left: 0 }), marginTop: 'var(--sem-space-1)', width: 'calc(var(--sem-row) * 10)', maxHeight: 'calc(var(--sem-row) * 12)' }}>
       <span className="sem-label">{well.add}</span>
-      <input autoFocus className={`sem-field ${meta}`} value={find} onChange={(e) => setFind(e.target.value)} placeholder={well.find} aria-label={well.find} />
+      <input autoFocus className={`sem-field ${meta}`} value={find} onChange={(e) => setFind(e.target.value)} placeholder={well.find} aria-label={well.find}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const top = options.find((o) => !used.has(o.ref)); if (top) onPick(top); } }} />
       {options.length === 0 && <span className={meta} style={muted} role="status">Nothing in this model matches "{find}".</span>}
       {options.map((o) => (
         <button key={o.ref} type="button" role="menuitem" disabled={used.has(o.ref)} className="sem-btn sem-btn-sm" style={{ justifyContent: 'flex-start', textAlign: 'left' }} onClick={() => onPick(o)}>

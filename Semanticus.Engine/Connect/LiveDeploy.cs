@@ -848,6 +848,35 @@ namespace Semanticus.Engine
             // deployed and nothing said so). Each answer-affecting; each now carried and counted.
             int sortBy = 0, hier = 0, rel = 0, ann = 0;
             var renames = new List<(TOM.NamedMetadataObject obj, string oldName, string newName, Func<string, TOM.NamedMetadataObject> findSibling, string id)>();
+            var doneRenames = new HashSet<TOM.NamedMetadataObject>();
+            var calendarSyncs = new List<(TOM.Table st, TOM.Table lt, string tid, string sourceTableRef)>();
+            // One rename, collision-safe: the target-name check is read-only (runs in dry-run too); only a non-colliding rename is counted
+            // and (on commit) applied. A collision is reported, never thrown. Run in order after the tables loop, or early for the one
+            // object whose old name a new object of this push takes (RunPendingRename).
+            void RunRename((TOM.NamedMetadataObject obj, string oldName, string newName, Func<string, TOM.NamedMetadataObject> findSibling, string id) r)
+            {
+                doneRenames.Add(r.obj);
+                var existing = r.findSibling(r.newName);
+                if (existing != null && !ReferenceEquals(existing, r.obj))
+                {
+                    conflicts.Add($"{r.id}: target name '{r.newName}' already exists on live. Rename skipped");
+                    return;
+                }
+                ren++; changes.Add($"rename {r.id} ({r.oldName} -> {r.newName})");
+                if (apply)
+                {
+                    try { r.obj.Name = r.newName; }
+                    catch (Exception ex) { conflicts.Add($"{r.id}: rename failed ({ex.Message})"); ren--; return; }
+                }
+                // A rename that actually stuck IS a real sync of that object — record the SOURCE-keyed ref (r.newName is
+                // the source name; the ref's kind/parent come from r.id) so a rename-only change reconciles as applied.
+                syncedRefs.Add(RenameSyncRef(r.id, r.newName));
+            }
+            void RunPendingRename(TOM.NamedMetadataObject obj)
+            {
+                foreach (var r in renames.ToList())
+                    if (ReferenceEquals(r.obj, obj) && !doneRenames.Contains(obj)) RunRename(r);
+            }
 
             // The compatibility level only ever goes UP, as the first change of the push (a newer feature, like a calendar, needs
             // it). levelRaisedFrom is the level the live model held before SyncAndApply raised it, so a real push still counts it.
@@ -1251,6 +1280,7 @@ namespace Semanticus.Engine
                         heldRefs.Add(measureRef);
                     }
                     ann += DeployOwnedAnnotations(sm.Annotations, lm.Annotations, apply, measureRef, changes, syncedRefs);
+                    if (sm.KPI != null && lm.KPI != null) ann += DeployOwnedAnnotations(sm.KPI.Annotations, lm.KPI.Annotations, apply, measureRef, changes, syncedRefs);
                     if (changes.Count > mChanges) syncedRefs.Add(measureRef);
                 }
 
@@ -1264,6 +1294,8 @@ namespace Semanticus.Engine
                     var lp = lt.Partitions.Find(sp.Name);
                     if (lp == null) { unmatched.Add(AlmRef.Child("partition", lt.Name, sp.Name) + " (new partition: not deployable here; add via TMDL/XMLA)"); continue; }
                     matchedParts.Add(lp);
+                    // Read the partition as it is NOW (before its script is written below): only a note-only difference is claimed by the note.
+                    ann += DeployNotesOnly(sp, lp, sp.Annotations, lp.Annotations, apply, AlmRef.Child("partition", st.Name, sp.Name), changes, syncedRefs);
                     var pid = AlmRef.Child("partition", lt.Name, lp.Name);
                     var (sKind, sScript) = PartitionScript(sp);
                     var (lKind, lScript) = PartitionScript(lp);
@@ -1388,6 +1420,9 @@ namespace Semanticus.Engine
                             if (apply) group.Precedence = st.CalculationGroup.Precedence;
                             calc++; changes.Add("precedence " + AlmRef.Top("table", lt.Name)); syncedRefs.Add(AlmRef.Top("table", st.Name));
                         }
+                        // The group has its own note collection (a waiver on a calculation item is written there too).
+                        if (st.CalculationGroup != null)
+                            ann += DeployOwnedAnnotations(st.CalculationGroup.Annotations, group.Annotations, apply, AlmRef.Top("table", st.Name), changes, syncedRefs);
                     }
                 }
 
@@ -1418,7 +1453,14 @@ namespace Semanticus.Engine
                         heldRefs.Add(AlmRef.Child("column", st.Name, scol.Name));
                         continue;
                     }
-                    if (ReferenceEquals(desired, lcol.SortByColumn)) continue;   // already bound to the same live column (identity, not name)
+                    if (ReferenceEquals(desired, lcol.SortByColumn))
+                    {
+                        // Already bound to the same live column (identity, not name). Nothing to write, but the item is reconciled: a sort-by
+                        // key renamed in this push reads as a changed sort-by in the diff, and without this ref it was reported as not sent.
+                        // A part of this column that was held back still withholds the ref at the end (heldRefs).
+                        if (desired != null) syncedRefs.Add(AlmRef.Child("column", st.Name, scol.Name));
+                        continue;
+                    }
                     if (apply) lcol.SortByColumn = desired;
                     sortBy++; changes.Add("sortBy " + AlmRef.Child("column", lt.Name, lcol.Name)); syncedRefs.Add(AlmRef.Child("column", st.Name, scol.Name));
                 }
@@ -1429,9 +1471,17 @@ namespace Semanticus.Engine
                 // and a LIVE-ONLY level (e.g. an authored "Day" the session doesn't carry) is PRESERVED and reported
                 // (absence never deletes, one level down); a live-only hierarchy is likewise reported, never deleted.
                 var matchedHiers = new HashSet<TOM.Hierarchy>();
+                var liveHierByTag = ByTag(lt.Hierarchies.Cast<TOM.Hierarchy>(), h => h.LineageTag);
+                // A live hierarchy that a source hierarchy already matches by lineage tag is taken: a different source hierarchy that now
+                // carries its old name (rename Geography, then make a new Geography) is a NEW one, never a second claim on the same live object.
+                var takenByTag = new HashSet<TOM.Hierarchy>(
+                    st.Hierarchies.Cast<TOM.Hierarchy>().Select(h => !string.IsNullOrEmpty(h.LineageTag) && liveHierByTag.TryGetValue(h.LineageTag, out var tg) ? tg : null).Where(x => x != null));
                 foreach (var sh in st.Hierarchies)
                 {
-                    var lh = lt.Hierarchies.Find(sh.Name);
+                    // A renamed hierarchy keeps its lineage tag: it is the same hierarchy, renamed in place below with the other renames.
+                    // Without a tag match the name decides, as before (never onto a live hierarchy another source hierarchy matched by tag).
+                    var lh = !string.IsNullOrEmpty(sh.LineageTag) && liveHierByTag.TryGetValue(sh.LineageTag, out var tagged) ? tagged
+                        : lt.Hierarchies.Find(sh.Name) is { } named && !takenByTag.Contains(named) ? named : null;
                     var href = AlmRef.Child("hierarchy", st.Name, sh.Name);
                     if (lh == null)
                     {
@@ -1445,7 +1495,20 @@ namespace Semanticus.Engine
                         // new hierarchy AND its levels ride along (MAJOR 4).
                         var nh = new TOM.Hierarchy { Name = sh.Name, Description = sh.Description, IsHidden = sh.IsHidden, DisplayFolder = sh.DisplayFolder };
                         if (SupportsLineage(live) && !string.IsNullOrEmpty(sh.LineageTag)) nh.LineageTag = sh.LineageTag;
-                        if (apply) { lt.Hierarchies.Add(nh); Mark(nh); }   // attach to the table FIRST so a Level.Column can bind to the table's live columns
+                        if (apply)
+                        {
+                            // Attach to the table FIRST so a Level.Column can bind to the table's live columns. A refusal here is one row's
+                            // problem, said in plain words; every other ticked change still goes.
+                            // The name may still be held by the live hierarchy this push renames (the new one takes its old name): rename it first.
+                            if (lt.Hierarchies.Find(sh.Name) is { } holder) RunPendingRename(holder);
+                            try { lt.Hierarchies.Add(nh); }
+                            catch (Exception ex) when (ex is ArgumentException || ex is InvalidOperationException)
+                            {
+                                unmatched.Add(href + " (Power BI already has a hierarchy that clashes with this one, so it stays in your copy)");
+                                heldRefs.Add(href); continue;
+                            }
+                            Mark(nh);
+                        }
                         foreach (var sl in sh.Levels.Cast<TOM.Level>().OrderBy(l => l.Ordinal))
                         {
                             var nl = new TOM.Level { Name = sl.Name, Ordinal = sl.Ordinal };
@@ -1464,6 +1527,29 @@ namespace Semanticus.Engine
                         continue;
                     }
                     matchedHiers.Add(lh);
+                    // The hierarchy's own text and flags go like a measure's (Kane, 17 Oct: the Plan wrote hierarchy descriptions and the
+                    // press refused all three). A level's description goes the same way, a cleared one included. Claimed whenever one of them lands, so a selected hierarchy reconciles as pushed.
+                    int hChanges = changes.Count;
+                    var capturedHierTable = lt;
+                    PlanRename(sh.Name, lh, n => capturedHierTable.Hierarchies.Find(n), AlmRef.Child("hierarchy", lt.Name, lh.Name), renames);
+                    SetStr(sh.Description, () => lh.Description, v => lh.Description = v, apply, ref desc, "description " + href, changes);
+                    SetBool(sh.IsHidden, () => lh.IsHidden, v => lh.IsHidden = v, apply, ref vis, "visibility " + href, changes);
+                    SetStr(sh.DisplayFolder, () => lh.DisplayFolder, v => lh.DisplayFolder = v, apply, ref fold, "folder " + href, changes);
+                    if (sh.HideMembers != lh.HideMembers) { if (apply) lh.HideMembers = sh.HideMembers; metadata++; changes.Add("hideMembers " + href); }
+                    foreach (var sl in sh.Levels.Cast<TOM.Level>())
+                    {
+                        // A cleared level text clears on the service like a cleared hierarchy text does.
+                        var ll = MatchLevel(lh, sl);
+                        if (ll != null)
+                            SetStr(sl.Description, () => ll.Description, v => ll.Description = v, apply, ref desc, "description " + LevelRef(st.Name, sh.Name, sl.Name), changes);
+                    }
+                    if (changes.Count > hChanges) syncedRefs.Add(href);
+                    // What neither the flags above nor the level pass can carry is named, never claimed (the guard a measure has).
+                    if (!JsonSemanticEqual(ModelCompare.LiveHierarchyState(sh).Residual, ModelCompare.LiveHierarchyState(lh).Residual))
+                    {
+                        unmatched.Add(href + " (carries authored hierarchy metadata this live push cannot sync; deploy via TMDL/XMLA)");
+                        heldRefs.Add(href);
+                    }
                     // MAJOR 4: an existing hierarchy's + its matched levels' owned annotations (BPA ignore rules) must
                     // deploy even when the level structure is unchanged — before the equal-fast-path so drift isn't hidden.
                     ann += DeployHierarchyOwnedAnnotations(sh, lh, apply, href, lt.Name, changes, syncedRefs);
@@ -1487,16 +1573,10 @@ namespace Semanticus.Engine
                     liveOnlyChildren.Add((lt, "hierarchy", lh.Name));   // ref built post-rename (follows the table's final name)
 
                 // CALENDARS (the Plan's calendar step): copied whole, bound to the live table's own columns, after every column
-                // and hierarchy above exists. Dry-run counts it; only a real push copies (a column made in this same push does not exist in a dry run).
-                if (!ModelCompare.CalendarsEqual(st, lt))
-                {
-                    try
-                    {
-                        if (apply) ModelCompare.CopyCalendars(st, lt);
-                        metadata++; changes.Add("calendars " + tid); syncedRefs.Add(sourceTableRef);
-                    }
-                    catch (Exception ex) { unmatched.Add(sourceTableRef + " (" + ex.Message + ")"); heldRefs.Add(sourceTableRef); }
-                }
+                // and hierarchy above exists AND after the renames loop below: a calendar names its columns, and a column renamed in
+                // this same push has no new name on live until then (UAT 18 Oct: Date could not go until a second press).
+                // Dry-run counts it; only a real push copies (a column made in this same push does not exist in a dry run).
+                if (!ModelCompare.CalendarsEqual(st, lt)) calendarSyncs.Add((st, lt, tid, sourceTableRef));
 
                 // Live-only children on this matched table — reported, left untouched. Deferred so the ref follows the
                 // table's FINAL name (the table may be renamed in the renames loop below).
@@ -1600,9 +1680,15 @@ namespace Semanticus.Engine
             foreach (var sCult in src.Cultures)
             {
                 var slm = sCult.LinguisticMetadata;
-                if (slm == null || string.IsNullOrEmpty(slm.Content)) continue;
+                if (slm == null || string.IsNullOrEmpty(slm.Content))
+                {
+                    var plain = live.Cultures.Find(sCult.Name);
+                    if (plain != null) ann += DeployNotesOnly(sCult, plain, sCult.Annotations, plain.Annotations, apply, AlmRef.Top("culture", sCult.Name), changes, syncedRefs);
+                    continue;
+                }
                 var lc = live.Cultures.Find(sCult.Name);
                 if (lc == null) { unmatched.Add(AlmRef.Top("culture", sCult.Name)); continue; }
+                ann += DeployNotesOnly(sCult, lc, sCult.Annotations, lc.Annotations, apply, AlmRef.Top("culture", sCult.Name), changes, syncedRefs);
                 if (!JsonSemanticEqual(lc.LinguisticMetadata?.Content, slm.Content))
                 {
                     if (apply)
@@ -1616,9 +1702,18 @@ namespace Semanticus.Engine
                 }
             }
 
+            // Perspectives are not written by this push (a new one, or a changed member list, is reported as not carried). A note on one that is
+            // already there still goes, and claims the perspective only when the note is the only difference.
+            foreach (var sp in src.Perspectives.Cast<TOM.Perspective>())
+            {
+                var lp = live.Perspectives.Find(sp.Name);
+                if (lp != null) ann += DeployNotesOnly(sp, lp, sp.Annotations, lp.Annotations, apply, AlmRef.Top("perspective", sp.Name), changes, syncedRefs);
+            }
+
             // Roles: create or update (permission, members, RLS filters, column permissions). Matched by NAME (a role has no
-            // lineage tag). A live-only role is left alone here; removing one is the explicit delete channel's job.
-            roleCount += SyncRoles(src, live, apply, changes, unmatched, syncedRefs, Mark);
+            // lineage tag). A live-only role is left alone here; removing one is the explicit delete channel's job. The write
+            // itself runs AFTER the renames loop below: a column permission names its column, and a column renamed in this same
+            // push has no new name on live yet (UAT 18 Oct: the role stayed on the old column until a second press).
             // A live-only role is listed, so a renamed role's old name can be ticked for removal (hero17 P6). Nothing is removed unless ticked.
             foreach (var lrole in live.Roles.Cast<TOM.ModelRole>().Where(r => src.Roles.Find(r.Name) == null))
                 liveOnly.Add(AlmRef.Top("role", lrole.Name));
@@ -1657,6 +1752,7 @@ namespace Semanticus.Engine
                 SetStr(se.Description, () => le.Description, v => le.Description = v, apply, ref desc, "description " + nid, changes);
                 SetExpr(se.Expression, () => le.Expression, v => le.Expression = v, apply, ref nexpr, "expression " + nid, changes);
                 if (changes.Count > eChanges) syncedRefs.Add(AlmRef.Top("expression", se.Name));
+                ann += DeployNotesOnly(se, le, se.Annotations, le.Annotations, apply, AlmRef.Top("expression", se.Name), changes, syncedRefs);
             }
             // Live-only expressions — MATCH-SET based (a tag-matched-and-renamed live expression is NOT live-only). The
             // old name-based sweep double-reported a just-renamed expression as live-only. (Tables/columns/measures/
@@ -1666,24 +1762,20 @@ namespace Semanticus.Engine
 
             // Renames: collision-safe. The target-name check is read-only (runs in dry-run too); only a non-colliding
             // rename is counted as a change and (on commit) applied. A collision is reported, never thrown.
-            foreach (var r in renames)
+            foreach (var r in renames.ToList())
+                if (!doneRenames.Contains(r.obj)) RunRename(r);
+
+            foreach (var (st, lt, tid, sourceTableRef) in calendarSyncs)
             {
-                var existing = r.findSibling(r.newName);
-                if (existing != null && !ReferenceEquals(existing, r.obj))
+                try
                 {
-                    conflicts.Add($"{r.id}: target name '{r.newName}' already exists on live. Rename skipped");
-                    continue;
+                    if (apply) ModelCompare.CopyCalendars(st, lt);
+                    metadata++; changes.Add("calendars " + tid); syncedRefs.Add(sourceTableRef);
                 }
-                ren++; changes.Add($"rename {r.id} ({r.oldName} -> {r.newName})");
-                if (apply)
-                {
-                    try { r.obj.Name = r.newName; }
-                    catch (Exception ex) { conflicts.Add($"{r.id}: rename failed ({ex.Message})"); ren--; continue; }
-                }
-                // A rename that actually stuck IS a real sync of that object — record the SOURCE-keyed ref (r.newName is
-                // the source name; the ref's kind/parent come from r.id) so a rename-only change reconciles as applied.
-                syncedRefs.Add(RenameSyncRef(r.id, r.newName));
+                catch (Exception ex) { unmatched.Add(sourceTableRef + " (" + ex.Message + ")"); heldRefs.Add(sourceTableRef); }
             }
+
+            roleCount += SyncRoles(src, live, apply, changes, unmatched, syncedRefs, Mark, ref ann);
 
             // Build the live-only CHILD refs NOW — after the renames loop — so each names its table's FINAL name: the new
             // name if the rename applied, or the OLD name if it collided/was skipped (or on a dry-run). The ref follows
@@ -1874,7 +1966,7 @@ namespace Semanticus.Engine
 
         // Returns the number of roles created or changed. A role whose table (or column) is absent from live is named in
         // `unmatched` and left unwritten, so a half-built role never goes out as a full one.
-        private static int SyncRoles(TOM.Model src, TOM.Model live, bool apply, ChangeLog changes, List<string> unmatched, HashSet<string> syncedRefs, Action<TOM.MetadataObject> mark)
+        private static int SyncRoles(TOM.Model src, TOM.Model live, bool apply, ChangeLog changes, List<string> unmatched, HashSet<string> syncedRefs, Action<TOM.MetadataObject> mark, ref int ann)
         {
             var count = 0;
             foreach (var sr in src.Roles.Cast<TOM.ModelRole>())
@@ -1883,7 +1975,8 @@ namespace Semanticus.Engine
                 var lr = live.Roles.Find(sr.Name);
                 var before = lr == null ? null : RoleSignature(lr);
                 var after = RoleSignature(sr);
-                if (lr != null && before == after) continue;
+                // Nothing the role says changed, but a note written onto it (an accepted warning) still goes, or the page reads the role as changed after the press (UAT recheck 2, D9).
+                if (lr != null && before == after) { ann += DeployNotesOnly(sr, lr, sr.Annotations, lr.Annotations, apply, refId, changes, syncedRefs); continue; }
 
                 // Every table the role filters must exist live (or be created by this same deploy: the tables pass ran first).
                 var missing = sr.TablePermissions.Cast<TOM.TablePermission>()
@@ -1926,6 +2019,7 @@ namespace Semanticus.Engine
                     }
                     mark(lr);
                 }
+                if (lr != null) ann += DeployOwnedAnnotations(sr.Annotations, lr.Annotations, apply, refId, changes, syncedRefs);   // a real change carries its notes too
                 count++;
                 NoteDelta(changes, (before == null ? "add " : "update ") + "role:" + sr.Name, before, after);
                 syncedRefs.Add(refId);
@@ -2097,6 +2191,17 @@ namespace Semanticus.Engine
             return n;
         }
 
+        // Owned notes on an object the push does not otherwise write (an unchanged role, a perspective, a culture, a partition, an expression):
+        // the notes go, and the ref is claimed ONLY when nothing but notes differs. A real change the push cannot carry on the same object
+        // then still reads as not carried, never as published. A foreign note is never read, written or deleted (DeployOwnedAnnotations).
+        private static int DeployNotesOnly(TOM.MetadataObject src, TOM.MetadataObject live, dynamic srcNotes, dynamic liveNotes, bool apply, string objRef, List<string> changes, HashSet<string> synced)
+        {
+            var carried = new HashSet<string>(StringComparer.Ordinal);
+            int n = DeployOwnedAnnotations(srcNotes, liveNotes, apply, objRef, changes, carried);
+            if (n > 0 && JsonSemanticEqual(ModelCompare.SerWithoutAnnotations(src), ModelCompare.SerWithoutAnnotations(live))) synced?.Add(objRef);
+            return n;
+        }
+
         // Deploy the owned annotations of a MATCHED hierarchy and its matched levels (paired by name to the live
         // hierarchy). A structural creation (new hierarchy / new level) deploys its own annotations where it is built;
         // this covers the drift case (an existing hierarchy/level whose BPA-ignore rules changed) so those never vanish
@@ -2151,6 +2256,17 @@ namespace Semanticus.Engine
             missing = null; return true;
         }
 
+        // The live level a session level stands for: its lineage tag first (a renamed level keeps it), then its name.
+        private static TOM.Level MatchLevel(TOM.Hierarchy lh, TOM.Level sl)
+        {
+            if (!string.IsNullOrEmpty(sl.LineageTag))
+            {
+                var byTag = lh.Levels.Cast<TOM.Level>().FirstOrDefault(l => l.LineageTag == sl.LineageTag);
+                if (byTag != null) return byTag;
+            }
+            return lh.Levels.Find(sl.Name);
+        }
+
         // Are two hierarchies' level sets identical (ordinal, name, and — by IDENTITY, not name — bound column)? A
         // fast-path so an unchanged hierarchy skips reconciliation; any difference routes to the level-by-level reconcile.
         // The column is compared against the IDENTITY-RESOLVED live column (never its name): a live level bound to a same-
@@ -2184,10 +2300,11 @@ namespace Semanticus.Engine
             refusal = null;
             preservedLiveOnly = new List<string>();
             var srcLevels = sh.Levels.Cast<TOM.Level>().OrderBy(l => l.Ordinal).ToList();
-            var srcNames = new HashSet<string>(srcLevels.Select(l => l.Name), StringComparer.Ordinal);
-            var liveByName = new Dictionary<string, TOM.Level>(StringComparer.Ordinal);
-            foreach (var ll in lh.Levels.Cast<TOM.Level>()) if (!liveByName.ContainsKey(ll.Name)) liveByName[ll.Name] = ll;
-            var liveOnly = lh.Levels.Cast<TOM.Level>().Where(l => !srcNames.Contains(l.Name)).ToList();
+            // Each session level finds its live level by lineage tag first, then name, so a renamed level is renamed in place.
+            var pairs = new Dictionary<TOM.Level, TOM.Level>();
+            var taken = new HashSet<TOM.Level>();
+            foreach (var sl in srcLevels) { var ll = MatchLevel(lh, sl); if (ll != null && taken.Add(ll)) pairs[sl] = ll; }
+            var liveOnly = lh.Levels.Cast<TOM.Level>().Where(l => !taken.Contains(l)).ToList();
             preservedLiveOnly.AddRange(liveOnly.Select(l => l.Name));
 
             // Collision guard: a session target ordinal equal to a preserved live-only level's current ordinal.
@@ -2201,10 +2318,15 @@ namespace Semanticus.Engine
             }
 
             // Does anything actually change? (matched-level ordinal/column drift, or a session-new level)
-            bool changed = srcLevels.Any(sl => !liveByName.TryGetValue(sl.Name, out var ll)
+            bool changed = srcLevels.Any(sl => !pairs.TryGetValue(sl, out var ll)
+                || ll.Name != sl.Name
                 || ll.Ordinal != sl.Ordinal
                 || !ReferenceEquals(ll.Column, ResolveLiveColumnByIdentity(live, sl.Column, identityStrict, projected)));
             if (!changed) return false;
+
+            // A new name a preserved live-only level already uses cannot be taken: say so for the hierarchy, never throw.
+            var clash = srcLevels.FirstOrDefault(sl => pairs.TryGetValue(sl, out var ll) && ll.Name != sl.Name && liveOnly.Any(o => o.Name == sl.Name));
+            if (clash != null) { refusal = $"level '{clash.Name}' would take the name of a level the live copy keeps"; return false; }
 
             if (apply)
             {
@@ -2214,9 +2336,13 @@ namespace Semanticus.Engine
                 var origLiveOnly = liveOnly.ToDictionary(l => l, l => l.Ordinal);
                 int temp = lh.Levels.Cast<TOM.Level>().Select(l => l.Ordinal).Concat(srcLevels.Select(s => s.Ordinal)).DefaultIfEmpty(0).Max() + 1;
                 foreach (var l in lh.Levels.Cast<TOM.Level>().ToList()) l.Ordinal = temp++;
+                // Renames in two steps (a swap of two names never meets itself half way).
+                var renamed = srcLevels.Where(sl => pairs.TryGetValue(sl, out var ll) && ll.Name != sl.Name).ToList();
+                foreach (var sl in renamed) pairs[sl].Name = "~" + Guid.NewGuid().ToString("N");
+                foreach (var sl in renamed) pairs[sl].Name = sl.Name;
                 foreach (var sl in srcLevels)
                 {
-                    if (liveByName.TryGetValue(sl.Name, out var ll))
+                    if (pairs.TryGetValue(sl, out var ll))
                     {
                         ll.Ordinal = sl.Ordinal;
                         ll.Column = ResolveLiveColumnByIdentity(live, sl.Column, identityStrict, projected);   // rebind; keep description/annotations/lineage
@@ -2235,7 +2361,7 @@ namespace Semanticus.Engine
             // while its ignore rules vanish (MAJOR 4). Deployed against the real live level under apply, a detached one
             // under dry-run so the count matches (dry-run parity). Matched-level + hierarchy-object annotations are
             // deployed by the caller (DeployHierarchyOwnedAnnotations) before the equal-fast-path.
-            foreach (var sl in srcLevels.Where(l => !liveByName.ContainsKey(l.Name)))
+            foreach (var sl in srcLevels.Where(l => !pairs.ContainsKey(l)))
             {
                 var target = apply ? lh.Levels.Find(sl.Name) : new TOM.Level();
                 ann += DeployOwnedAnnotations(sl.Annotations, target.Annotations, apply, LevelRef(table, sh.Name, sl.Name), changes, synced);

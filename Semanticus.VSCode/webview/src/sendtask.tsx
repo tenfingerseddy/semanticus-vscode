@@ -115,9 +115,9 @@ export function docsTask(objRef: string, objName: string, section: string, brief
     doneWhen: 'has_words', slot: `doc:${sectionKey}|${objRef}` };
 }
 
-/** Explain this value, from Queries. The answer lives in the assistant's chat. */
+/** Explain this value, from Query. The answer lives in the assistant's chat. */
 export function explainTask(measure: string, value: string, brief: string): PlanTaskRequest {
-  return pageTask('daxlab', `Explain why ${measure} shows ${value || 'this value'}`, brief);
+  return pageTask('query', `Explain why ${measure} shows ${value || 'this value'}`, brief);
 }
 
 /** A pending change that needs words. Semanticus checks that the change-plan slot has a value. */
@@ -316,7 +316,7 @@ export function GiveToAssistant({ sendKey, build, size = 'sm', primary, disabled
       {taskId
         ? <button type="button" className={btn + ' sem-btn-quiet'} title={ON_PLAN_TITLE} onClick={() => openPlan(taskId)} data-send-state="on-plan">{ON_PLAN_LABEL}</button>
         : <button type="button" className={btn + (primary ? ' sem-btn-primary' : '')} disabled={disabled || giveDisabled || busy}
-            title={(disabled || giveDisabled) && disabledTitle ? disabledTitle : GIVE_TITLE} onClick={() => void give()} data-send-state="give">
+            title={(disabled || giveDisabled) && disabledTitle ? disabledTitle : GIVE_TITLE} onClick={() => void give()} data-send-state="give" data-keeps-wheel>
             {busy ? 'Adding...' : (label ?? GIVE_LABEL)}
           </button>}
       {!bare && <button type="button" className={btn} disabled={disabled} title={disabled && disabledTitle ? disabledTitle : COPY_TITLE}

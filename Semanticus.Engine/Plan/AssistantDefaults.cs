@@ -58,7 +58,7 @@ namespace Semanticus.Engine
                             +" If no table holds a date column, say that on this row in one sentence. That is the one case to ask the person about.");
                 case "ship/unsaved":
                     return ("the changes are saved and the person can still go back.",
-                            "save to the same file when it is in git or you made a backup first. Otherwise save a copy next to it and say so. Never write over the person's only copy without a way back.");
+                            "save with save_model and no path: it writes the model's own file (a model published from a service, or never saved, gets a file of its own and the result names the path). Do not save a copy beside it unless the person asks for one. Tell the person the path.");
                 case "proposal/duplicate-measures":
                     return ("each set of duplicates is one measure and nothing points at the ones that went.",
                             "keep the measure that is used. Run check_reports first so a chosen report counts, and read get_lineage for the model's own use. Remove a duplicate with remove_safe_objects only when nothing in the model and no report uses it. If a report or another measure uses a duplicate, hide it (edit_objects, hidden) and write on the row why. If none is used, keep the one with the clearest name." + undo);

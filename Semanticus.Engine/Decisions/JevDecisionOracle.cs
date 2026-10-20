@@ -748,6 +748,17 @@ namespace Semanticus.Engine.Decisions
             ["model_paused"] = 503,
         };
 
+        /// <summary>The words a relay uses to refuse a request as too big or as asking too many questions (413, free, nothing forwarded;
+        /// tools/relay/templates.mjs and worker.mjs). A relay older than the client that batches across tables refuses its requests this way,
+        /// and the Plan then asks a table at a time (LocalEngine.JevFamilies.cs). The relay's drift test pins these three sentences.</summary>
+        internal static readonly string[] TooBigSentences =
+        {
+            "That request asks too much at once.", "That model detail is too big to send.", "That request is too big to send.",
+        };
+
+        internal static bool IsTooBigRefusal(string reason) =>
+            reason != null && TooBigSentences.Any(s => string.Equals(reason, s, StringComparison.Ordinal));
+
         /// <summary>The relay's "too many in flight for this licence": busy for a moment, so the ask waits its turn rather than failing.</summary>
         internal static bool IsCrowdedRefusal(HttpStatusCode status, string code) =>
             (int)status == 429 && string.Equals(code, "too_many_in_flight", StringComparison.Ordinal);

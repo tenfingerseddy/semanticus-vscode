@@ -232,11 +232,12 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
       {hasPlan && (
         <div className="flex items-center gap-1">
           <Chip active={filter === 'all'} onClick={() => setFilter('all')}>All {s?.total ?? 0}</Chip>
-          <Chip active={filter === 'deterministic'} onClick={() => setFilter('deterministic')}>Automatic {(s?.deterministic ?? 0) + (s?.bpa ?? 0)}</Chip>
-          <Chip active={filter === 'ai'} onClick={() => setFilter('ai')}>Assistant {s?.ai ?? 0}</Chip>
-          <Chip active={filter === 'jev'} onClick={() => setFilter('jev')}>Jev {s?.jev ?? 0}</Chip>
-          <Chip active={filter === 'rename'} onClick={() => setFilter('rename')}>Renames {s?.renames ?? 0}</Chip>
-          <Chip active={filter === 'needs_content'} onClick={() => setFilter('needs_content')}>Needs content {s?.needsContent ?? 0}</Chip>
+          {/* A chip with nothing behind it is noise: it shows only while it has rows or is the filter in force (UAT round 2, N24). */}
+          {(s?.deterministic ?? 0) + (s?.bpa ?? 0) > 0 || filter === 'deterministic' ? <Chip active={filter === 'deterministic'} onClick={() => setFilter('deterministic')}>Automatic {(s?.deterministic ?? 0) + (s?.bpa ?? 0)}</Chip> : null}
+          {(s?.ai ?? 0) > 0 || filter === 'ai' ? <Chip active={filter === 'ai'} onClick={() => setFilter('ai')}>Assistant {s?.ai ?? 0}</Chip> : null}
+          {(s?.jev ?? 0) > 0 || filter === 'jev' ? <Chip active={filter === 'jev'} onClick={() => setFilter('jev')}>Jev {s?.jev ?? 0}</Chip> : null}
+          {(s?.renames ?? 0) > 0 || filter === 'rename' ? <Chip active={filter === 'rename'} onClick={() => setFilter('rename')}>Renames {s?.renames ?? 0}</Chip> : null}
+          {(s?.needsContent ?? 0) > 0 || filter === 'needs_content' ? <Chip active={filter === 'needs_content'} onClick={() => setFilter('needs_content')}>Needs content {s?.needsContent ?? 0}</Chip> : null}
         </div>
       )}
 
@@ -321,10 +322,10 @@ export function Row({ it, draft, onDraft, onToggle, onSave, onReject, onGive, on
 
         {/* before → after diff */}
         <div className="mt-1 text-(length:--sem-text-label) flex items-start gap-2 flex-wrap" style={{ fontFamily: isDax ? 'var(--vscode-editor-font-family, monospace)' : undefined }}>
-          {it.before != null && <span className="px-1 rounded" style={{ background: 'var(--sem-wash-bad)', color: 'var(--sem-fg)', textDecoration: it.after != null ? 'line-through' : undefined }}>{trunc(shown(it.before))}</span>}
+          {it.before != null && !(it.after == null && it.before === '(none)') && <span className="px-1 rounded" style={{ background: 'var(--sem-wash-bad)', color: 'var(--sem-fg)', textDecoration: it.after != null ? 'line-through' : undefined }}>{trunc(shown(it.before))}</span>}
           {it.after != null
             ? <><span style={{ color: 'var(--sem-muted)' }}>→</span><span className="px-1 rounded" style={{ background: 'var(--sem-wash-good)', color: 'var(--sem-fg)' }}>{trunc(shown(it.after))}</span></>
-            : <span>→ (awaiting authored value)</span>}
+            : <span style={{ color: 'var(--sem-muted)' }}>{it.before != null && it.before !== '(none)' ? '→ ' : ''}new value to come</span>}
         </div>
 
         {it.suggestion && it.checkText && <div className="text-(length:--sem-text-label) mt-1 xe-dot xe-dot-warn" data-testid={`pending-suggestion-note-${it.id}`}>{it.checkText}</div>}

@@ -253,14 +253,14 @@ namespace Semanticus.Tests
             Assert.NotEqual("spec", PlanTargets.JumpFor(ask)?.Tool);
         }
 
-        /// <summary>The same asks found their page on the lane's base (dc8d3bd6, measured): Published, Queries, History,
+        /// <summary>The same asks found their page on the lane's base (dc8d3bd6, measured): Published, Query (then Queries), History,
         /// Model quality, Diagram and Advanced modelling. At 33942de4 five go to the Model Spec and three find no place.</summary>
         [Theory]
         [InlineData("publish the new model", "deploy")]
         [InlineData("publish my new model from the sql warehouse", "deploy")]
         [InlineData("undo my last change to the new model", "history")]
         [InlineData("who changed the new model from sql server yesterday?", "history")]
-        [InlineData("create a measure in the new model from the sql warehouse", "daxlab")]
+        [InlineData("create a measure in the new model from the sql warehouse", "query")]
         [InlineData("run the best practice check on my new model", "bpa")]
         [InlineData("check the relationships in my new model from the sql warehouse", "diagram")]
         [InlineData("make sure the new model from SQL has a date table", "advmodels")]

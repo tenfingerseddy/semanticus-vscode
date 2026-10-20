@@ -813,6 +813,190 @@ inputs:
             finally { Cleanup(engine, sessions, ws); }
         }
 
+        // Hero 26 N2: a filter value on a whole-number column (Year) is a number in the query, not text, or the model answers with an error.
+        [Fact]
+        public async Task A_filter_value_on_a_whole_number_column_is_sent_as_a_number()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "FilterYear");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Total Sales", "4321");
+                await engine.CreateTableAsync("Date", "human");
+                await engine.CreateColumnAsync("table:Date", "Year", "Int64", null, "human");
+                await engine.CreateColumnAsync("table:Date", "Month", "String", null, "human");
+                var asked = new System.Collections.Generic.List<string>();
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-year", "FilterYear", q =>
+                {
+                    asked.Add(q);
+                    return new ResultSet { Columns = new[] { new ColumnDef { Name = "v" } }, Rows = new[] { new object[] { 4321m } }, RowCount = 1 };
+                }));
+                async Task<ReconcileOutcome> Try(string column, string value) => await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue, Title = "Total Sales " + value, TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest { MeasureRef = "measure:Sales/Total Sales", ExpectedValue = "4321", FilterColumn = column, FilterValue = value }),
+                }, "human");
+                var year = await Try("'Date'[Year]", "2025");
+                Assert.Equal(Verdict.Pass, year.Verdict);
+                Assert.Contains("'Date'[Year] = 2025", asked.Last(), StringComparison.Ordinal);
+                Assert.DoesNotContain("\"2025\"", asked.Last(), StringComparison.Ordinal);
+                // Text stays text, and a word given for a number column stays quoted rather than becoming a broken number.
+                await Try("'Date'[Month]", "June");
+                Assert.Contains("'Date'[Month] = \"June\"", asked.Last(), StringComparison.Ordinal);
+                await Try("'Date'[Year]", "last year");
+                Assert.Contains("'Date'[Year] = \"last year\"", asked.Last(), StringComparison.Ordinal);
+            }
+            finally { Cleanup(engine, sessions, ws); }
+        }
+
+        // Round 2 N8: the form's own example, "Year" and "2024", must work as written. A bare field name finds its table column.
+        [Fact]
+        public async Task A_bare_field_name_in_only_where_finds_its_table_column()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "BareYear");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Total Sales", "4321");
+                await engine.CreateTableAsync("Date", "human");
+                await engine.CreateColumnAsync("table:Date", "Year", "Int64", null, "human");
+                await engine.CreateTableAsync("Ship", "human");
+                await engine.CreateColumnAsync("table:Ship", "Year", "Int64", null, "human");
+                var asked = new System.Collections.Generic.List<string>();
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-bare", "BareYear", q =>
+                {
+                    asked.Add(q);
+                    return new ResultSet { Columns = new[] { new ColumnDef { Name = "v" } }, Rows = new[] { new object[] { 4321m } }, RowCount = 1 };
+                }));
+                async Task<ReconcileOutcome> Try(string column, string value) => await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue, Title = "Total Sales " + value, TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest { MeasureRef = "measure:Sales/Total Sales", ExpectedValue = "4321", FilterColumn = column, FilterValue = value }),
+                }, "human");
+                var year = await Try("Year", "2024");
+                Assert.Equal(Verdict.Pass, year.Verdict);
+                // Two tables hold a Year: the first in the model's order is taken, and the filter on the result says which.
+                Assert.Contains("'Date'[Year] = 2024", asked.Last(), StringComparison.Ordinal);
+                Assert.Contains("'Date'[Year] = 2024", year.Filter, StringComparison.Ordinal);
+                var one = await Try("year", "2024");
+                Assert.Contains("'Date'[Year] = 2024", asked.Last(), StringComparison.Ordinal);
+                Assert.Equal(Verdict.Pass, one.Verdict);
+            }
+            finally { Cleanup(engine, sessions, ws); }
+        }
+
+        // Round 2 N9: a wrong trusted number shows both numbers.
+        [Fact]
+        public async Task A_wrong_trusted_number_shows_both_numbers()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "BothNumbers");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Total Sales", "4321");
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-both", "BothNumbers", q =>
+                    new ResultSet { Columns = new[] { new ColumnDef { Name = "v" } }, Rows = new[] { new object[] { 36251380.48m } }, RowCount = 1 }));
+                var o = await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue, Title = "Total Sales", TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest { MeasureRef = "measure:Sales/Total Sales", ExpectedValue = "36000000" }),
+                }, "human");
+                Assert.Equal(Verdict.Fail, o.Verdict);
+                Assert.Equal("The model gives 36,251,380.48. You trust 36,000,000.", o.Message);
+            }
+            finally { Cleanup(engine, sessions, ws); }
+        }
+
+        // Round 2 N11: a ratio written as 58.1% is compared as 0.581 at the precision written, and a miss shows both in percent.
+        [Fact]
+        public async Task A_trusted_percentage_is_compared_as_a_ratio()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "Percent");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Margin %", "0.5812049141182254");
+                async Task<ReconcileOutcome> Try(decimal actual, string expected)
+                {
+                    engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-pct", "Percent", q =>
+                        new ResultSet { Columns = new[] { new ColumnDef { Name = "v" } }, Rows = new[] { new object[] { actual } }, RowCount = 1 }));
+                    return await engine.TryTestAsync(new TestDefinition
+                    {
+                        Kind = TestKinds.MeasureValue, Title = "Margin", TargetRef = "measure:Sales/Margin %",
+                        ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest { MeasureRef = "measure:Sales/Margin %", ExpectedValue = expected }),
+                    }, "human");
+                }
+                Assert.Equal(Verdict.Pass, (await Try(0.5812049141182254m, "58.1%")).Verdict);
+                var miss = await Try(0.60m, "58.1%");
+                Assert.Equal(Verdict.Fail, miss.Verdict);
+                Assert.Equal("The model gives 60.0%. You trust 58.1%.", miss.Message);
+            }
+            finally { Cleanup(engine, sessions, ws); }
+        }
+
+        // Verifier v-fix-r2-checks: a miss must never show two equal numbers. A ratio typed as a decimal (0.358 for
+        // Margin % = 0.35825 on Northstar) fails at the default tolerance, so the line must not read "0.36 ... 0.36".
+        [Fact]
+        public async Task A_missed_small_number_never_shows_two_equal_numbers()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "SmallMiss");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Margin %", "0.35825029203505876");
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-small", "SmallMiss", q =>
+                    new ResultSet { Columns = new[] { new ColumnDef { Name = "v" } }, Rows = new[] { new object[] { 0.35825029203505876m } }, RowCount = 1 }));
+                var o = await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue, Title = "Margin", TargetRef = "measure:Sales/Margin %",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest { MeasureRef = "measure:Sales/Margin %", ExpectedValue = "0.358" }),
+                }, "human");
+                Assert.Equal(Verdict.Fail, o.Verdict);
+                var shown = System.Text.RegularExpressions.Regex.Match(o.Message ?? "", @"^The model gives (.+)\. You trust (.+)\.$");
+                Assert.True(shown.Success, o.Message);
+                Assert.NotEqual(shown.Groups[1].Value, shown.Groups[2].Value);
+            }
+            finally { Cleanup(engine, sessions, ws); }
+        }
+
+        // Round 2: a wrong SQL server is told in one plain line; the driver's words stay behind Details.
+        [Theory]
+        [InlineData("A network-related or instance-specific error occurred while establishing a connection to SQL Server. (provider: TCP Provider, error: 0 - Success)", true)]
+        [InlineData("Invalid object name 'dbo.Missing'.", false)]
+        public void A_wrong_server_is_recognised_by_the_driver_words(string error, bool expected)
+            => Assert.Equal(expected, LocalEngine.SqlServerUnreachable(error));
+
+        // Hero 26 N2: a check the model could not answer says one plain line, not the engine's activity ids.
+        [Fact]
+        public async Task A_check_that_errors_says_one_plain_line()
+        {
+            var (engine, sessions, ws) = Make();
+            try
+            {
+                await OpenNamedModelAsync(engine, sessions, ws, "FilterError");
+                var table = await McpTools.CreateTable(engine, "Sales");
+                await McpTools.CreateMeasure(engine, table, "Total Sales", "4321");
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-error", "FilterError", q =>
+                    new ResultSet { Error = "Cannot compare text values with whole numbers in 'Date'[Year]. Technical Details: RootActivityId: 4f1c0a, Date (UTC): 2026-10-16" }));
+                var o = await engine.TryTestAsync(new TestDefinition
+                {
+                    Kind = TestKinds.MeasureValue, Title = "Total Sales in 2025", TargetRef = "measure:Sales/Total Sales",
+                    ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest { MeasureRef = "measure:Sales/Total Sales", ExpectedValue = "4321", FilterColumn = "'Date'[Year]", FilterValue = "2025" }),
+                }, "human");
+                Assert.Equal(Verdict.NotVerifiable, o.Verdict);
+                Assert.Equal("Cannot compare text values with whole numbers in 'Date'[Year].", o.Message);
+                Assert.DoesNotContain("RootActivityId", o.Message, StringComparison.Ordinal);
+                Assert.Null(LocalEngine.PlainCheckError(null));
+                Assert.Null(LocalEngine.PlainCheckError("Technical Details: RootActivityId: 1"));
+            }
+            finally { Cleanup(engine, sessions, ws); }
+        }
+
         private static string FindRepoFile(string relative)
         {
             var dir = new DirectoryInfo(AppContext.BaseDirectory);

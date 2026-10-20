@@ -21,12 +21,12 @@ let passed = 0;
 const ok = (name, fn) => { fn(); passed++; console.log('  [PASS] ' + name); };
 
 // Understand group holds all three converted surfaces; Change holds M Code. A minimal tab->group map for the mapping.
-const TAB_TO_GROUP = { diagram: 'understand', search: 'understand', lineage: 'understand', daxlab: 'understand', data: 'understand', stats: 'understand', mcode: 'change', optimize: 'change' };
+const TAB_TO_GROUP = { diagram: 'understand', search: 'understand', lineage: 'understand', query: 'understand', data: 'understand', stats: 'understand', mcode: 'change', optimize: 'change' };
 
 // ---- busy affordance maps to the RIGHT tab ----
 ok('busy surface in the OPEN group but not the active tab marks its secondary tab, never the group', () => {
   // On DAX Lab (understand open); a Storage scan is running.
-  const { tabs, groups } = busyAffordance(['stats'], 'daxlab', 'understand', TAB_TO_GROUP);
+  const { tabs, groups } = busyAffordance(['stats'], 'query', 'understand', TAB_TO_GROUP);
   assert.deepEqual([...tabs], ['stats']);
   assert.equal(groups.size, 0);
 });
@@ -43,24 +43,24 @@ ok('the ACTIVE tab never shows the busy glyph (progress is already visible inlin
 });
 ok('a standalone tab (no active group) still bubbles busy surfaces to their group buttons', () => {
   // On the Workflows standalone surface (activeGroup null); a DAX Lab op runs.
-  const { tabs, groups } = busyAffordance(['daxlab'], 'workflows', null, TAB_TO_GROUP);
+  const { tabs, groups } = busyAffordance(['query'], 'workflows', null, TAB_TO_GROUP);
   assert.equal(tabs.size, 0);
   assert.deepEqual([...groups], ['understand']);
 });
 ok('multiple busy surfaces in the open group each mark their own tab and dedupe the group', () => {
-  const { tabs, groups } = busyAffordance(['stats', 'lineage'], 'daxlab', 'understand', TAB_TO_GROUP);
+  const { tabs, groups } = busyAffordance(['stats', 'lineage'], 'query', 'understand', TAB_TO_GROUP);
   assert.deepEqual([...tabs].sort(), ['lineage', 'stats']);
   assert.equal(groups.size, 0);
 });
 ok('an unknown surface id is ignored, never crashes the mapping', () => {
-  const { tabs, groups } = busyAffordance(['ghost'], 'daxlab', 'understand', TAB_TO_GROUP);
+  const { tabs, groups } = busyAffordance(['ghost'], 'query', 'understand', TAB_TO_GROUP);
   assert.equal(tabs.size, 0);
   assert.equal(groups.size, 0);
 });
 
 // ---- the wrong-to-preserve surface list is PINNED ----
 ok('PRESERVED_SURFACES is exactly the three converted surfaces', () => {
-  assert.deepEqual([...PRESERVED_SURFACES].sort(), ['daxlab', 'lineage', 'stats']);
+  assert.deepEqual([...PRESERVED_SURFACES].sort(), ['lineage', 'query', 'stats']);
 });
 ok('M Code and its Profile are NOT preserved (unmount stays a cancellation boundary, PR #246)', () => {
   assert.ok(!PRESERVED_SURFACES.includes('mcode'), 'mcode must never join the preserved surfaces');
@@ -105,7 +105,7 @@ ok('Storage scan/enrichment invalidation stays fail-closed in the holder (sessio
 
 // ---- DAX Lab equivalence/result invalidation stays context-keyed in the holder ----
 ok('DAX Lab reflections + the execution-context key live in the holder (results/verdict survive but stale-check unchanged)', () => {
-  const provider = daxlab.slice(daxlab.indexOf('export function DaxLabTabStateProvider'), daxlab.indexOf('export function DaxLabView'));
+  const provider = daxlab.slice(daxlab.indexOf('export function DaxLabTabStateProvider'), daxlab.indexOf('export interface QueryPageProps'));
   assert.match(provider, /const execContextKey = JSON\.stringify\(\[[\s\S]*session\?\.sessionId \?\? null, session\?\.revision \?\? null,/,
     'the execution-context key must be computed in the holder from the same identity fields');
   assert.match(provider, /useClaudeReflection\('verify_equivalence'[\s\S]*requestKey: null[\s\S]*contextKey: execContextKey/,

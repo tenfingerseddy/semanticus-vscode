@@ -35,13 +35,16 @@ export function assistantIsWorking(s: DriverSnapshot, now: number): boolean {
   return s.lastAssistantCall !== null && now - s.lastAssistantCall < QUIET_GAP_MS;
 }
 
-/** How long an assistant counts as busy on the Plan page after its latest call. Claude's gaps between calls (thinking, a long write) run far past the 8 s quiet gap,
- *  and the page told the person "Save your changes / Do it" in the middle of a drive (hero20 D3). The sign keeps the short gap; the Plan header uses this. */
-export const ASSISTANT_ACTIVE_MS = 60_000;
+/** How long an assistant counts as busy on the Plan page after its latest call. Claude's gaps between calls (thinking, a long write) run past the 8 s quiet gap,
+ *  and the page told the person "Save your changes / Do it" in the middle of a drive (hero20 D3). The sign keeps the short gap; the Plan header uses this.
+ *  Short on purpose (UAT 18 Oct N21): 40 s after Claude finished the page still said "Working on your model" with nobody working. The turn is over when no call comes in this time.
+ *  45 s, not 30 (round 2): a real drive had a 35 s gap between calls while Claude composed 116 descriptions, and the 30 s window showed the next step for about 5 s mid-drive.
+ *  45 s covers that gap and is still gone well inside a minute after the last call. */
+export const ASSISTANT_ACTIVE_MS = 45_000;
 export function assistantIsActive(s: DriverSnapshot, now: number): boolean {
   if (!s.assistantWorking) return false;
-  if (s.state === 'claudeDriving') return true;
-  return s.lastAssistantCall !== null && now - s.lastAssistantCall < ASSISTANT_ACTIVE_MS;
+  // A note still queued (claudeDriving) is a reason to stay on the call's clock, not to ignore it: a drive that never ended must not read as work for ever.
+  return s.lastAssistantCall !== null ? now - s.lastAssistantCall < ASSISTANT_ACTIVE_MS : s.state === 'claudeDriving';
 }
 
 const whoOf = (raw: unknown): AssistantWho | null => {
@@ -96,7 +99,9 @@ export function createDriverStore(mode: DriveMode = 'iDrive') {
       update({ lastPersonInput: at,
         state: snapshot.mode === 'claudeDrives' ? 'personHasWheel' : 'idle' });
     },
-    noteAssistantCall(at: string, assistant?: unknown) {
+    /** `roundStart` is when the Copilot test round this call belongs to began (copilot-follow.ts), or null. A click made during that round holds the
+        wheel for the rest of it: a quiet gap inside a round is the student working, not a new prompt. */
+    noteAssistantCall(at: string, assistant?: unknown, roundStart: number | null = null) {
       const started = Date.parse(at);
       update({ assistantConnected: true, assistantWorking: true });
       setAssistant(assistant);
@@ -104,7 +109,8 @@ export function createDriverStore(mode: DriveMode = 'iDrive') {
       const before = snapshot.lastAssistantCall;
       // Only calls that began after the person's input count, so the quiet is measured from the later of the last call and the click.
       const since = Math.max(before ?? -Infinity, snapshot.lastPersonInput ?? -Infinity);
-      if (snapshot.mode === 'claudeDrives' && snapshot.state === 'personHasWheel'
+      const clickedDuringRound = roundStart !== null && snapshot.lastPersonInput !== null && snapshot.lastPersonInput > roundStart;
+      if (snapshot.mode === 'claudeDrives' && snapshot.state === 'personHasWheel' && !clickedDuringRound
           && snapshot.lastPersonInput !== null && started > snapshot.lastPersonInput && started - since >= QUIET_GAP_MS) resume('claudeDriving');
       update({ lastAssistantCall: Math.max(before ?? -Infinity, started) });
     },

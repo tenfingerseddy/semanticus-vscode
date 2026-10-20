@@ -112,7 +112,7 @@ namespace Semanticus.Tests
         {
             await f.Engine.GetModelPlanAsync();
             await f.Engine.JevSettledForTest();
-            return door == "mcp" ? await McpTools.GetModelPlan(f.Engine) : await new EngineRpcTarget(f.Engine).getModelPlan();
+            return door == "mcp" ? await VerifyFormatFillRound13Tests.McpPlanWithDetailAsync(f.Engine) : await new EngineRpcTarget(f.Engine).getModelPlan();
         }
 
         private static ModelPlanChangeLine FormatLine(ModelPlanView plan, string op, string target) =>

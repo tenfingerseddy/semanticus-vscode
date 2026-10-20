@@ -45,6 +45,42 @@ namespace Semanticus.Tests
                 new object[] { "Sales", "U$Sales (10)\\Geo (5)", "Geo", "Geo", "1", 15L, 0L }),
             Rs(new[] { "DIMENSION_NAME", "ROWS_COUNT" }, new object[] { "Sales", 500L }));
 
+        // The Size header said "4,506 rows" for a model with 62,787 (UAT round 2): DISCOVER_STORAGE_TABLES lists the table AND its hierarchies and
+        // relationship indexes under the same DIMENSION_NAME, each with its own ROWS_COUNT, and the last one read was kept as the table's rows.
+        [Fact]
+        public void A_tables_rows_are_the_tables_own_row_not_the_last_structure_listed_under_its_name()
+        {
+            var (seg, col, _) = Captured();
+            var tbl = Rs(new[] { "DIMENSION_NAME", "TABLE_ID", "ROWS_COUNT" },
+                new object[] { "Sales", "Sales (10)", 60145L },
+                new object[] { "Sales", "H$Sales (10)\\OrderNumber (1)", 60145L },
+                new object[] { "Sales", "H$Sales (10)\\Amount (2)", 4000L },
+                new object[] { "Sales", "R$Sales (10)\\Customer (3)", 300L },
+                new object[] { "Sales", "U$Sales (10)\\Geo (5)", 12L });
+            var r = VertiPaq.Compute(seg, col, tbl, 25, VpaqStorageMode.Import);
+            Assert.Equal(60145L, r.Tables.Single().Rows);
+        }
+
+        [Fact]
+        public void A_tables_rows_add_across_its_partitions_and_ignore_structures()
+        {
+            var (seg, col, _) = Captured();
+            var tbl = Rs(new[] { "DIMENSION_NAME", "TABLE_ID", "ROWS_COUNT" },
+                new object[] { "Sales", "Sales (10)", 100L },
+                new object[] { "Sales", "Sales (10)", 50L },
+                new object[] { "Sales", "H$Sales (10)\\Amount (2)", 7L });
+            Assert.Equal(150L, VertiPaq.Compute(seg, col, tbl, 25, VpaqStorageMode.Import).Tables.Single().Rows);
+        }
+
+        [Fact]
+        public void Without_a_table_id_the_largest_count_under_the_name_is_the_table()
+        {
+            var (seg, col, _) = Captured();
+            var tbl = Rs(new[] { "DIMENSION_NAME", "ROWS_COUNT" },
+                new object[] { "Sales", 60145L }, new object[] { "Sales", 12L }, new object[] { "Sales", 300L });
+            Assert.Equal(60145L, VertiPaq.Compute(seg, col, tbl, 25, VpaqStorageMode.Import).Tables.Single().Rows);
+        }
+
         [Fact]
         public void A_storage_structure_is_not_a_column_and_a_column_is_listed_once()
         {

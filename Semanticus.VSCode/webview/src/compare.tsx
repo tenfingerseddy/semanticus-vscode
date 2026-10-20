@@ -1,7 +1,7 @@
 // Wire shapes mirror Semanticus.Engine/Alm/AlmProtocol.cs (camelCased). The Publish page lists a compareModels
 // diff between your copy and the destination and sends the ticked refs through applyDiff (publish-changes.tsx).
 export interface ModelRef { kind: string; path?: string; gitRef?: string; endpoint?: string; database?: string; authMode?: string; tenantId?: string; label?: string; }
-export interface ModelDiffItem { ref: string; objectType: string; name: string; table?: string; action: string; leftText?: string; rightText?: string; matchedByName?: boolean; }
+export interface ModelDiffItem { ref: string; objectType: string; name: string; table?: string; action: string; leftText?: string; rightText?: string; matchedByName?: boolean; carriedByRename?: boolean; }
 export interface ModelDiff { leftLabel?: string; rightLabel?: string; created: number; updated: number; deleted: number; equal: number; items: ModelDiffItem[]; error?: string; }
 export interface ApplyDiffResult { applied: boolean; count: number; appliedRefs: string[]; failedRefs: string[]; target?: string; note?: string; error?: string; confirmToken?: string; restorePointId?: string; }
 

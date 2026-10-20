@@ -73,6 +73,52 @@ namespace Semanticus.Tests
             Assert.DoesNotContain("## History", markdown);
         }
 
+        // Kane, 16 Oct: the page, the assistant's note and the report count the checks a person sees (here a failing saved check, a failing
+        // Relationships check and a matching Table row counts check), never the probes the grade is worked out from.
+        [Fact]
+        public void The_page_the_assistants_note_and_the_report_count_checks_in_one_unit()
+        {
+            var run = Run();
+            var tally = CheckTally.Of(run);
+            Assert.Equal((1, 2, 0), (tally.Passed, tally.Differs, tally.Cannot));
+            Assert.Equal("1 of 3 checks pass", tally.Words());
+            Assert.Contains("1 of 3 checks pass", McpToolsTesting.RunLabel(run));
+            Assert.Contains("- Checks: 1 of 3 checks pass.", TestReportRenderer.Render(run));
+            var doc = TestReportRenderer.BuildEvidence(run);
+            Assert.Equal((1, 3, 0), (doc.Coverage.Verified, doc.Coverage.Total, doc.Coverage.Unknowns));
+        }
+
+        // Hero 26 N3: a measure with no saved check carries a coverage outcome ("unmapped:") so the grade sees the gap. It is not a check the person has,
+        // so it is never part of "2 of 3": the run said "2 of 11" for a page that said "2 of 3".
+        [Fact]
+        public void Measures_with_no_saved_check_are_not_counted_as_checks()
+        {
+            var run = Run();
+            var before = CheckTally.Of(run);
+            var extra = Enumerable.Range(0, 8).Select(i => new ReconcileOutcome { DefId = "unmapped:measure:Sales/M" + i, Title = "M" + i, Verdict = Verdict.NotVerifiable, Message = "No human-accepted source SQL mapping exists for this measure." });
+            run.Reconciles = run.Reconciles.Concat(extra).ToArray();
+            var after = CheckTally.Of(run);
+            Assert.Equal((before.Passed, before.Differs, before.Cannot), (after.Passed, after.Differs, after.Cannot));
+            Assert.Equal(before.Words(), after.Words());
+            Assert.Equal("1 of 3 checks pass: 2 differ.", after.Line());
+            Assert.Equal(after.Line(), run.Headline);
+            var one = CheckTally.Of(new TestSuiteRunResult { Reconciles = new[] { Outcome("A", Verdict.Fail, "x") } });
+            Assert.Equal("0 of 1 check passes: 1 differs.", one.Line());
+        }
+
+        [Fact]
+        public void The_report_names_no_tool_and_no_assembly_number()
+        {
+            var html = TestReportRenderer.RenderHtml(Run());
+            var markdown = TestReportRenderer.Render(Run());
+            foreach (var text in new[] { html, markdown })
+            {
+                Assert.DoesNotContain("run_tests", text, StringComparison.Ordinal);
+                Assert.DoesNotContain("1.0.0.0", text, StringComparison.Ordinal);
+                Assert.DoesNotContain("root failure(s)", text, StringComparison.Ordinal);
+            }
+        }
+
         [Fact]
         public void Html_is_print_ready_and_carries_the_same_fixed_sections()
         {
@@ -125,9 +171,11 @@ namespace Semanticus.Tests
 
             Assert.Equal("test-suite", doc.Kind);
             Assert.Equal(Semanticus.Engine.Evidence.Verdict.Broken, doc.Verdict);
+            // Coverage is in the checks the page shows (a failing saved check, a failing Relationships check, a matching Table row counts
+            // check), not the probe counts the grade is worked out from (Kane, 16 Oct).
             Assert.Equal(1, doc.Coverage.Verified);
-            Assert.Equal(4, doc.Coverage.Total);
-            Assert.Equal(1, doc.Coverage.Unknowns);
+            Assert.Equal(3, doc.Coverage.Total);
+            Assert.Equal(0, doc.Coverage.Unknowns);
             Assert.Equal(artifact.ContentHash, EvidenceHash.HashOfJsonText(artifact.Json));
             Assert.Contains(artifact.ContentHash, artifact.Html);
             Assert.Contains("Relationships and integrity", artifact.Html);

@@ -650,6 +650,10 @@ const COVER = 'NO TEST: this fixture is exercising the commit half, so the test 
         4252831384: 'Semanticus.Engine/Connect/AssistantConnector.cs',
         4252831391: 'Semanticus.VSCode/src/personalitySettings.ts',
         4252831397: 'Semanticus.VSCode/src/extension.ts',
+        // PR #402, the 1.6 release. Three comments, scheduled for the 1.6 hand-over (T304): the live recovery wait, the IPv6 host and the TMDL copy folder.
+        4312658680: 'Semanticus.Engine/Program.cs',
+        4312658695: 'Semanticus.Engine/Connect/SqlHostTrust.cs',
+        4312658707: 'Semanticus.Engine/LocalEngine.cs',
     };
     for (const [pr, rows_] of live)
         for (const [commentId, r] of rows_) {

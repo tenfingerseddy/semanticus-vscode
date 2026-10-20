@@ -160,9 +160,8 @@ const raw = (tier, state, ui = {}) => renderToStaticMarkup(React.createElement(P
 }));
 
 const LIVE_ADDS = [
-  'Jev tidies your measures and ranks your plan. Each change lands on your Plan for you to keep or drop.',
-  'The Plan field: type a task and Semanticus names the page it is done on, asking Jev when the words alone do not say.',
-  'Workflows: work you repeat becomes steps the app checks as you go.',
+  'Run the plan tidies your measures and puts your plan in order. Each change lands on your Plan for you to keep or drop.',
+  'The Plan field: type a task and Semanticus names the page it is done on, and works it out for you when the words alone do not say.',
 ];
 
 // h17 P2 and P17: a trial's Pro page has the same Remove as the paid page, and says the days left in words (no token counts).
@@ -222,7 +221,7 @@ const done = render('pro', { purchase: 'done', plan: 'yearly',
   account: { subscription: true, licensedTo: 'you@contoso.com', expiry: Date.parse('2027-09-23T00:00:00Z') / 1000, plan: 'yearly' } });
 // Honesty lane: the banner no longer claims Jev is ready. It says Jev's real state, read from the engine.
 assert.doesNotMatch(done, /Jev is ready/, 'the banner never claims Jev is ready without asking the engine');
-assert.match(done, /Pro is on for this computer\. Checking whether Jev can be reached\./);
+assert.match(done, /Pro is on for this computer\. Checking whether Pro planning can be reached\./);
 assert.match(done, /Semanticus Pro, yearly\./);
 assert.match(done, /Licensed to you@contoso\.com\. Renews 23 September 2027\./);
 const later = render('pro', { purchase: 'idle',
@@ -248,12 +247,12 @@ assert.equal(M.jevStateOf(null, null, true).state, 'unreachable', 'a budget read
 assert.equal(M.jevStateOf({ route: 'none', serviceAvailable: false }, { current: true }, true).state, 'unreachable');
 const down = M.jevStateOf({ route: 'relay', serviceAvailable: true, monthlyUsedInputTokens: null, monthlyReason: 'the advice service could not be reached' }, { current: true }, true);
 // Kane, 8 Oct (r1 join): one calm sentence, the same words as the Plan and the Ask; the engine's reason stays in its log.
-assert.deepEqual([down.state, down.word, down.line], ['unreachable', 'Not reachable', 'Jev is not available right now.']);
+assert.deepEqual([down.state, down.word, down.line], ['unreachable', 'Not reachable', 'Pro planning is not available right now.']);
 const noPermission = M.jevStateOf(RELAY_OK, { current: false }, true);
 assert.deepEqual([noPermission.state, noPermission.word], ['noConsent', 'No permission']);
 assert.match(noPermission.line, /until you give permission/);
 const jevOn = M.jevStateOf(RELAY_OK, { current: true }, true);
-assert.deepEqual([jevOn.state, jevOn.word, jevOn.line], ['on', 'On', 'Jev is on for this model.']);
+assert.deepEqual([jevOn.state, jevOn.word, jevOn.line], ['on', 'On', 'Pro planning is on for this model.']);
 assert.equal(M.jevStateOf(RELAY_OK, null, true).state, 'on', 'no model open: reachable is on, and the line says permission comes per model');
 assert.match(M.jevStateOf(RELAY_OK, null, true).line, /permission/);
 const DS = load(join(webview, 'src', 'decisions-settings.tsx'));
@@ -265,12 +264,12 @@ assert.deepEqual(DS.pointsOf(undefined), []);
 assert.deepEqual(DS.pointsOf([{ name: 'a' }]), [{ name: 'a' }], 'a real list passes through');
 
 const laterOn = render('pro', { purchase: 'idle', account: { subscription: false } }, { jev: jevOn });
-assert.doesNotMatch(laterOn, /Jev is not available|asks nothing about this model/, 'Jev being on is the quiet default');
+assert.doesNotMatch(laterOn, /Pro planning is not available|asks nothing about this model/, 'Jev being on is the quiet default');
 const laterDown = render('pro', { purchase: 'done', account: { subscription: false } }, { jev: down });
-assert.match(laterDown, /Pro is on for this computer\. Jev is not available right now\./);
+assert.match(laterDown, /Pro is on for this computer\. Pro planning is not available right now\./);
 assert.match(raw('pro', { purchase: 'idle', account: { subscription: false } }, { jev: down }), /data-testid="pro-jev"/, 'a Jev that is not reachable is said on the licence card too');
 const laterNoPermission = render('pro', { purchase: 'idle', account: { subscription: false } }, { jev: noPermission });
-assert.match(laterNoPermission, /Jev asks nothing about this model until you give permission\./);
+assert.match(laterNoPermission, /Pro planning asks nothing about this model until you give permission\./);
 // Only what is known.
 const bare = render('pro', { purchase: 'idle', account: { subscription: false } });
 assert.match(bare, /Semanticus Pro\./);
@@ -318,7 +317,7 @@ for (const file of ['propreview.tsx', 'plan.tsx', 'askbox.tsx', 'decisions-setti
   for (const m of source.matchAll(/>Unlock Pro</g)) {
     const before = source.slice(Math.max(0, m.index - 400), m.index);
     // m15 trial: a locked button may hand over what was pressed, so it runs once Pro is on.
-    assert.match(before, /onClick=\{upgradeToPro\}|onClick=\{\(\) => \{ close\(\); upgradeToPro\(\); \}\}|onClick=\{\(\) => upgradeToPro\(\{ label: '[^']+', tab: '[a-z]+', run: \w+ \}\)\}/, `${file}: an Unlock Pro that does not open the Pro page`);
+    assert.match(before, /onClick=\{upgradeToPro\}|onClick=\{\(\) => \{ close\(\); upgradeToPro\(\); \}\}|onClick=\{\(\) => upgradeToPro\(\{ label: '[^']+', tab: '[a-z]+', run: (?:\w+|afterUnlock \?\? \(\(\) => undefined\)) \}\)\}/, `${file}: an Unlock Pro that does not open the Pro page`);
   }
 }
 assert.doesNotMatch(pro, /onClick=\{manageLicense\}/, 'the upsell notice no longer sends anyone to the website');

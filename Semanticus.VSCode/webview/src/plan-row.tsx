@@ -4,7 +4,6 @@ import { anchorUnder } from './toolrow';
 import * as P from './plan-model';
 import { RepeatEditor, type CadenceHold } from './plan-repeat';
 import type { PlanRepeat, RepeatCadence, RepeatRequest } from './plan-repeat-model';
-import { jumpTarget } from './search-names';
 import { sameTrimmed, useKeptText } from './keptwords';
 import { draftModel, draftStore, heldDraft, useHeldDrafts } from './drafts';
 import { isNotChecked, NOT_CHECKED_WORD, ROW_PRESS_LABEL, type RowPressKind } from './plan-calm-model';
@@ -64,7 +63,7 @@ export function DoerMark({ doer, hollow = false }: { doer: P.PlanDoer; hollow?: 
 /** The state column. A row a run is working on shows its own step instead of the engine's word (round 1, K1): a spinner
  *  and Working out, Applying, Checking; then Done in green with its change count; a row the press holds but has not reached
  *  says In this run. `note` is a line the page adds after the word (a finished row's "by your assistant"). */
-export function StateWord({ item, step, note: extra, calm = false }: { item: P.PlanItem; step?: P.RunPhase | null; note?: string | null; calm?: boolean }) {
+export function StateWord({ item, step, note: extra, calm = false, assistantConnected = true }: { item: P.PlanItem; step?: P.RunPhase | null; note?: string | null; calm?: boolean; assistantConnected?: boolean }) {
   if (step) {
     const live = step.step === 'work' || step.step === 'waitjev' || step.step === 'apply' || step.step === 'check';
     const tone = live ? 'spin pw-state-run' : step.step === 'done' ? 'good' : 'faint';
@@ -91,7 +90,7 @@ export function StateWord({ item, step, note: extra, calm = false }: { item: P.P
   const stateNote = nextCheck ? (calm ? null : 'when your assistant checks') : item.stateNote;
   // A row the assistant handed back says why on the closed row (hero run 21, N4): the reason is the state note, cut short here and whole on hover.
   const handedBack = word === 'needs_you' && !!stateNote && !!item.stateNote && !closed;
-  const note = closed ? null : extra ?? (handedBack ? P.reasonShort(stateNote) : stateNote && word !== 'needs_you' ? P.stateNoteShort(stateNote) ?? (stateNote.length <= 28 ? stateNote : null) : null);
+  const note = closed ? null : extra ?? (handedBack ? P.reasonShort(stateNote) : stateNote && word !== 'needs_you' ? P.stateNoteShort(stateNote, assistantConnected) ?? (stateNote.length <= 28 ? stateNote : null) : null);
   return <span className={`pw-state pw-state-${closed ? 'faint' : P.stateTone(word)}`} data-state={word}
     title={closed ? item.why?.[item.why.length - 1] : item.stateNote ?? undefined}>
     <span className="pw-state-mark" aria-hidden="true" />
@@ -185,7 +184,7 @@ function stepCount(item: P.PlanItem): string | null {
   return m ? `${m[1]} / ${m[2]}` : null;
 }
 
-export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, onGo, labelOf, first = false, lead, meta, step = null, justDone = false, free = false, grant, canRepeat, calm = false, press = null }: {
+export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, onGo, labelOf, first = false, lead, meta, step = null, justDone = false, free = false, grant, canRepeat, calm = false, press = null, assistantConnected = true }: {
   item: P.PlanItem; items: P.PlanItem[]; open: boolean; busy: string | null;
   onToggle: () => void; onAction: RowActionHandler; onDoer: (item: P.PlanItem, doer: P.PlanDoer) => void; onGo: (tool: string, target?: string) => void;
   labelOf?: (tool: string) => string | undefined; first?: boolean;
@@ -205,6 +204,8 @@ export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, o
   calm?: boolean;
   /** The quiet press this row offers on its own (Run, Ask your assistant, Open): shown on hover and focus, and always at a narrow width. */
   press?: { kind: RowPressKind; onPress: () => void } | null;
+  /** An assistant is connected. With none, a row for it says so in plain words and never points the person at someone who is not there (UAT F8). */
+  assistantConnected?: boolean;
 }) {
   const source = P.sourceOf(item);
   const doer = P.doerOf(item);
@@ -229,12 +230,12 @@ export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, o
         {sub.aside && <span className="pw-sub pw-trunc">{sub.optional ? 'Optional · ' : ''}{sub.text}</span>}
       </button>
       {worth && <RowWorth words={worth} />}
-      <StateWord item={item} step={step} note={doneBy} calm />
+      <StateWord item={item} step={step} note={doneBy} calm assistantConnected={assistantConnected} />
       <span className="pw-acts">
         {steps && <span className="pw-steps sem-num">{steps}</span>}
         {meta && <span className="pw-steps" data-testid="plan-row-meta">{meta}</span>}
         {draft && <span className="pw-steps" data-testid="plan-row-draft" title={draft.title}>{draft.text}</span>}
-        {press && !step && <button type="button" className="sem-btn sem-btn-sm pw-press" data-testid={`plan-row-press-${press.kind}`} data-press={press.kind}
+        {press && !step && <button type="button" className="sem-btn sem-btn-sm pw-press" data-testid={`plan-row-press-${press.kind}`} data-press={press.kind} data-keeps-wheel={press.kind === 'ask' ? '' : undefined}
           disabled={hold} onClick={(e) => { e.stopPropagation(); press.onPress(); }}>{ROW_PRESS_LABEL[press.kind]}</button>}
         {main && !(open && main.id === 'open') && <ActionButton item={item} action={main} busy={busy} onAction={onAction} />}
         {!main && sub.aside && <ActionButton item={sub.aside} busy={busy} onAction={onAction}
@@ -258,10 +259,10 @@ export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, o
     <span className="pw-doer" {...(first ? { 'data-tour': 'doer' } : {})}>
       <DoerMenu item={item} busy={busy} onDoer={onDoer} word={word} />
     </span>
-    <StateWord item={item} step={step} note={doneBy} />
+    <StateWord item={item} step={step} note={doneBy} assistantConnected={assistantConnected} />
     <span className="pw-page">
       {place && item.jump?.tool
-        ? <button type="button" className="plan-link pw-trunc" data-testid="plan-row-page" onClick={() => onGo(item.jump!.tool, jumpTarget(item.jump))}>{place}</button>
+        ? <button type="button" className="plan-link pw-trunc" data-testid="plan-row-page" onClick={() => onGo(item.jump!.tool)}>{place}</button>
         : justDone ? null : <span className="plan-muted">No page for this one</span>}
     </span>
     <span className="pw-acts">
@@ -374,13 +375,13 @@ export function PlanRowDetail({ item, busy, onNote, labelOf, repeats, isPro, onR
         <dt>From</dt><dd data-testid="plan-detail-source">{P.sourceLine(item, labelOf)}</dd>
         {onDoer && <><dt>Who does it</dt><dd className="pw-doer" data-testid="plan-detail-doer"><DoerMenu item={item} busy={busy} onDoer={onDoer} word={P.stateWordOf(item)} /></dd></>}
         {onOpenPage && item.jump?.tool && P.pagePlace(item.jump) && <><dt>Where</dt><dd><button type="button" className="plan-link" data-testid="plan-detail-page"
-          onClick={() => onOpenPage(item.jump!.tool, jumpTarget(item.jump))}>{P.pagePlace(item.jump)}</button></dd></>}
-        {(why.length > 0 || !jevReason) && <><dt>Why</dt><dd>{why.length ? why.join(' ')
-          : P.sourceOf(item) === 'words' || P.sourceOf(item) === 'you' ? 'You asked for it.' : 'Semanticus gave no reason for this one.'}</dd></>}
+          onClick={() => onOpenPage(item.jump!.tool)}>{P.pagePlace(item.jump)}</button></dd></>}
+        {(why.length > 0 || !jevReason) && <><dt>Why</dt><dd>{P.plainWhy(why)
+          || (P.sourceOf(item) === 'words' || P.sourceOf(item) === 'you' ? 'You asked for it.' : 'Semanticus gave no reason for this one.')}</dd></>}
         <dt>Done when</dt><dd>{item.doneText || 'You mark it done.'}</dd>
-        {!!item.waitsFor?.length && <><dt>Finish these tasks first</dt><dd>
-          {item.waitsFor.map((w) => <div key={w.id}>{w.title}</div>)}
-          <span className="plan-muted">This task needs the changes these tasks make, so it comes second. For example, a measure must exist before its format can be set.</span>
+        {!!item.waitsFor?.length && <><dt>Goes after</dt><dd data-testid="plan-detail-waits">
+          {P.firstNames(item.waitsFor.map((w) => w.title))}.
+          <span className="plan-muted"> They change the same things, so this one comes second.</span>
         </dd></>}
         {item.fullText && <><dt>Your text</dt><dd className="pw-fulltext" data-testid="plan-detail-fulltext">{item.fullText}</dd></>}
         <dt>Objects</dt><dd className="pw-objects">{P.objectsLine(item)}</dd>

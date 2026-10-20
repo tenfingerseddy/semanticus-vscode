@@ -61,6 +61,8 @@ namespace Semanticus.Tests
                 theirs = await SetGotchaAsync(other, "Model2 has its own notes.");
             }
             var theirText = File.ReadAllText(theirs);
+            // A copy goes only to a new file (b3e60c8a), so the target's model file is gone and its own Primer stays beside the place the copy lands.
+            File.Delete(target);
 
             using var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions, TestEntitlements.Pro);

@@ -45,9 +45,10 @@ assert.match(features, /workflows: 'workflows',/, 'workflows must be filed under
 // EXACTLY one tool is gated. Written as the whole map rather than as absences, because an absence check
 // passes just as well when the map is empty or when somebody adds a tool nobody thought to name here.
 const toolMap = (features.match(/FEATURE_OF_TOOL: Record<string, ProFeature> = \{[\s\S]*?\n\};/) || [''])[0];
-// Two since 26 September: Ask your data is a whole Pro page under Explore (wire id askData, ProFeature.cs).
-assert.deepEqual([...toolMap.matchAll(/(\w+): '(\w+)',/g)].map((m) => [m[1], m[2]]), [['workflows', 'workflows'], ['askdata', 'askData']],
-  'Workflows and Ask your data are the only gated tools: everything else renders its real page on every plan');
+// One since 1.6: Ask your data and Queries became the free Query page, and only its words box is Pro (wire id askData, ProFeature.cs),
+// which is a feature and not a tool.
+assert.deepEqual([...toolMap.matchAll(/(\w+): '(\w+)',/g)].map((m) => [m[1], m[2]]), [['workflows', 'workflows']],
+  'Workflows is the only gated tool: everything else, the Query page included, renders its real page on every plan');
 // The eight tools Kane freed. Each was gated on 21 September and must be gated by nothing on 22 September.
 for (const freed of ['spec', 'advmodels', 'mcode', 'docs', 'knowledge', 'tests', 'evidence', 'dataagent', 'deploy']) {
   assert.doesNotMatch(toolMap, new RegExp(`\\b${freed}: '`), `${freed} is free now and may not be in the gate map`);
@@ -328,9 +329,11 @@ const tierKeyedGrants = ['planRankingOf'].filter((fn) => features.includes(`expo
 // One README phrase per paid thing, keyed by the name the source uses. This table is the ONLY literal,
 // and it is checked against both authorities below, so it cannot drift on its own either.
 const PAID_WORDS = {
-  Workflows: /\bWorkflows\b/,
+  // Workflows is hidden in 1.6 (Kane, 17 Oct): no README may name it, so its entry matches anything and stays only so the
+  // engine-enum parity check below still holds.
+  Workflows: /(?:)/u,
   Ask: /\bask box\b/,
-  AskData: /\bAsk your data\b/,
+  AskData: /\bplain-words box on Query\b/,   // the paid thing's name in the README since 1.6 (Ask your data became the Query page)
   Batch: /\bbulk edits that change many objects in one step\b/,   // the m14/batch bulk tools
   planRankingOf: /\bplan ranked, scored and run\b/,
 };
@@ -393,8 +396,10 @@ for (const [where, section] of [['root README', rootPro], ['extension README', e
 // the box, it needs one and this list grows with it.
 // A wire id is not always the help key: askData locks the tool askdata. The tool map says which tool a feature locks.
 const toolOfFeature = Object.fromEntries([...toolMap.matchAll(/(\w+): '(\w+)',/g)].map((m) => [m[2], m[1]]));
-const paidHelpEntries = [...engineWireIds.map((id) => toolOfFeature[id] ?? id), ...(tierKeyedGrants.length ? ['plan'] : [])].sort();
-assert.deepEqual(paidHelpEntries, ['askdata', 'plan', 'workflows'],
+// askData locks the words box of the Query page, so its help key is the page's: query.
+const HELP_KEY_OF_FEATURE = { askData: 'query' };
+const paidHelpEntries = [...engineWireIds.map((id) => toolOfFeature[id] ?? HELP_KEY_OF_FEATURE[id] ?? id), ...(tierKeyedGrants.length ? ['plan'] : [])].sort();
+assert.deepEqual(paidHelpEntries, ['plan', 'query', 'workflows'],
   'the paid help entries are derived; if this changed, the guide changes with it');
 // A named function rather than an expression, because the CRLF probe at the end of this file runs it
 // again over a Windows copy of the same source. Anchored with ^ and $ under /m, which is the second

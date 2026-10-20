@@ -11,10 +11,10 @@ import { DraftMark, EditMovedBanner, sameValue, useEditBase } from './editbase';
 import { draftModel, draftStore, heldDraft, useHeldDrafts } from './drafts';
 import { setPageModelIdentity } from './pagemodel';
 import { DesktopPicker, WorkspacePicker, type WorkspaceChoice } from './connectpickers';
-import { ENV_OPTIONS } from './connectpickers-model';
+import { COPY as PICKER_COPY, ENV_OPTIONS, OPTION_STYLE, SIGN_IN_WAYS, signInSentence, signInToReuse, signInStopped, waitForSignIn } from './connectpickers-model';
 import {
   type HubRecord, type HubContext, type HubPanel, type Job, type ModelEndpointList, type NotLinkedSource, type SqlEndpointInfo,
-  SEARCH_FROM, defaultMoveCount, defaultMoveSentence, endpointFor, jobOptions, kindWord, removeConfirmSentence, routeSection, rowJobs, rowSecondLine, sideId, startFormStaysOpen,
+  SEARCH_FROM, defaultMoveCount, defaultMoveSentence, endpointFor, jobOptions, kindWord, pickerStillPressed, removeConfirmSentence, routeSection, rowJobs, rowSecondLine, sideId, startFormStaysOpen, testsTargetToKeep,
 } from './connectionshub-model';
 import { BTN, BTN_COMPACT, BTN_PRIMARY, BTN_QUIET, ChangePanel, DefaultConfirm, JobPicker, NotLinkedList } from './connectionshub-parts';
 
@@ -369,7 +369,7 @@ function endpointText(endpoint?: string | null): string {
   return decodeSegment(endpoint || '');
 }
 
-// An UNLABELLED cloud model reads "No label (Development settings)": with no label it counts as test (Kane, 10 Oct 2026), and that is a
+// An UNLABELLED cloud model reads "Not set (treated as Development)": with no label it counts as test (Kane, 10 Oct 2026), and that is a
 // different fact from a declared Development label. Permissions says it the same way, so the one fact has one wording. A label typed
 // into the saved file by hand that is not one of the four ("Production", "staging") reads Production, because the engine applies prod to it.
 function environment(r: ConnectionRecord): { text: string; tone: 'accent' | 'warn' | 'muted' } {
@@ -378,14 +378,15 @@ function environment(r: ConnectionRecord): { text: string; tone: 'accent' | 'war
   if (l === 'dev') return { text: 'Development', tone: 'accent' };
   if (l === 'uat') return { text: 'UAT', tone: 'accent' };
   if (l) return { text: 'Production', tone: 'warn' };
-  return { text: 'No label (Development settings)', tone: 'muted' };
+  return { text: 'Not set (treated as Development)', tone: 'muted' };
 }
 // Who the NEXT open of a target signs in as — ONLY a live sign-in record (probe.account); undefined when unknown. The
 // per-target lastAccount is never the prediction, only provenance ("last opened as <x>") (HIGH 3).
-function rowIdentity(account?: string, was?: string): string {
-  return account
-    ? (was && was !== account ? `as ${account} (was ${was})` : `as ${account}`)
-    : (was ? `last opened as ${was}` : 'account unknown');
+function rowIdentity(account?: string, was?: string, authMode?: string | null): string {
+  if (account) return was && was !== account ? `as ${account} (was ${was})` : `as ${account}`;
+  if (was) return `last opened as ${was}`;
+  // No account was read, but the sign-in the row uses is known: name it (a service identity has no account to show).
+  return SIGN_IN_WAYS.find((w) => w.value === authMode)?.label ?? 'account unknown';
 }
 
 function roleValue(side: ConnectionContextModel | undefined, fallback: string): string {
@@ -501,6 +502,8 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   // True only when a button opened the workspace picker; a deep link (goTo) leaves it false, so that first list read stays automatic.
   const pickerPressed = useRef(false);
   const openPicker = () => { pickerPressed.current = true; setView('workspace'); };
+  // The press belongs to the picker the button drew. It is spent when the hub closes or the person leaves the picker, so reopening the hub on this view reads automatically.
+  useEffect(() => { pickerPressed.current = pickerStillPressed(pickerPressed.current, shown, view); }, [shown, view]);
   const goTo = (section: string) => { pickerPressed.current = false; const r = routeSection(section); setViewState(r.view); setPanel(r.panel); setMenuId(null); setJobPick(null); };
   // Focus the search when the hub opens on the list (the tree "Open Model" lands here with search ready), once.
   const searchWanted = useRef(true);
@@ -642,6 +645,12 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     return () => { cancelled = true; clearTimeout(t); };
   }, [view, authMode, newTenant]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Every hook sits above the early return below: a hook after it changes the hook count when `shown` flips, and React stops with error #310 (blank Studio).
+  // A browser sign-in lives in a window of its own, and closing it answers nothing. So the wait is bounded and the person can cancel it,
+  // the same as the workspace picker's (waitForSignIn). The engine keeps a sign-in that finishes later, so Try again then needs no window.
+  const [addSignIn, setAddSignIn] = useState<'waiting' | null>(null);
+  const cancelAdd = useRef<() => void>(() => {});
+
   if (!shown) return null;
 
   const editing = ctx?.editing;
@@ -657,6 +666,13 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   // target signed in via a switchable family (a local model uses Windows auth; azcli / service principal have no picker).
   const liveConnId = (editing?.live && editing?.kind !== 'localDesktop' ? editing?.connectionId : null) || querying?.connectionId;
   const switchable = records.find((r) => r.kind === 'xmla' && r.id === liveConnId && credentialFamily(r.authMode) != null);
+  // A working sign-in that keeps no saved account (a service identity, the Azure command line) still shows in the menu and
+  // on the header button, so the person sees they are in (round 2 UAT N13).
+  const workingWay = (() => {
+    const r = records.find((x) => x.kind === 'xmla' && x.id === liveConnId && credentialFamily(x.authMode) == null);
+    const way = r && SIGN_IN_WAYS.find((w) => w.value === (r.authMode || '').trim().toLowerCase());
+    return r && way ? { label: way.label, tenant: r.tenantId || '', name: nameOf(r) } : null;
+  })();
 
   // ---- mutations (every one goes through an existing engine op) -------------------------------------------------
   // CLOSE CONTRACT: a SUCCESSFUL terminal action (open live, open a file, a working-copy open, create) closes the
@@ -667,11 +683,13 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     setSwitchTarget(r);
     setPickedProfileId(null);   // a fresh failure re-selects the row that failed, so the primary button names it
   };
-  const openModel = async (r: ConnectionRecord, opts?: { forceReauth?: boolean; accountProfileId?: string; makeDefault?: boolean; loginHint?: string }, purpose: 'open' | 'query' = 'open') => {
+  // Returns null when the model opened (or the unsaved-changes question is showing), else the sentence that says why not. A model typed or
+  // picked from a list (id 'new:...') has no row yet, so its failure is returned for the form or picker to say, not drawn twice.
+  const openModel = async (r: ConnectionRecord, opts?: { forceReauth?: boolean; accountProfileId?: string; makeDefault?: boolean; loginHint?: string }, purpose: 'open' | 'query' = 'open'): Promise<string | null> => {
     setBusyId('open:' + r.id); setError(null); setRowError(null); setMenuId(null); setJobPick(null);
     try {
       const s = await rpc<SessionInfo>('sessionInfo').catch(() => null);
-      if (s?.hasUnsavedChanges && !openConfirm) { setPendingOpen(r); setOpenConfirm(true); setBusyId(null); return; }
+      if (s?.hasUnsavedChanges && !openConfirm) { setPendingOpen(r); setOpenConfirm(true); setBusyId(null); return null; }
       const discard = !!s?.hasUnsavedChanges;
       if (r.kind === 'localDesktop') await rpc('openLocal', r.endpoint, r.database || null, discard);
       else if (r.kind === 'file') await rpc('open', r.endpoint, discard);
@@ -680,9 +698,11 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null); setOpenConfirm(false); setPendingOpen(null);
       await refresh(); await load(); await reloadHistory();
       onClose();
+      return null;
     } catch (e) {
       const failure = String((e as Error).message ?? e);
       await reloadHistory();   // a FAILED open also appends a timeline event (a cancelled sign-in / superseded open)
+      if (r.id.startsWith('new:')) return failure;
       if (isSwitchableXmla(r) && isAuthRequiredFailure(failure)) {
         setError(failure);
         markFailedAuthAttempt(r, purpose, opts?.accountProfileId, opts?.loginHint);
@@ -690,6 +710,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       } else if (records.some((x) => x.id === r.id)) {
         setRowError({ id: r.id, text: failure, retry: () => void openModel(r, opts, purpose) });   // said on the row that failed
       } else setError(failure);
+      return failure;
     }
     finally { setBusyId(null); }
   };
@@ -766,22 +787,23 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     await openModel({ id: 'desktop:' + dataSource, kind: 'localDesktop', endpoint: dataSource });
     return null;
   };
-  const connectPicked = async (c: WorkspaceChoice): Promise<string | null> => {
+  // Connect on a model picker, and the address form, OPEN the model (the editing session), the same as Open on a saved
+  // row does. They used to attach it for tests and queries only, so the Studio stayed on the old model (UAT F12, F3). The Tests target changes
+  // only where the person asks for one.
+  const openByAddress = async (c: { endpoint: string; database: string; authMode: string; tenantId: string | null; label?: string }): Promise<string | null> => {
     setError(null);
-    const res = await connectXmla(c.endpoint, c.database, c.authMode, c.tenantId);
-    if (!res.ok) return res.message || 'The connection did not complete.';
-    await load();
+    const failure = await openModel({ id: 'new:' + c.endpoint, kind: 'xmla', endpoint: c.endpoint, database: c.database, authMode: c.authMode, tenantId: c.tenantId } as ConnectionRecord);
+    if (failure) return failure || 'The connection did not complete.';
     if (c.label) {
       const recs = await rpc<ConnectionRecord[]>('listConnections').catch(() => [] as ConnectionRecord[]);
       const match = (recs ?? []).find((r) => r.endpoint === c.endpoint && (r.database || '') === c.database)
         ?? (recs ?? []).find((r) => r.endpoint === c.endpoint);
-      if (match) { await rpc('labelConnection', match.id, c.label).catch(() => undefined); await load(); }
+      if (match) await rpc('labelConnection', match.id, c.label).catch(() => undefined);
     }
     announceConnectionChange();   // the same in-webview announce the pasted-address add makes (see addAndConnect)
-    setView('open');
-    setNotice(`${c.database || 'The model'} is connected and saved.`);
     return null;
   };
+  const connectPicked = (c: WorkspaceChoice): Promise<string | null> => openByAddress(c);
 
   // Publish to: link the open model to a workspace model. Choosing only links it; publishing still shows its review.
   const setPublish = async (r: ConnectionRecord) => {
@@ -855,27 +877,33 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   const addAndConnect = async () => {
     if (!endpoint.trim()) return;
     setBusyId('add'); setError(null);
+    const bounded = authMode === 'interactive';
+    const showWaiting = bounded ? setTimeout(() => setAddSignIn('waiting'), 1500) : undefined;
     try {
+      // Connecting is how this form saves a model, and it moves the Tests slot to the new model. Read the model that was answering first.
+      const keep = testsTargetToKeep(context?.querying, { endpoint: endpoint.trim(), database: database.trim() });
       // Only the advanced modes expose (and use) the tenant field; a browser sign-in must NOT carry a hidden stale
       // tenant a prior advanced attempt left behind (MED, sol) - the picker targets the tenant itself.
       const advanced = authMode === 'azcli' || authMode === 'serviceprincipal';
-      const res = await connectXmla(endpoint.trim(), database.trim(), authMode, advanced ? (newTenant.trim() || null) : null);
-      if (!res.ok) { setError(res.message || 'The connection did not complete. Check the address, model name, and sign-in.'); return; }   // the engine's actual reason
-      const added = endpoint.trim();
+      // The address form opens the model (and remembers it, and the label the person set), as Open on its row would.
+      const call = openByAddress({ endpoint: endpoint.trim(), database: database.trim(), authMode, tenantId: advanced ? (newTenant.trim() || null) : null, label: newLabel });
+      let failure: string | null;
+      if (bounded) {
+        const wait = waitForSignIn(call);
+        cancelAdd.current = wait.cancel;
+        const out = await wait.done;
+        if (out.kind === 'unfinished') { setError(PICKER_COPY.signInUnfinished + ' Try again.'); return; }
+        failure = out.value;
+      } else failure = await call;
+      if (failure && signInStopped(failure)) { setError(PICKER_COPY.signInUnfinished + ' Try again.'); return; }
+      failure = failure && signInSentence(failure);   // a lost engine in plain words
+      if (failure) { setError(failure || 'The connection did not complete. Check the address, model name, and sign-in.'); return; }   // the engine's actual reason
+      // The new model is saved. The model that answered the checks answers them again, so no check turns into "could not check".
+      if (keep) await connectXmla(keep.endpoint, keep.database, keep.authMode, keep.tenantId).catch(() => undefined);
       setEndpoint(''); setDatabase(''); setNewLabel(''); setNewTenant('');
-      await load();
-      // A newly remembered endpoint carries the label the person set: apply it once, then land back on the model list.
-      if (newLabel) {
-        const recs = await rpc<ConnectionRecord[]>('listConnections').catch(() => [] as ConnectionRecord[]);
-        const match = (recs ?? []).find((r) => r.endpoint === added);
-        if (match) { await rpc('labelConnection', match.id, newLabel).catch(() => undefined); await load(); }
-      }
-      // connect_xmla runs through the UI door and emits no engine activity, so the host's 'connectionChanged' relay
-      // never fires for it. Announce in-webview so a mounted sibling consumer (the Compare picker) re-reads the new
-      // record without a remount — the product-wide contract; the hub itself already refreshed via its own load().
-      announceConnectionChange();
       setView('open');
-    } finally { setBusyId(null); }
+    } catch (e) { setError(signInSentence(e)); }
+    finally { if (showWaiting) clearTimeout(showWaiting); setAddSignIn(null); setBusyId(null); }
   };
 
   // "New blank model" is guarded. The engine swaps the open model UNCONDITIONALLY, so the hub must (a) take a name
@@ -1027,6 +1055,10 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     try {
       const saved = await saveRecord();
       if (!saved?.id) return;
+      // Save and test is a save: the source is linked to the model whose row this form is on, as Save does. Without it the same source
+      // read "Connected" above and "Not linked to a model" below (UAT P33).
+      const row = records.find((x) => x.id === sqlRow);
+      if (row) await rpc('setModelSqlEndpoint', saved.id, row.id, 'human');
       const result = await rpc<SqlSourceTestResult>('testSqlSource', saved.id, 'human');
       setSqlTest(result ?? { ok: false, note: 'The test finished without saying anything.' });
     }
@@ -1084,7 +1116,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     const isEditing = jobs.includes('editing');
     const ep = endpointOf(r);
     // The account shows once, in the header. A row says who it opens as only when that is someone else.
-    const who = r.kind === 'xmla' && (!account || account !== signedInAccount) ? rowIdentity(account, was) : null;
+    const who = r.kind === 'xmla' && (!account || account !== signedInAccount) ? rowIdentity(account, was, r.authMode) : null;
     const where = [whereOf(r), who].filter(Boolean).join(', ');
     const testsWhy = rowJobs(r, ctx).includes('tests and queries') ? null : (r.testsRefusal || null);
     const publishWhy = rowJobs(r, ctx).includes('publish target') ? null : (r.publishRefusal || null);
@@ -1139,7 +1171,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           <div className="hub-inline" data-testid="hub-env-edit">
             <label className="sem-field-label">Environment label
               <select data-testid="hub-env-select" disabled={busy} value={(r.label || '')} autoFocus onChange={(e) => void relabel(r, e.target.value)} className="sem-field sem-field-sm">
-                {ENV_OPTIONS.filter((o) => o.value !== 'local').map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {ENV_OPTIONS.filter((o) => o.value !== 'local').map((o) => <option key={o.value} value={o.value} style={OPTION_STYLE}>{o.label}</option>)}
               </select></label>
             <span className="sem-text-meta">Sets what your assistant may do on this model.</span>
             <button className={`${BTN_QUIET} ml-auto`} onClick={() => setEnvEditId(null)}>Done</button>
@@ -1231,7 +1263,15 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     const methodLabel = (family?: string): string => credentialFamily(family) === 'devicecode' ? 'device code sign-in' : 'browser sign-in';
     return (
       <div className="hub-pop" role="group" aria-label="Accounts" data-testid="hub-account-menu">
-        {profiles.length === 0 && <div className="sem-text-meta hub-pop-item">No saved accounts yet. Pick a workspace model to sign in.</div>}
+        {/* Nothing saved: one Sign in, which starts the browser sign-in on the workspace page at once. */}
+        {workingWay && (
+          <div className="hub-pop-item" data-testid="hub-working-signin">
+            <span className="note-dot note-dot-ok" aria-hidden />
+            <span className="min-w-0 flex-1"><b className="block truncate">{workingWay.label}</b>
+              <span className="sem-text-meta block truncate">{[workingWay.tenant, `in use for ${workingWay.name}`].filter(Boolean).join(' · ')}</span></span>
+          </div>
+        )}
+        {profiles.length === 0 && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-first" disabled={busy} onClick={() => openPicker()}>Sign in</button>}
         {profiles.map((p) => (
           <div key={p.id} className="hub-pop-item" data-testid="hub-profile-row">
             <span className={`note-dot ${p.signedIn ? 'note-dot-ok' : ''}`} aria-hidden />
@@ -1246,7 +1286,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         {defaultConfirm}
         <div className="hub-pop-rule" />
         {switchable && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-switch-account" disabled={busy} onClick={() => openAccountChoice(switchable)}>Use another account for {nameOf(switchable)}</button>}
-        <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-another-top" disabled={busy} onClick={() => { if (switchable) signInAnother(switchable); else openPicker(); }}>Sign in another account</button>
+        {profiles.length > 0 && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-another-top" disabled={busy} onClick={() => { if (switchable) signInAnother(switchable); else openPicker(); }}>Sign in another account</button>}
         <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-other-sign-in" onClick={() => openAddView()}>Other ways to sign in</button>
         <div className="hub-pop-item"><button className={BTN_QUIET} onClick={() => viewHistoryFor(null)}>History</button></div>
       </div>
@@ -1459,7 +1499,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     return (
       <div data-testid="hub-auth-preflight" className="text-xs border-t pt-3" style={{ borderColor: 'var(--sem-rule)' }}>
         <div className="flex items-center gap-2">
-          <span className="sem-label">{sp ? 'Service identity setup' : 'Command-line sign-in'}</span>
+          <span className="sem-label">{sp ? 'Service identity setup' : 'Azure command line'}</span>
           {prereqLoading && <span className="text-xs" style={{ color: 'var(--sem-muted)' }}>Checking...</span>}
           {!prereqLoading && prereq && <span className={`sem-chip ml-auto ${prereq.ready ? 'sem-chip-ok' : 'sem-chip-warn'}`}>{prereq.ready ? 'Ready' : 'Not ready'}</span>}
         </div>
@@ -1516,9 +1556,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
             <input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="Optional if the workspace has one model" autoComplete="off" className="sem-field " /></label>
           <label className="sem-field-label">Sign-in
             <select data-testid="hub-authmode-select" value={authMode} onChange={(e) => { const m = e.target.value; setAuthMode(m); if (m !== 'azcli' && m !== 'serviceprincipal') setNewTenant(''); }} className="sem-field ">
-              <option value="interactive">Browser sign-in</option>
-              <option value="azcli">Command-line sign-in</option>
-              <option value="serviceprincipal">Service identity</option>
+              {SIGN_IN_WAYS.map((o) => <option key={o.value} value={o.value} style={OPTION_STYLE}>{o.label}</option>)}
             </select></label>
           {/* Tenant targeting for the advanced modes: a service principal needs its tenant; az login otherwise silently
               uses its home tenant (the bug sol flagged where the add passed tenantId=null). */}
@@ -1529,10 +1567,15 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           )}
           <label className="sem-field-label">Environment
             <select value={newLabel} onChange={(e) => setNewLabel(e.target.value)} className="sem-field ">
-              {ENV_OPTIONS.filter((o) => o.value !== 'local').map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              {ENV_OPTIONS.filter((o) => o.value !== 'local').map((o) => <option key={o.value} value={o.value} style={OPTION_STYLE}>{o.label}</option>)}
             </select>
             <span className="sem-text-meta">Sets what your assistant may do on this model.</span></label>
           {advanced && AuthPreflight()}
+          {addSignIn === 'waiting' && (
+            <div className="sem-inline sem-text-meta" aria-live="polite" data-testid="hub-add-signin-waiting">
+              <span>{PICKER_COPY.signInWaiting}</span>
+              <button type="button" className={`${BTN_QUIET} sem-push`} data-testid="hub-add-signin-cancel" onClick={() => cancelAdd.current()}>Cancel</button>
+            </div>)}
           <div className="flex justify-end gap-2 border-t pt-3" style={{ borderColor: 'var(--sem-border)' }}>
             <button type="button" className={BTN} onClick={() => setView('open')}>Cancel</button>
             <button type="submit" className={BTN_PRIMARY} disabled={!endpoint.trim() || busy}>Connect and remember</button>
@@ -1592,8 +1635,8 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         <div className="hub-acct">
           <button className="sem-btn max-w-[260px]" data-testid="hub-account-button" aria-haspopup="dialog" aria-expanded={panel === 'account'}
             onClick={() => { setMenuId(null); setPanel(panel === 'account' ? 'none' : 'account'); }} title="Your accounts">
-            {signedInAccount && <span className="note-dot note-dot-ok" aria-hidden />}
-            <span className="min-w-0 truncate">{signedInAccount || 'Sign in'}</span><span aria-hidden>{'▾'}</span>
+            {(signedInAccount || workingWay) && <span className="note-dot note-dot-ok" aria-hidden />}
+            <span className="min-w-0 truncate">{signedInAccount || workingWay?.label || 'Sign in'}</span><span aria-hidden>{'▾'}</span>
           </button>
           {panel === 'account' && AccountMenu()}
         </div>
@@ -1642,7 +1685,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           {view === 'add' && AddView()}
           {view === 'work' && WorkView()}
           {view === 'desktop' && <DesktopPicker onBack={() => setView('open')} onUseForTests={useDesktopForTests} onOpen={openDesktop} />}
-          {view === 'workspace' && <WorkspacePicker account={signedInAccount} pressedFirst={pickerPressed.current} onBack={() => setView('open')}
+          {view === 'workspace' && <WorkspacePicker account={signedInAccount || workingWay?.label} {...(({ authMode, tenantId }) => ({ initialAuthMode: authMode, initialTenant: tenantId }))(signInToReuse(records, liveConnId))} pressedFirst={pickerPressed.current} onBack={() => setView('open')}
             onPasteAddress={() => openAddView()} onConnect={connectPicked} />}
       </div>
       {error && !switchTarget && <div className="hub-error" role="alert">{error}</div>}

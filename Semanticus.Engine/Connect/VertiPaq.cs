@@ -156,8 +156,20 @@ namespace Semanticus.Engine
             var rowsByTable = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrEmpty(tables?.Error))
             {
+                // The DMV lists a table's own storage AND its hierarchies (H$), relationship indexes (R$) and user hierarchies (U$) under the same
+                // DIMENSION_NAME, each with its own ROWS_COUNT. Keeping the last one read gave "4,506 rows" for a model with 62,787. The table's own
+                // rows add across its partitions; a server with no TABLE_ID cannot tell them apart, so the largest count under the name is the table.
                 var ix = Index(tables);
-                foreach (var r in tables.Rows ?? Array.Empty<object[]>()) rowsByTable[Cell(r, ix, "DIMENSION_NAME")] = ToLong(Get(r, ix, "ROWS_COUNT"));
+                var hasId = ix.ContainsKey("TABLE_ID");
+                foreach (var r in tables.Rows ?? Array.Empty<object[]>())
+                {
+                    var name = Cell(r, ix, "DIMENSION_NAME") ?? "";
+                    var n = ToLong(Get(r, ix, "ROWS_COUNT"));
+                    var have = rowsByTable.TryGetValue(name, out var seen);
+                    if (!hasId) { if (!have || n > seen) rowsByTable[name] = n; continue; }
+                    if (IsStructure(Cell(r, ix, "TABLE_ID"))) { if (!have) rowsByTable[name] = 0; continue; }
+                    rowsByTable[name] = seen + n;
+                }
             }
 
             var byTable = cols.GroupBy(c => c.Table ?? "").ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);

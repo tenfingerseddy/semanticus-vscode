@@ -178,6 +178,13 @@ namespace Semanticus.Engine
                 .Where(t => t != null && IsOpenTask(t) && t.State != PlanTaskStates.SetAside && t.OriginLink?.Kind == PlanOriginKinds.Item)
                 .SelectMany(t => t.Claims ?? Array.Empty<string>());
 
+        /// <summary>The claims of tasks the person set aside (the task's own state, or Set aside on its row, kept beside it as a skip) that were handed over from a row.
+        /// The cleanup row does not list these columns again: the person said no to removing them, and a row that came straight back made Set aside do nothing (UAT 18 Oct N22, round 2).</summary>
+        internal static IEnumerable<string> SetAsideClaimsOf(IEnumerable<PlanTask> tasks, Func<PlanTask, bool> skipped) =>
+            (tasks ?? Enumerable.Empty<PlanTask>())
+                .Where(t => t != null && t.State != PlanTaskStates.Done && t.OriginLink?.Kind == PlanOriginKinds.Item && (t.State == PlanTaskStates.SetAside || skipped(t)))
+                .SelectMany(t => t.Claims ?? Array.Empty<string>());
+
         /// <summary>A short stable hash of a set of claims, so the same set always has the same Send key (string.GetHashCode changes per process).</summary>
         internal static string ClaimsHash(IEnumerable<string> claims)
         {
@@ -464,11 +471,19 @@ namespace Semanticus.Engine
             if (item.StateWord == PlanStateWords.Waiting && (string.IsNullOrWhiteSpace(item.StateNote) || item.StateNote == PlanFootprint.OrderedByPlanNote)) item.StateNote = WaitingNote(item, task, queue, assistantAway);
             // A row the assistant leaves says why ON THE ROW (hero run 20, J2: four rows read only "Waiting, ask your assistant"). Its note
             // (set_plan_task_note) leads the state note of an open assistant row, so "Needs a date column: none exists in this model" is what the person reads.
-            var assistants = (task != null ? task.Doer : item.Doer) == PlanDoers.Assistant || item.Who == ModelPlanOwners.Assistant;
+            var assistants = ForAssistant(item, task);
             if (assistants && !string.IsNullOrWhiteSpace(item.AssistantNote)
                 && (item.StateWord == PlanStateWords.Ready || item.StateWord == PlanStateWords.Waiting)
                 && !(item.StateNote ?? string.Empty).StartsWith(item.AssistantNote.Trim(), StringComparison.Ordinal))
                 item.StateNote = (item.AssistantNote.Trim() + " " + item.StateNote).Trim();
+        }
+
+        /// <summary>Is this row the assistant's? The doer decides, and it already carries the person's choice (residue wins over the natural owner),
+        /// so "Who does it > Me" changes the row's words too (UAT F17). Only a row never stamped with a doer falls back to its natural owner (Who).</summary>
+        private static bool ForAssistant(ModelPlanItem item, PlanTask task)
+        {
+            var doer = task != null ? task.Doer : item.Doer;
+            return doer == PlanDoers.Assistant || (string.IsNullOrEmpty(doer) && item.Who == ModelPlanOwners.Assistant);
         }
 
         internal const string WaitingForAssistantNote = "Waiting for your assistant. Ask it to run the plan.";
@@ -478,7 +493,7 @@ namespace Semanticus.Engine
         /// connected, or whose queue the person paused (By hand), says that instead of leaving "Waiting" with no one to wait for.</summary>
         private static string WaitingNote(ModelPlanItem item, PlanTask task, string queue, Func<bool> assistantAway)
         {
-            var mine = (task != null ? task.Doer : item.Doer) == PlanDoers.Assistant || item.Who == ModelPlanOwners.Assistant;
+            var mine = ForAssistant(item, task);
             if (mine && (queue == PlanAssistantQueue.Paused || (assistantAway?.Invoke() ?? false))) return WaitingForAssistantNote;
             var first = item.WaitsFor is { Length: > 0 } ? item.WaitsFor[0] : null;
             if (first == null) return "Waiting for " + (mine ? "your assistant" : "you") + ".";
@@ -525,7 +540,7 @@ namespace Semanticus.Engine
                     // Only a task for the assistant is offered, so only it carries the offer's note (contract 3.2).
                     // A Ready assistant row with no assistant to take it (none connected, or By hand) says what to do (hero run 19, D16).
                     // A note already written for the row (a restart, a failed line) keeps its place.
-                    if ((task != null ? task.Doer : item.Doer) == PlanDoers.Assistant || (task == null && item.Who == ModelPlanOwners.Assistant))
+                    if (ForAssistant(item, task))
                     {
                         if (task != null && queue == PlanAssistantQueue.Paused) return PausedByYouNote;
                         var written = task != null ? task.ReleaseNote : item.StateNote;
@@ -610,7 +625,8 @@ namespace Semanticus.Engine
                 Jump = jump,
 
                 Source = task.Source ?? PlanSources.Words,
-                SourcePage = task.SourcePage,
+                // A task saved from a page that no longer exists reads as the page that replaced it.
+                SourcePage = AskRouteCatalog.PageOf(task.SourcePage),
                 Doer = task.Doer,
                 DoneWhen = task.DoneWhen,
                 DoneText = DoneTextOf(task.DoneWhen, objects.Length),
@@ -715,8 +731,12 @@ namespace Semanticus.Engine
         /// questions and changes nothing. Null for anything else, which is not a refusal: the task is still added.</summary>
         internal static string FieldPageOf(string tool)
         {
-            var page = string.IsNullOrWhiteSpace(tool) ? null : AskRouteCatalog.Find(tool.Trim());
-            return page == null || string.Equals(page.Id, AskRouteCatalog.DataTool, StringComparison.Ordinal) ? null : page.Id;
+            var id = string.IsNullOrWhiteSpace(tool) ? null : tool.Trim();
+            // "askdata" is the retired page that only answered a question. A saved link or an older extension may still
+            // send it, and it is still not a place a task is done, so it is dropped as it always was. The Query page, and
+            // the retired "daxlab", are kept: that is where a calculation is written by hand.
+            if (string.Equals(id, AskRouteCatalog.DataTool, StringComparison.Ordinal)) return null;
+            return AskRouteCatalog.Find(id)?.Id;
         }
 
         /// <summary>Where the work is done by hand: the page a Send came from, else the page the Plan's field named for
@@ -729,7 +749,7 @@ namespace Semanticus.Engine
             if (page != null) return new ModelPlanJump { Tool = page.Id, Label = page.Label };
             if (string.Equals(task.SourcePage, PlanTasks.SuggestSourcePage, StringComparison.Ordinal)) return null;
             var field = string.IsNullOrWhiteSpace(task.FieldPage) ? null : AskRouteCatalog.Find(task.FieldPage);
-            if (field != null && !string.Equals(field.Id, AskRouteCatalog.DataTool, StringComparison.Ordinal))
+            if (field != null && !string.Equals(task.FieldPage, AskRouteCatalog.DataTool, StringComparison.Ordinal))
                 return new ModelPlanJump { Tool = field.Id, Label = field.Label };
             // The WHOLE text, not the title: the field reads the whole text, so a title cut at 280 characters could name
             // a page the field did not, or lose the one it did (Sol on fix-askdata-final).
@@ -789,7 +809,7 @@ namespace Semanticus.Engine
             var state = PlanMemory.Read(bound.File, bound.Identity);
             if (bound.Nowhere)
             {
-                var held = _sessionPlanTasks.GetOrCreateValue(bound.Context);
+                var held = HeldPlanState(bound);
                 lock (held)
                 {
                     state.Tasks = JsonSerializer.Deserialize<List<PlanTask>>(JsonSerializer.Serialize(held.Tasks, TaskCopy), TaskCopy);
@@ -807,6 +827,9 @@ namespace Semanticus.Engine
                 }
                 return state;
             }
+
+            // The model got its first folder: what the person decided while it had none, kept in the per-user home, moves into the folder's memory.
+            if (MoveHomeIntoFolder(bound)) state = PlanMemory.Read(bound.File, bound.Identity);
 
             // The model got its first file: what the plan kept while it had none moves into the file, once, so the done rows and the
             // percentage carry over and do not start again at nothing (hero20 D3, the 0% after the assistant saved).
@@ -902,8 +925,9 @@ namespace Semanticus.Engine
                 throw new InvalidOperationException(PlanMemoryModelSwitchedSentence);
             if (bound.Nowhere)
             {
-                var held = _sessionPlanTasks.GetOrCreateValue(bound.Context);
+                var held = HeldPlanState(bound);
                 lock (held) { CountPlanRowChanges(change)(held); PlanTasks.Trim(held); }
+                KeepHeldInHome(bound, held);
                 return;
             }
             WritePlanMemory(bound, change);

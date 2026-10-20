@@ -224,7 +224,7 @@ const noState = { './bridge': { loadState: (_k, fallback) => fallback, saveState
     return { h, closed };
   };
   const entityBox = (tree) => find(tree, (el) => el.type === 'input' && el.props.placeholder === 'orders');
-  const saveButton = (tree) => find(tree, (el) => typeof el.type === 'function' && el.props?.saveLabel === 'Save mapping');
+  const saveButton = (tree) => find(tree, (el) => typeof el.type === 'function' && el.props?.saveLabel === 'Save check');
   const fireActivity = async () => { [...activity].forEach((fn) => fn({ kind: 'set_table_source_mapping' })); await settle(); await settle(); };
 
   test('I2: the drawer follows a mapping the assistant changed while it was open, and Save keeps it (UAT-F-S06b-2-007)', async () => {

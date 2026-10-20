@@ -89,6 +89,18 @@ namespace Semanticus.Tests
         // ---- show_in_studio: the happy path ---------------------------------------------------------------------------
 
         [Fact]
+        public async Task A_show_of_the_query_page_says_the_assistants_run_is_already_a_row_there()
+        {
+            using var f = await ModelAsync();
+            var result = await McpTools.ShowInStudio(f.Engine, "edit/queries", "Here is the query I ran.");
+            Assert.False(string.IsNullOrWhiteSpace(result.Shown));
+            Assert.Contains("row", result.Shown, StringComparison.Ordinal);
+            Assert.Contains("paste", result.Shown, StringComparison.OrdinalIgnoreCase);
+            var other = await McpTools.ShowInStudio(f.Engine, "plan", "This is your Plan.");
+            Assert.Null(other.Shown);
+        }
+
+        [Fact]
         public async Task A_show_publishes_one_studio_show_with_how_filled_and_keeps_it()
         {
             using var f = await ModelAsync();
@@ -632,6 +644,25 @@ namespace Semanticus.Tests
                 Assert.True(StudioMaps.AutoFor(tool)?.Always == true, tool + " is a plan change with its own note");
         }
 
+        // The assistant's waive_finding of a Validation check (system "test") is accepting a difference in a check, on Validation. The same tool on a
+        // finding still reads "accepting a finding" on Model quality.
+        [Fact]
+        public async Task The_assistants_waive_of_a_check_is_narrated_as_accepting_a_difference_on_Validation()
+        {
+            var (f, c, heard) = await FollowAsync();
+            using var _f = f;
+            await f.Engine.NoteAgentCallAsync("waive_finding", McpHealthAppender.CheckFocusPrefix + "c1");
+            c.Advance(1);
+            await f.Engine.NoteAgentCallAsync("unwaive_finding", McpHealthAppender.CheckFocusPrefix + "c1");
+            c.Advance(1);
+            await f.Engine.NoteAgentCallAsync("waive_finding", "measure:Sales/Net Sales");
+            var kept = (await f.Engine.GetStudioNotesAsync(null)).Notes;
+            Assert.Equal(new[] { "Your assistant is accepting a difference in a check.", "Your assistant is bringing a difference back in a check.", "Your assistant is accepting a finding." },
+                kept.Select(n => n.Say).ToArray());
+            Assert.Equal(new[] { "review/validation", "review/validation", "review/model-quality" }, kept.Select(n => n.Place).ToArray());
+            Assert.Null(kept[0].Focus);
+        }
+
         // show-checks (Kane, 12 Oct: "when the assistant runs checks in validation the screen doesn't appear to change"): a check run that came
         // within three seconds of another note, or right after a save_test on the same page, was dropped as "nothing new to look at".
         [Fact]
@@ -751,6 +782,38 @@ namespace Semanticus.Tests
             var ids = doc.RootElement.GetProperty("places").EnumerateArray().Select(p => p.GetProperty("id").GetString()).ToArray();
             Assert.Equal(ids, StudioMaps.PlaceIds.ToArray());
             Assert.Equal(25, ids.Length);
+        }
+
+        /// <summary>1.6: Explore > Query replaced Ask your data and Queries. The two places keep their ids (the description and the
+        /// assistant's habit depend on them) but both open the one page, called Query, and say so in their steps. No place names
+        /// a page that no longer exists, and the press for Ask finds the Ask button in the Query page's bar.</summary>
+        [Fact]
+        public void Explore_ask_and_edit_queries_both_open_the_query_page()
+        {
+            foreach (var id in new[] { "explore/ask", "edit/queries" })
+            {
+                var place = StudioMaps.FindPlace(id);
+                Assert.NotNull(place);
+                Assert.Equal("query", place.Tool);
+                Assert.Equal("Query", place.Label);
+                Assert.Contains("Explore, then Query", place.How, StringComparison.Ordinal);
+            }
+            foreach (var p in StudioMaps.Places)
+            {
+                Assert.NotEqual("askdata", p.Tool);
+                Assert.NotEqual("daxlab", p.Tool);
+                Assert.DoesNotContain("Ask your data", p.How, StringComparison.Ordinal);
+                Assert.DoesNotContain("Queries", p.How, StringComparison.Ordinal);
+            }
+            // The properties place only reveals an object in the tree, so it names a page that still exists.
+            Assert.Equal("focus", StudioMaps.FindPlace("edit/properties").Target);
+            Assert.Equal("instructions", StudioMaps.FindPlace("edit/properties").Tool);
+
+            var presses = File.ReadAllText(RepoFile("Semanticus.VSCode/webview/src/studio/presses.json"));
+            Assert.Contains("[data-testid=\\\"query-ask\\\"]", presses, StringComparison.Ordinal);
+            Assert.DoesNotContain("askdata-", presses, StringComparison.Ordinal);
+            Assert.Equal("explore/ask", StudioMaps.PressFor("ask_data").Place);
+            Assert.Equal("edit/queries", StudioMaps.PressFor("explain_value").Place);
         }
 
         [Fact]

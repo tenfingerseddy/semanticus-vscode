@@ -50,6 +50,10 @@ namespace Semanticus.Engine
         /// <summary>For waitjev: the seconds the press has waited for Jev so far. Null otherwise.</summary>
         public int? WaitedSeconds { get; set; }
 
+        /// <summary>For waitjev: what Jev is being asked right now, in plain words with the real count ("Jev is choosing how 48 columns add up
+        /// and what Copilot sees in 396 fields"), so the wait says what it is for. Null when no request is out.</summary>
+        public string Choosing { get; set; }
+
         /// <summary>Milliseconds since the press started (one stopwatch for the whole run), when this step began. The gap between two
         /// events is how long the step before it took, which is how a later job sees where the time goes.</summary>
         public long Ms { get; set; }

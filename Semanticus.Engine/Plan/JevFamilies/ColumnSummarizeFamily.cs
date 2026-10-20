@@ -54,16 +54,18 @@ namespace Semanticus.Engine
 
         internal const string Question = "summarize_by";
 
-        /// <summary>WHETHER THE ASKS GO ONE PER TABLE (m11/jev-batch, JevTableBatch.cs). True: a table's columns are asked in one
-        /// request, its shared facts once, one question per column pointing at its entry in `columns`. True, as shipped: ON (Kane, 1 Oct: "the batching is the best mitigation not caps"). The comparison run of 30 September missed its fixed bar (docs/redesign/jev-batch-comparison-result.md: the unsure middle moves, sure answers stay), and Kane accepted that an unsure answer can move and arrive ticked or unticked in the reviewed Plan. JevPerObjectModeTests still proves both modes give the same plan lines. False: one request per object (the test seam JevBatchedForTest sets it).</summary>
+        /// <summary>WHETHER THE ASKS ARE BATCHED (m11/jev-batch, JevTableBatch.cs; across tables since m16/jev-batch). True: the columns of the whole model
+        /// are asked in as few requests as Jev's context allows, the model's table list once, each table's shared facts once, one question per
+        /// column pointing at its entry in `columns`. True, as shipped: ON (Kane, 1 Oct: "the batching is the best mitigation not caps"). The comparison run of 30 September missed its fixed bar (docs/redesign/jev-batch-comparison-result.md: the unsure middle moves, sure answers stay), and Kane accepted that an unsure answer can move and arrive ticked or unticked in the reviewed Plan. JevPerObjectModeTests still proves both modes give the same plan lines. False: one request per object (the test seam JevBatchedForTest sets it).</summary>
         internal const bool Batched = true;
 
-        /// <summary>How many columns one batched request asks about. A table with more goes in more requests.</summary>
-        internal const int ChunkSize = 30;
+        /// <summary>The most columns one batched request asks about (JevTableBatch.ColumnObjectsPerRequest, measured live). Jev's context
+        /// (JevTableBatch.MaxBodyBytes) can cut a request earlier.</summary>
+        internal const int ChunkSize = JevTableBatch.ColumnObjectsPerRequest;
 
         /// <summary>How many columns one run asks about for the first time. A cap, not a sample: every ask costs budget.
         /// Answers already heard are not asked again, and the rest are asked in the runs that follow.</summary>
-        internal const int MaxColumnsPerRun = 60;
+        internal const int MaxColumnsPerRun = JevTableBatch.MaxObjectsPerRun;
 
         /// <summary>The rule id on the line that sets a column not to add up. It is good practice applied to every column
         /// the family hears back on, not anybody's pick, so its provenance is rule and the row does not count it as Jev's
@@ -152,7 +154,7 @@ namespace Semanticus.Engine
         }
 
         internal static bool Wants(Column c) =>
-            c != null && c.Type != ColumnType.RowNumber && !(c.Table is CalculationGroupTable)
+            c != null && c.Type != ColumnType.RowNumber && !(c.Table is CalculationGroupTable) && !StarterMeasureTemplates.IsMeasureTablePlaceholder(c)
             && (c.DataType == DataType.Int64 || c.DataType == DataType.Double || c.DataType == DataType.Decimal);
 
         /// <param name="skipAnswered">True on the Plan: a column that already has a base measure, or that a start plan decided and set not to add up, is answered and is not asked about again. False on the
@@ -257,6 +259,16 @@ namespace Semanticus.Engine
                         if (StarterMeasureTemplates.NameTaken(m, table, qualified) == null) a.NameOf[option] = qualified;
                     }
                 }
+            // NameFor already drops a doubled word ("Total Avg Avg Cost" to "Total Avg Cost", Kane 11 Oct), but only while no
+            // other column could get the plainer name: in a table with both Weight and Avg Weight, "Total Avg Weight" is
+            // Weight's own, so Avg Weight keeps the longer one and neither column loses its measure.
+            var current = asks.SelectMany(a => options.Select(o => (Ask: a, Option: o, Name: a.NameOf[o]))).ToList();
+            foreach (var (a, option, name) in current)
+            {
+                var longer = measures.NameFor(option, a.ColumnName, string.Equals(name, measures.NameFor(option, a.ColumnName, a.TableName), StringComparison.Ordinal) ? a.TableName : null, plainer: false);
+                if (string.Equals(longer, name, StringComparison.Ordinal)) continue;
+                if (current.Any(n => !ReferenceEquals(n.Ask, a) && string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase))) a.NameOf[option] = longer;
+            }
             var named = asks.SelectMany(a => options.Select(o => (Ask: a, Option: o, Name: a.NameOf[o]))).ToList();
             var plainer = named.Select(n => (n.Ask, n.Option, Name: Plainer(n.Name))).Where(n => !string.Equals(n.Name, n.Ask.NameOf[n.Option], StringComparison.Ordinal)).ToList();
             foreach (var (a, option, name) in plainer)
@@ -363,9 +375,10 @@ namespace Semanticus.Engine
                 DecisionRegistry.SummarizeOptions.Select(o => new DecisionOption(o, Criteria[o])).ToList()),
         };
 
-        /// <summary>The batched requests for the asks: each table's columns in chunks, the table's shared facts once and a question
-        /// for each column that starts "For the column `columns[i]`:" and then says exactly what the per-column question says.</summary>
-        internal static List<TableBatch<Ask>> Batches(Prepared prepared, int size = ChunkSize)
+        /// <summary>The batched requests for the asks: the columns of every table together, the model's table list once (it is the same for
+        /// every table), each table's own facts once in maps keyed by the table's name, and a question for each column that starts "For the
+        /// column `columns[i]`:" and then says exactly what the per-column question says. Each entry in `columns` names its table.</summary>
+        internal static List<TableBatch<Ask>> Batches(Prepared prepared, int size = ChunkSize, bool perTable = false)
         {
             var point = DecisionRegistry.Require(DecisionRegistry.ColumnSummarize);
             var options = DecisionRegistry.SummarizeOptions.Select(o => new DecisionOption(o, Criteria[o])).ToList();
@@ -377,14 +390,14 @@ namespace Semanticus.Engine
                 {
                     var name = JevTableBatch.QuestionName(Question, chunk[i].Ref);
                     questions.Add(new DecisionQuestion(name, DecisionQuestionKind.Choice,
-                        "For the column " + JevTableBatch.Path("columns", i) + ": " + Instructions, options));
+                        JevTableBatch.Lead("column", "columns", i, (string)chunk[i].Entry["name"], chunk[i].TableName) + Instructions, options));
                     batch.Names[chunk[i]] = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>(name, Question) };
                 }
                 batch.Questions = questions;
-                batch.Snapshot = ColumnAskFacts.BatchSnapshot(point, prepared.Shares[batch.TableRef], chunk.Select(a => a.Entry));
+                batch.Snapshot = ColumnAskFacts.BatchSnapshot(point, chunk.Select(a => (a.TableName, prepared.Shares[a.TableRef])), chunk.Select(a => a.Entry));
                 return batch;
             }
-            return JevTableBatch.Chunks(prepared.Asks, a => a.TableRef, size).SelectMany(c => JevTableBatch.Fit(c, Build)).ToList();
+            return JevTableBatch.Pack(prepared.Asks, a => a.TableRef, Build, point, perTable ? int.MaxValue : size, perTable, perTable ? JevTableBatch.LegacyQuestions : JevTableBatch.MaxQuestions);
         }
 
         /// <summary>Whether Jev's pick (rather than the principled rule) decides the column.</summary>
@@ -864,7 +877,7 @@ namespace Semanticus.Engine
         /// engine's (StarterMeasureTemplates.Name), with the column's name in words ("List Price", not "ListPrice"), so
         /// the name reads the way the readiness rule NAME-MEASURE asks. With <paramref name="table"/>, the table's name
         /// comes first ("Returns Quantity"), for a name two tables' columns would otherwise share.</summary>
-        internal string NameFor(string option, string column, string table = null)
+        internal string NameFor(string option, string column, string table = null, bool plainer = true)
         {
             var function = StarterMeasureTemplates.Function(option);
             var words = table == null ? Humanize(column) : Humanize(table) + " " + Humanize(column);
@@ -872,7 +885,7 @@ namespace Semanticus.Engine
                 ? string.Format(System.Globalization.CultureInfo.InvariantCulture, pattern.Replace("{", "{{").Replace("}", "}}").Replace("{{0}}", "{0}"), words)
                 : StarterMeasureTemplates.Name(option, words);
             // A column already named "Total Sales" must not become "Total Total Sales" (Kane, 11 Oct).
-            return ColumnSummarizeFamily.Plainer(name);
+            return plainer ? ColumnSummarizeFamily.Plainer(name) : name;
         }
 
         private static readonly Regex Hump = new Regex(@"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", RegexOptions.CultureInvariant);

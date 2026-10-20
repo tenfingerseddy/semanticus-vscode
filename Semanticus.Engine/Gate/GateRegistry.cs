@@ -64,7 +64,7 @@ namespace Semanticus.Engine
             const string reads = "A read: it changes nothing in the model, its files or the engine's settings.";
             Pass(reads,
                 "ListRefreshTypesAsync", "ListTreeAsync", "GetObjectAsync", "GetDaxAsync", "SessionInfoAsync", "ConnectionContextAsync",
-                "GetEntitlementAsync", "GetTrialTallyAsync", "GetVerifiedModeAsync", "GetModelGraphAsync", "GetOrientationAsync", "HarnessReportAsync",
+                "GetEntitlementAsync", "GetTrialTallyAsync", "GetHostSettingsAsync", "GetVerifiedModeAsync", "GetModelGraphAsync", "GetOrientationAsync", "HarnessReportAsync",
                 "GetLayoutAsync", "SearchModelAsync", "ListMeasuresAsync", "ListColumnsAsync", "GetModelObjectsAsync",
                 "GetPlanHistoryAsync", "BpaScanAsync", "BpaGetFixPromptAsync", "ValidateRuleAsync", "GetCustomRulesAsync",
                 "AiReadinessScanAsync", "AiReadinessScanLiveAsync", "ReadingCardAsync", "GetFixPromptAsync", "GetGroundingAsync", "ListWaiversAsync",
@@ -79,14 +79,14 @@ namespace Semanticus.Engine
                 "PreviewWorkflowEditAsync", "GetWorkflowLayoutAsync", "GetWorkflowRunAsync", "ExportWorkflowEvidenceAsync",
                 "ListWorkflowTemplatesAsync", "GetWorkflowTemplateAsync", "GetOpCatalogAsync", "CheckWorkflowAsync",
                 "ListInsightsAsync", "RecallExperienceAsync", "GetPrimerAsync", "ListPrimerSuggestionsAsync", "GetModelFingerprintAsync",
-                "ListInterviewQuestionsAsync", "ListInterviewSeedsAsync", "GetPlanAsync", "GetDocModelAsync", "GetDocOutlineAsync",
+                "ListInterviewQuestionsAsync", "ListInterviewSeedsAsync", "GetCopilotViewAsync", "GetStudentQuestionsAsync", "InterviewRoundsAsync", "GetPlanAsync", "GetDocModelAsync", "GetDocOutlineAsync",
                 "GetDocSectionAsync", "GetSpecAsync", "GitStatusAsync", "GitDiffAsync", "GitLogAsync", "ListHistoryCheckpointsAsync",
                 "CompareModelsAsync", "ListReferenceTreeAsync", "DeployGateAsync", "ListConnectionsAsync",
                 "ListSqlSourcesAsync", "ListSqlSourceUsageAsync", "ListTableSourceMappingsAsync", "ListConnectionHistoryAsync",
                 "ProbeConnectionAccountsAsync", "ProbeAuthPrerequisitesAsync", "ListAccountProfilesAsync", "GetAgentPolicyAsync",
                 "ListPendingApprovalsAsync", "ListRestorePointsAsync", "ListModelSqlEndpointsAsync", "GetDecisionPointsAsync",
                 "GetConsentAsync", "GetDecisionBudgetAsync", "ProposeMeasureDefaultsAsync", "GetModelPlanAsync", "GetWordsQueueAsync",
-                "GetNextActionsAsync", "RouteAskAsync", "ListDataQuestionsAsync", "PickChartKindAsync",
+                "GetNextActionsAsync", "RouteAskAsync", "ListDataQuestionsAsync", "PickChartKindAsync", "PickCheckVisualsAsync",
                 "DescribeWorkflowStepsAsync", "GetDraftAsync");
             // The assistant's own lookups of other systems: read-only calls out, nothing written here.
             Pass("A read of another system (its schema, its list, its status): nothing is written here.",
@@ -98,7 +98,7 @@ namespace Semanticus.Engine
                 "ConnectionStatusAsync", "ListAssistantsAsync");
             Pass("A measurement or a trace on the model or a live copy of it: it computes and returns, and writes nothing.",
                 "VertiPaqScanAsync", "BenchmarkDaxAsync", "ProfileDaxAsync", "VerifyEquivalenceAsync", "BenchmarkColdWarmAsync",
-                "CaptureQueryPlanAsync", "ProbeMeasureAsync", "BlameValueAsync", "ExplainValueAsync", "ListValueHistoryAsync",
+                "CaptureQueryPlanAsync", "ProbeMeasureAsync", "BlameValueAsync", "ListValueHistoryAsync",
                 "CompareBaselineAsync", "RunDmvAsync", "TryTestAsync");
             NoPreview("Changes nothing in the model or its files, but it clears or stops something the engine keeps, which a rehearsal's rollback does not bring back.",
                 "CancelDaxAsync", "ClearCacheAsync", "ClearReferenceBindingAsync", "SetPlanItemAsync", "SetPlanItemsAsync");
@@ -130,11 +130,16 @@ namespace Semanticus.Engine
             // A setting of how the engine reaches things (accounts, SQL sources, publish destination, working folder) is written to the
             // engine's home, and engine settings are held: asked about under Locked, the Allow of every other preset unchanged.
             Settings("SetDefaultAccountProfileAsync", "make the saved account {profileId:raw} the default for its tenant");
+            Settings("SetHostSettingsAsync", "set the Studio's personality, sounds and volume (personality {personality:raw}, sounds {sounds:raw}, volume {soundVolume:raw})");
+            Settings("StartTrialAsync", "start the free Pro month with a confirm email to {email:raw}");
             Settings("ConnectAssistantAsync", "connect the assistant {assistant:raw} to Semanticus by adding Semanticus to its settings file");
             Add(SettingWitnessed("RememberXmlaConnectionAsync", "remember the connection to {database:raw} at {endpoint:raw}", c => c.Engine.GateBasisStoreFileAsync("connections"), "the saved connections it updates"));
             Add(SettingWitnessed("ForgetConnectionAsync", "forget the connection {id:raw}", c => c.Engine.GateBasisStoreFileAsync("connections"), "the saved connection it removes"));
             Add(SettingWitnessed("SetConnectionWorkingFolderAsync", "put the working copy of the connection {id:raw} in {folder:raw}", c => c.Engine.GateBasisStoreFileAsync("connections"), "the saved connection it changes"));
-            Add(SettingWitnessed("SaveSqlSourceAsync", "save the SQL source {name:raw} (server {server:raw}, database {database:raw})", c => string.IsNullOrWhiteSpace(c.Arg<string>("id")) ? Task.FromResult("new source") : c.Engine.GateBasisStoreFileAsync("sql-sources"), "the saved SQL source an id replaces"));
+            Add(SettingWitnessed("SaveSqlSourceAsync", "save the SQL source {name:raw} (server {server:raw}, database {database:raw})", c => string.IsNullOrWhiteSpace(c.Arg<string>("id")) ? Task.FromResult("new source") : c.Engine.GateBasisStoreFileAsync("sql-sources"), "the saved SQL source an id replaces",
+                // A saved source is where a sign-in token may go. Text in a shared model can steer an assistant to save a host its sender owns and
+                // then test it, so a source on a host not saved yet is the person's question in every preset, naming the server.
+                asksEveryPreset: c => !SqlHostTrust.IsSaved(c.Arg<string>("server"))));
             Add(SettingWitnessed("DeleteSqlSourceAsync", "delete the SQL source {id:raw}", c => c.Engine.GateBasisStoreFileAsync("sql-sources"), "the saved SQL sources it removes from"));
             Add(SettingWitnessed("SetTableSourceMappingAsync", "map the table {table:raw} to {schema:raw}.{entity:raw} in the SQL source {sqlSourceId:raw}", c => c.Engine.GateBasisStoreFileAsync("table-sources"), "the table mappings it replaces"));
             Add(SettingWitnessed("ClearTableSourceMappingAsync", "stop mapping the table {table:raw} to a SQL source", c => c.Engine.GateBasisStoreFileAsync("table-sources"), "the table mappings it removes from"));
@@ -148,7 +153,7 @@ namespace Semanticus.Engine
             // ======================================= DATA and LIVE: gated at their own op ===============================
             Data("Reads rows of data: gated at its own op (QueryData, a session grant per target).",
                 "RunDaxAsync", "PreviewTableAsync", "PivotMeasureAsync", "ReconcileMeasureAsync", "ReviewReconcileMappingAsync",
-                "EvaluateAndLogAsync", "GetModelFactsAsync", "GetUnmatchedRowsAsync", "AskDataAsync");
+                "EvaluateAndLogAsync", "GetModelFactsAsync", "ExplainValueAsync", "GetUnmatchedRowsAsync", "AskDataAsync");
             Live("A write to a published model: gated at its own op, which reads the target's label.", AgentCapability.DeployLive,
                 "DeployLiveAsync", "DeployStageAsync", "CicdPublishAsync", "PublishDataAgentAsync", "FabricGitCommitAsync", "FabricGitUpdateAsync",
                 "FabricGitConnectAsync", "FabricGitDisconnectAsync", "CreateDataAgentAsync", "UpdateDataAgentAsync", "DeleteDataAgentAsync",
@@ -436,6 +441,12 @@ namespace Semanticus.Engine
             Sidecar("CaptureBaselineAsync", "save a baseline of {objRef} named {label}");
             Add(Witnessed("AddInterviewQuestionAsync", "save the interview question {question}", c => c.Engine.GateBasisInterviewEditAsync(c), "the stored interview question an id replaces"));
             Add(Witnessed("DeleteInterviewQuestionAsync", "delete the interview question {id:raw}", c => c.Engine.GateBasisInterviewDeleteAsync(c), "the stored interview question it deletes"));
+            // The Copilot test (15 Oct 2026). The bank is written once (one ask), and a round is asked about once: the call that MAKES the round. A call that adds
+            // answers to a round the person already allowed is not asked again, so a round never stops per question or per batch. The two reads pass.
+            Sidecar("AddInterviewQuestionsAsync", "save the Copilot test questions, run each reference answer and keep what it returns");
+            Dyn("RunInterviewBatchAsync", c => Task.FromResult(c.Engine.CopilotRoundExists(c.Arg<string>("roundId"))
+                ? Passing("RunInterviewBatchAsync", "Adds answers to a Copilot test round that was already made, and the person already allowed the round when it was made. It writes only that round's own record.", preview: false)
+                : Sidecars("RunInterviewBatchAsync", "start a Copilot test round, grade the student's answers by number and save the round in the folder the model is kept in")));
             Add(Witnessed("RunInterviewAsync", "run the interview question {questionId:raw} and record how it went", c => c.Engine.GateBasisInterviewAsync(c), "the stored interview question it runs"));
             Sidecar("AddInsightAsync", "save this note about the model: {text}");
             // A note edit, an approval and a delete are for the note as it read when the person was asked: notes do not move the model's revision, so the
@@ -616,6 +627,16 @@ namespace Semanticus.Engine
             Add(Passing("SetNextStepAsync", "The person's own suggestion preference (hide, stop a kind, turn off); it changes nothing in the model, its files or the Permissions page.", preview: false));
             Person("The Studio reports its own screen; the assistant reads it in show_in_studio's result.", "SetStudioDriverAsync");
 
+            // ======================================= the Query notebook (1.6, query-c lane) ======================================
+            // Pins, closes and removes change only the model's question history, a file kept beside the model and never committed with it.
+            // No model content, setting or live service is written, and a rehearsal has nothing to show of it.
+            Add(Passing("QueryNotebookAsync", "It keeps or drops rows of the question history kept beside the model; it changes nothing in the model, its files or the settings.", preview: false));
+            // The gate stamps origin "agent" on every call it clears, so a call through it can only make or refresh the assistant's OWN row
+            // (run_dax keeps its run this way). The person's rows, and the number and times of a row, stay the page's (hero 25 H1).
+            Add(Passing("RecordQueryRunAsync", "It keeps the assistant's own run_dax as a row of the question history beside the model; the gate marks it the assistant's, so it never touches a row the person owns.", preview: false));
+            Person("The Query page writes the number and times of its own rows. The assistant's asks are kept by ask_data, and it tidies the notebook with query_notebook.", "NoteQueryRowAsync");
+            Person("The window reports its own settings; the assistant reads them with get_personality_settings and sets them with set_personality_settings.", "ReportHostSettingsAsync");
+
             return d;
         }
 
@@ -673,10 +694,10 @@ namespace Semanticus.Engine
 
         /// <summary>The same for a setting kept in a machine file (the "Write model files" row, no revision): bound to <paramref name="basis"/> alone, since the model's
         /// revision has nothing to say about it.</summary>
-        private static GateEntry SettingWitnessed(string name, string words, Func<GateCall, Task<string>> basis, string input) => new GateEntry
+        private static GateEntry SettingWitnessed(string name, string words, Func<GateCall, Task<string>> basis, string input, Func<GateCall, bool> asksEveryPreset = null) => new GateEntry
         {
             Method = name, Kind = GateKind.Hold, Capability = AgentCapability.DeployFile, Witness = GateWitness.None, Words = words,
-            Basis = basis, OutsideInputs = new[] { input },
+            Basis = basis, OutsideInputs = new[] { input }, AsksEveryPreset = asksEveryPreset,
         };
 
         private static GateEntry Sidecars(string name, string words) => new GateEntry

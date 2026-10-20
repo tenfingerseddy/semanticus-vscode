@@ -78,7 +78,8 @@ namespace Semanticus.Engine
             // Filled in once the server exists; before that there is nothing to lose.
             var assistantOwner = Array.IndexOf(args, OwnerSpawner.AssistantOwnerFlag) >= 0;
             Func<bool> hold = null;
-            using var parent = new ParentLifetime(watchTarget, () => GraceExpired(workspace, lifetime),
+            Action keepBeforeLeaving = null;   // filled in once the sessions exist: unsaved live work is written down before the engine goes
+            using var parent = new ParentLifetime(watchTarget, () => GraceExpired(workspace, lifetime, keepBeforeLeaving),
                 // An adoption changes who we die with, so the published record has to say so. A reader that
                 // still saw the OLD parent would judge this engine by a window that has already gone.
                 onAdopted: adoptedPid => EngineBroker.UpdateParentPid(workspace, Environment.ProcessId, adoptedPid),
@@ -131,10 +132,10 @@ namespace Semanticus.Engine
                 // Entitlement is delivered via stdin (--license-stdin) → env → the user license file. The OWNER
                 // engine's entitlement is authoritative: an attaching MCP proxy inherits it over RPC. Never put the
                 // token on argv: /proc/<pid>/cmdline is world-readable.
-                var engine = new LocalEngine(sessions, Entitlement.LicenseEntitlement.FromEnvironmentOrToken(Entitlement.LicenseTokenDelivery.FromArgs(args, Console.In)), workspace);
+                var engine = new LocalEngine(sessions, Entitlement.LicenseEntitlement.FromEnvironmentOrToken(Entitlement.LicenseTokenDelivery.FromArgs(args, Console.In)), workspace, WorkspaceIsFolder(args));
                 // Learning Loop L0: the owner host tees the dual-drive stream to .semanticus/experience.jsonl
                 // (beside the model; live/unsaved sessions fall back to the workspace's .semanticus/).
-                using var experience = new ExperienceTee(sessions, workspace);
+                using var experience = new ExperienceTee(sessions, WorkspaceIsFolder(args) ? workspace : null);   // never the start folder (N1)
                 // Number time-machine (feature #3): ambient vital-signs capture is HOST-ATTACHED like the tee
                 // (owner only — tests/attached proxies never write sidecar files unless they opt in).
                 engine.AmbientVitalsEnabled = true;
@@ -156,6 +157,7 @@ namespace Semanticus.Engine
                 // Without this the engine answers "nobody is there" and a job that needs words stops at a stub.
                 engine.ObserveAgentClients(() => server.AgentClientCount);
                 hold = () => KeepOwnerAlive(assistantOwner, server.ClientCount, sessions.Current);
+                keepBeforeLeaving = () => KeepLiveWork(sessions.Current);
                 var info = NewInfo(pipe, workspace, parent.WatchedPid);
                 if (assistantOwner) info.StartedBy = EngineInfo.StartedByAssistant;
                 EngineBroker.WriteInfo(workspace, info);
@@ -174,8 +176,10 @@ namespace Semanticus.Engine
         }
 
         // File edits survive in recovery. Live and never-saved models still need their owner in memory.
+        // A copy kept of the work holds every change so far (KeptCopyPath is null once a newer change is in no copy), so a close loses nothing: the work is
+        // on disk and the service has what was published. Without this a person who closed VS Code after the assistant kept a copy waited the full ten minutes.
         internal static bool KeepOwnerAlive(bool assistantOwner, int clientCount, Session session)
-            => (assistantOwner && clientCount > 0) || (session != null && session.HasUnsavedEdits
+            => (assistantOwner && clientCount > 0) || (session != null && session.HasUnsavedEdits && session.KeptCopyPath == null
                 && (string.IsNullOrEmpty(session.SourcePath) || session.LiveOrigin != null || session.SnapshotOf != null));
 
         /// <summary>A window is replacing this engine and it was clean (F-244). The dispatcher is held by then, so
@@ -199,9 +203,29 @@ namespace Semanticus.Engine
 
         /// <summary>The parent died and nobody came back inside the grace. Only NOW is the record cleared:
         /// during the grace it stays published, because a returning window has to find this pipe to adopt it.</summary>
-        private static void GraceExpired(string workspace, CancellationTokenSource lifetime)
+        /// <summary>The longest the leaving engine waits for the kept copy of a live model. A big model on a busy dispatcher can take well over
+        /// the five seconds this used to allow, and an exit before the write reached its move lost the unpublished edits (Codex on pull request 402).
+        /// The copy is written to a temporary file and moved over the old one in one step, so giving up at the cap leaves the earlier copy whole.</summary>
+        internal static TimeSpan LiveKeepCap = TimeSpan.FromSeconds(60);
+
+        /// <summary>Writes the unsaved edits of a model opened live to its kept copy. It returns when the copy is in place, or when the cap passes:
+        /// a stuck dispatcher must not keep the engine alive for ever, but a slow write is waited for.</summary>
+        internal static void KeepLiveWork(Session session)
+        {
+            try
+            {
+                // Nothing to keep means nothing to wait for: a close behind a busy dispatcher (a long query) must not hold the engine for the cap.
+                if (session == null || !session.HasLiveWorkToKeep) return;
+                if (!session.RunAsync(() => session.FlushLiveRecovery()).Wait(LiveKeepCap))
+                    Console.Error.WriteLine("[engine] the unsaved live work was still being kept when the wait ended; leaving anyway. The earlier kept copy, if any, is untouched.");
+            }
+            catch (Exception ex) { Console.Error.WriteLine("[engine] could not keep the unsaved live work: " + ex.GetType().Name); }
+        }
+
+        private static void GraceExpired(string workspace, CancellationTokenSource lifetime, Action keepBeforeLeaving = null)
         {
             Console.Error.WriteLine("[engine] no window came back within the grace; shutting this engine down.");
+            try { keepBeforeLeaving?.Invoke(); } catch { /* leaving matters more */ }
             try { EngineBroker.ClearInfo(workspace, Environment.ProcessId); } catch { }
             try { lifetime.Cancel(); } catch { }
             // Cancelling unwinds the accept loop, but a start still blocked reading the challenge from stdin
@@ -350,10 +374,10 @@ namespace Semanticus.Engine
                 // Claude became the owner (no VS Code engine running): read the license from env or the user license
                 // file. An attaching MCP process inherits the owner's entitlement over the pipe, so .mcp.json must
                 // not carry the token on argv.
-                var local = new LocalEngine(sessions, Entitlement.LicenseEntitlement.FromEnvironmentOrToken(Entitlement.LicenseTokenDelivery.FromArgs(args, null)), workspace);
+                var local = new LocalEngine(sessions, Entitlement.LicenseEntitlement.FromEnvironmentOrToken(Entitlement.LicenseTokenDelivery.FromArgs(args, null)), workspace, WorkspaceIsFolder(args));
                 // Learning Loop L0 (owner only — an attached proxy must not double-write the owner's log).
                 // Process-lifetime: the bus holds the subscription; the host never detaches it.
-                _ = new ExperienceTee(sessions, workspace);
+                _ = new ExperienceTee(sessions, WorkspaceIsFolder(args) ? workspace : null);   // never the start folder (N1)
                 // Number time-machine (feature #3): ambient vital-signs capture, owner-attached like the tee.
                 local.AmbientVitalsEnabled = true;
                 var pipe = EngineBroker.PipeNameFor(workspace);
@@ -418,8 +442,9 @@ namespace Semanticus.Engine
                     "When asked to work the Plan or improve the model, do every row a tool can do in one go and do not ask: " +
                     "anything undo_change can take back (renames, hiding, removing unused objects with remove_safe_objects, removing duplicates with remove_safe_objects once no report or measure uses them (hiding one that is used), synonyms, descriptions, " +
                     "a compatibility level raise, a calculated date table) is done first and reported after. Ask the person only for a sign-in or permission, " +
-                    "a fact no tool can find, or a step undo cannot take back. Never write over the person's only copy: save to the same file only if it is in git " +
-                    "or you made a backup, else save a copy next to it and say so. " +
+                    "a fact no tool can find, or a step undo cannot take back. " +
+                    "Save with save_model and no path: it writes the model's own file (a model published from a service, or never saved, gets a file of its own and the result names the path), so never save a copy beside it unless the person asks for one. A copy is for a risky change or a request; saving to the same copy path again replaces it. Tell the person the path. " +
+                    "A publish can be undone: the Publish page has Undo publish (rollback_push). Only undo_change is limited to the working copy, so never tell the person a publish cannot be undone. " +
                     "Keep going until the Plan has no Ready row a tool can do ('Fix N best-practice issues' and 'Remove N unused columns' are tool rows: do them). " +
                     "First find the model's reports (local folders and published ones), then set_report_scope and check_reports; if the model has none, call set_report_scope with an empty list, which counts as checked. Remove an unused generic column with unused_objects then remove_safe_objects (it re-checks each one and the chosen reports, and never removes a column a hierarchy, sort-by, role, calculation item, measure, relationship or report uses); hide a column when something uses it and say why on the row; delete_object a visibleAttribute column only when unused_objects marks it, which it does only after at least one report is chosen and every chosen report is checked (or the model has no reports); with no report checked, hide the column and say why on the row. A table nothing uses (no relationship, no measure, no role, no checked report) is removed the same way once the reports are checked, then reported, and you never ask whether to keep it because undo_change takes it back; a table something uses is kept and left out of what Copilot sees, with the reason on the row. " +
                     "Then read BOTH grades again (ai_readiness_scan and bpa_scan with detail='summary'), work any finding your own changes caused, and report both grades at the end. " +
@@ -451,6 +476,11 @@ namespace Semanticus.Engine
             // from one whose editor is gone. Null on the MCP door, which has no parent watch at all.
             ParentPid = parentPid
         };
+
+        /// <summary>The extension sets SEMANTICUS_NO_FOLDER=1 when no folder is open: the workspace it passes is then only the host's working folder.
+        /// An engine started with no --workspace has only the process's working folder too, which is no place a person chose (UAT round 2, N1).</summary>
+        private static bool WorkspaceIsFolder(string[] args) =>
+            GetOpt(args, "--workspace") != null && Environment.GetEnvironmentVariable("SEMANTICUS_NO_FOLDER") != "1";
 
         private static string GetOpt(string[] args, string name)
         {

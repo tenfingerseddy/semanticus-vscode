@@ -148,7 +148,7 @@ namespace Semanticus.Engine.Query
         public const string None = "none";
 
         /// <summary>The most questions one call asks. tools/relay/templates.mjs holds the relay's bound to it.</summary>
-        public const int MaxQuestions = 24;
+        public const int MaxQuestions = 64;
 
         public const int GroupSlots = 2;
         public const int MeasureSlots = 2;
@@ -424,6 +424,8 @@ namespace Semanticus.Engine.Query
             public bool SideBySide;
             /// <summary>How many years the data holds, when read; null when it was not.</summary>
             public int? Years;
+            /// <summary>The engine read the words' period itself (a filter on the calendar or a range of days), so a measure that moves time must not move it again.</summary>
+            public bool PeriodResolved;
             /// <summary>The periods the time words were read as, without dates (StatedReading tells them to Jev that way).</summary>
             public List<PeriodFact> Periods = new List<PeriodFact>();
             /// <summary>A top few over two splits ranks the pairs (SayTopOverPairs said so in a note).</summary>

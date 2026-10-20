@@ -89,6 +89,10 @@ namespace Semanticus.Engine.Query
             Kinds.Contains(w) || (w.Length >= 5 && Kinds.Any(k => k.Length >= 5 && FuzzyWords.Near(k, w))) || FiscalGroup.Contains(w)
             || (w.Length >= 5 && FiscalGroup.Any(k => k.Length >= 5 && FuzzyWords.Near(k, w)));
 
+        /// <summary>True when the question says fiscal, financial or FY anywhere (or a slip of one): the person asked for that year.</summary>
+        internal static bool AsksFiscal(string question) =>
+            FuzzyWords.Words(question ?? "").Any(w => IsFiscalWord(w.Word)) || Fy.IsMatch(question ?? "");
+
         private static bool IsFiscalWord(string w) => FiscalGroup.Contains(w) || (w.Length >= 5 && FiscalGroup.Any(k => k.Length >= 5 && FuzzyWords.Near(k, w)));
 
         private static bool PlainWord(string w)

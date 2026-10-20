@@ -7,8 +7,10 @@
 // user's own assistant does the interpreting (golden rule: the engine runs no inference).
 // Copy rules (Kane's UX bar): plain language, jargon always glossed, no em-dashes, never "Claude".
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { rpc } from './bridge';
+import { explainKey, explainOnce, splitOptions } from './explainguard';
+import { useSessionIdentity } from './connection';
 import { GiveToAssistant, explainTask } from './sendtask';
 import { plainNumber } from './resultformat.mjs';
 import { formatNumber } from './gridformat';
@@ -20,7 +22,7 @@ export interface ExplainWireFilter { column: string; members: string[]; empty?: 
 interface ChainNode { ref: string; name: string; kind: string; depth: number }
 interface LineageEntry { column: string; table?: string; source?: string }
 interface ContributorRow { member: string; value: string; pct?: number | null }
-interface Contributors { dimension?: string; additive: boolean; rows: ContributorRow[]; truncated: boolean; note?: string; spread?: ContributorRow[] }
+interface Contributors { dimension?: string; additive: boolean; rows: ContributorRow[]; truncated: boolean; note?: string; spread?: ContributorRow[]; alternatives?: string[] }
 interface BlankCheck { id: string; question: string; result: 'ok' | 'cause' | 'maybe' | 'skipped'; finding: string; detail?: string }
 interface Blank { checks: BlankCheck[]; likelyCauseId?: string; summary?: string }
 interface RlsRole { role: string; filters: { table: string; filterExpression?: string }[] }
@@ -50,7 +52,20 @@ export interface ExplainPayload {
 /** A selection value arrives as the engine wrote it ("= 2025"); the "=" is drawn by the line itself. */
 export const plainValue = (v: string): string => v.replace(/^=\s*/, '');
 /** The selection as one plain line: "Year = 2025; City = Perth". */
-export const selectionWords = (entries: readonly { field: string; value: string }[]): string => entries.map((e) => `${e.field} = ${plainValue(e.value)}`).join('; ');
+/** A field the engine names as a DAX reference ('Customer'[City]) in the person's words: the column, City. */
+/** An engine note with its DAX references said as the column ("split by 'Customer'[City]" is "split by City"). */
+export const plainNote = (note: string | null | undefined): string | undefined =>
+  note ? note.replace(/(?:'[^']+'|[A-Za-z0-9_]+)\[([^\]]+)\]/g, '$1') : undefined;
+export const plainField = (field: string): string => /\[([^\]]+)\]\s*$/.exec(field)?.[1] ?? field;
+/** A column in words, with its table when the name alone is ambiguous: 'Customer'[City] is "Customer City" beside 'Store'[City], "City" alone. */
+export const columnLabel = (ref: string, among: readonly string[] = [], always = false): string => {
+  const name = plainField(ref);
+  const table = /^'?((?:[^'\[]|'')+?)'?\s*\[/.exec(ref)?.[1]?.replace(/''/g, "'");
+  if (!table) return name;
+  const same = among.filter((o) => plainField(o) === name).length;
+  return always || same > 1 ? `${table} ${name}` : name;
+};
+export const selectionWords = (entries: readonly { field: string; value: string }[]): string => entries.map((e) => `${plainField(e.field)} = ${plainValue(e.value)}`).join('; ');
 
 export const fmtNum = (v: string | undefined, format?: string | null) => {
   if (v == null) return '';
@@ -63,6 +78,19 @@ export function leadSentence(measure: string, d: ExplainDossier, format: string 
   if (!d.valueEvaluated || d.isBlank) return d.summary ?? '';
   const where = entries.length ? ` for ${entries.map((e) => plainValue(e.value)).join(' and ')}` : '';
   return `${measure} is ${fmtNum(d.value, format)}${where}.`;
+}
+
+/** The engine's note on the split, with its column said as "Customer City" (the table says which City). */
+const splitNote = (c: Contributors): string | undefined => plainNote(c.note && c.dimension ? c.note.split(c.dimension).join(columnLabel(c.dimension, [], true)) : c.note);
+
+/** Where a table's data comes from, in words. The engine writes "Import (M) · Source name · the query text": the text goes behind its own disclosure. */
+function sourceWords(source: string): { words: string; code: string } {
+  const [head = '', ...rest] = source.split(' · ');
+  const isCode = (x: string) => /[=()]/.test(x) || x.length > 40;
+  const from = rest.length > 0 && !isCode(rest[0]) ? rest[0] : '';
+  const code = (from ? rest.slice(1) : rest).join(' · ');
+  const kind = /^Import/i.test(head) ? 'Loaded from its source' : /^DirectQuery/i.test(head) ? 'Read live from its source' : /^DirectLake/i.test(head) ? 'Read live from the lake' : /^Calculated/i.test(head) ? 'Worked out in the model' : head.replace(/\s*\(.*?\)/g, '').trim() || 'Source not stated';
+  return { words: from ? `${kind}, ${from}` : kind, code };
 }
 
 /** The measures this number is built from, each worked out in the same selection. */
@@ -87,7 +115,7 @@ function Spread({ c, format }: { c: Contributors; format?: string | null }) {
   const rows = c.spread ?? [];
   if (rows.length < 2) return null;
   return (
-    <Section title={`How it differs by ${dimensionName(c.dimension)}`} always>
+    <Section title={`How it differs by ${c.dimension ? columnLabel(c.dimension, [], true) : dimensionName(c.dimension)}`} always>
       <div className="flex flex-col gap-1">
         {rows.map((r, i) => (
           <div key={i} className="flex items-baseline gap-2 text-xs">
@@ -112,42 +140,57 @@ export function ExplainInline({ d, measureName, format }: { d: ExplainDossier; m
       {d.contributors && d.contributors.additive && d.contributors.rows.length > 0 && (
         <Section title="What makes it up" always>
           <ContributorBars rows={d.contributors.rows} format={fmt} />
-          {d.contributors.note && <div className="text-(length:--sem-text-label) mt-2" style={{ color: 'var(--sem-muted)' }}>{d.contributors.note}</div>}
+          {splitNote(d.contributors) && <div className="text-(length:--sem-text-label) mt-2" style={{ color: 'var(--sem-muted)' }}>{splitNote(d.contributors)}</div>}
         </Section>
       )}
       {d.contributors && !d.contributors.additive && <Spread c={d.contributors} format={fmt} />}
-      {d.contributors && !d.contributors.additive && d.contributors.note && (
-        <div className="text-(length:--sem-text-label) leading-5" style={{ color: 'var(--sem-muted)' }}>{d.contributors.note}</div>
+      {d.contributors && !d.contributors.additive && splitNote(d.contributors) && (
+        <div className="text-(length:--sem-text-label) leading-5" style={{ color: 'var(--sem-muted)' }}>{splitNote(d.contributors)}</div>
       )}
     </div>
   );
 }
 
-export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; onClose: () => void }) {
+export function ExplainPanel({ payload, onClose, inline = false }: { payload: ExplainPayload; onClose?: () => void; inline?: boolean }) {
   const [d, setD] = useState<ExplainDossier | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // The column the person chose to split by (null: the engine picks), and the columns offered, kept from the engine's own pick while they switch.
+  // The choice belongs to the number it was made on: a new number is never first asked with the old choice.
+  const [choice, setChoice] = useState<{ cell: string; by: string | null }>({ cell: '', by: null });
+  const [opts, setOpts] = useState<string[]>([]);
 
+  // Keyed by what is asked, never by the payload object: a parent that builds a new, equal payload on each render must not ask again.
+  const model = useSessionIdentity();
+  const cellKey = explainKey(payload, model);
+  const splitBy = choice.cell === cellKey ? choice.by : null;
+  const setSplitBy = (by: string | null) => setChoice({ cell: cellKey, by });
+  const key = explainKey({ ...payload, splitBy }, model);
+  const payloadRef = useRef(payload);
+  payloadRef.current = payload;
+  // Another number is asked again from the engine's own pick.
+  useEffect(() => { setOpts([]); }, [cellKey]);
   useEffect(() => {
     let alive = true;
+    const p = payloadRef.current;
     setD(null); setErr(null);
-    rpc<ExplainDossier>('explainValue', payload.measureName,
-      { groupBy: payload.groupBy, filters: payload.filters, extraPredicates: payload.extraPredicates }, true, null, 5)
-      .then((r) => { if (alive) setD(r); })
+    explainOnce(key, () => rpc<ExplainDossier>('explainValue', p.measureName,
+      { groupBy: p.groupBy, filters: p.filters, extraPredicates: p.extraPredicates }, true, splitBy, 5))
+      .then((r) => { if (alive) { setD(r); setOpts((kept) => splitOptions(kept, r.contributors)); } })
       .catch((e) => { if (alive) setErr(String((e as Error).message ?? e)); });
     return () => { alive = false; };
-  }, [payload]);
+  }, [key]);
 
   const fmt = d?.format ?? payload.format;
   const prompt = buildAssistantPrompt(payload, d);
   const failed = err || (d && d.status !== 'ok');
 
   return (
-    <div data-explain-panel data-testid="explain-panel" className="fixed inset-y-0 right-0 flex flex-col" style={{
+    <div data-explain-panel data-testid="explain-panel" className={inline ? 'flex flex-col min-h-0' : 'fixed inset-y-0 right-0 flex flex-col'} style={inline ? undefined : {
       width: 400, zIndex: 70, background: 'var(--sem-surface)', borderLeft: '1px solid var(--sem-border)',
       boxShadow: '-18px 0 44px -24px rgba(0,0,0,.7)',
     }}>
-      {/* header */}
-      <div className="flex items-center gap-2 px-3 py-2 shrink-0" style={{ borderBottom: '1px solid var(--sem-border)' }}>
+      {/* header: inside the Query view the row above already names the number and its selection, and the first line says its value */}
+      {!inline && <div className="flex items-center gap-2 px-3 py-2 shrink-0" style={{ borderBottom: '1px solid var(--sem-border)' }}>
         <div className="min-w-0">
           <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Explain this number</div>
           <div className="text-(length:--sem-text-body) font-semibold truncate" style={{ color: 'var(--sem-fg)' }}>{payload.measureName}</div>
@@ -155,11 +198,11 @@ export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; on
         <div className="ml-auto text-(length:--sem-text-page) font-bold tnum shrink-0">
           {d?.valueEvaluated ? (d.isBlank ? '(blank)' : fmtNum(d.value, fmt)) : fmtNum(payload.value)}
         </div>
-        <button onClick={onClose} title="Close" className="shrink-0 grid place-items-center rounded"
-          style={{ width: 'var(--sem-control-h-sm)', height: 'var(--sem-control-h-sm)', background: 'none', border: 'none', color: 'var(--sem-muted)', cursor: 'pointer' }}>✕</button>
-      </div>
+        {onClose && <button onClick={onClose} title="Close" className="shrink-0 grid place-items-center rounded"
+          style={{ width: 'var(--sem-control-h-sm)', height: 'var(--sem-control-h-sm)', background: 'none', border: 'none', color: 'var(--sem-muted)', cursor: 'pointer' }}>✕</button>}
+      </div>}
 
-      <div className="flex-1 min-h-0 overflow-auto px-3 py-2 flex flex-col gap-3">
+      <div className={(inline ? 'px-0 py-2' : 'flex-1 min-h-0 overflow-auto px-3 py-2') + ' flex flex-col gap-3'}>
         {/* loading / error */}
         {!d && !err && <div className="text-xs" style={{ color: 'var(--sem-muted)' }}>Working it out…</div>}
         {failed && (
@@ -173,15 +216,15 @@ export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; on
             {/* the plain-language lead */}
             {(d.summary || d.valueEvaluated) && <div className="text-xs leading-5" style={{ color: 'var(--sem-fg)' }}>{leadSentence(payload.measureName, d, fmt, payload.entries) || d.summary}</div>}
 
-            {/* your selection */}
-            <Section title="Your selection" always>
+            {/* your selection (the Query view shows it on the line above) */}
+            {!inline && <Section title="Your selection" always>
               {payload.entries.length === 0
                 ? <div className="text-xs" style={{ color: 'var(--sem-muted)' }}>No filters. This is the number for everything.</div>
                 : (
                   <div className="flex flex-col gap-1">
                     {payload.entries.map((e, i) => (
                       <div key={i} className="flex items-baseline gap-2 text-xs">
-                        <span style={{ color: 'var(--sem-kind-column)', fontFamily: 'var(--mono, monospace)', fontSize: 'var(--sem-text-label)' }}>{e.field}</span>
+                        <span style={{ color: 'var(--sem-kind-column)', fontFamily: 'var(--mono, monospace)', fontSize: 'var(--sem-text-label)' }}>{plainField(e.field)}</span>
                         <span style={{ color: 'var(--sem-muted)' }}>=</span>
                         <span className="font-semibold" style={{ color: 'var(--sem-fg)' }}>{plainValue(e.value)}</span>
                         <span className="ml-auto text-(length:--sem-text-label) px-2 rounded" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)' }}>
@@ -191,7 +234,7 @@ export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; on
                     ))}
                   </div>
                 )}
-            </Section>
+            </Section>}
 
             {/* why is this blank? — the ship-first slice */}
             {d.blank && (
@@ -211,15 +254,16 @@ export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; on
             {/* what makes it up */}
             {d.contributors && (
               <Section title="What makes it up" always>
+                {opts.length > 1 && <SplitBy options={opts} chosen={d.contributors.dimension ?? splitBy} onPick={setSplitBy} />}
                 {d.contributors.additive && d.contributors.rows.length > 0 ? (
                   <>
                     <ContributorBars rows={d.contributors.rows} format={fmt} />
-                    {d.contributors.note && <div className="text-(length:--sem-text-label) mt-2" style={{ color: 'var(--sem-muted)' }}>{d.contributors.note}</div>}
+                    {splitNote(d.contributors) && <div className="text-(length:--sem-text-label) mt-2" style={{ color: 'var(--sem-muted)' }}>{splitNote(d.contributors)}</div>}
                   </>
                 ) : (
                   <>
                     <Spread c={d.contributors} format={fmt} />
-                    <div className="text-xs leading-5" style={{ color: 'var(--sem-muted)' }}>{d.contributors.note ?? 'No breakdown is available here.'}</div>
+                    <div className="text-xs leading-5" style={{ color: 'var(--sem-muted)' }}>{splitNote(d.contributors) ?? 'No breakdown is available here.'}</div>
                   </>
                 )}
               </Section>
@@ -246,12 +290,21 @@ export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; on
             {d.lineage.length > 0 && (
               <Section title="Where the data comes from">
                 <div className="flex flex-col gap-1">
-                  {d.lineage.map((l, i) => (
-                    <div key={i} className="text-(length:--sem-text-label) leading-5">
-                      <span style={{ color: 'var(--sem-fg)' }}>{(l.table ? l.table + ' · ' : '') + l.column.slice(l.column.lastIndexOf('/') + 1)}</span>
-                      {l.source && <span style={{ color: 'var(--sem-muted)' }}> ({l.source})</span>}
-                    </div>
-                  ))}
+                  {d.lineage.map((l, i) => {
+                    const src = l.source ? sourceWords(l.source) : null;
+                    return (
+                      <div key={i} className="text-(length:--sem-text-label) leading-5" data-testid="explain-lineage-row">
+                        <span style={{ color: 'var(--sem-fg)' }}>{(l.table ? l.table + ' · ' : '') + l.column.slice(l.column.lastIndexOf('/') + 1)}</span>
+                        {src && <span style={{ color: 'var(--sem-muted)' }}>{' · '}{src.words}</span>}
+                        {src?.code && (
+                          <details className="ex-code">
+                            <summary>Show the query text</summary>
+                            <pre>{src.code}</pre>
+                          </details>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </Section>
             )}
@@ -286,7 +339,7 @@ export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; on
               {d.evidence?.query && (
                 <details className="mt-1">
                   <summary className="text-(length:--sem-text-label) cursor-pointer select-none" style={{ color: 'var(--sem-muted)' }}>the exact query used</summary>
-                  <pre className="text-(length:--sem-text-label) leading-5 px-2 py-1 rounded overflow-auto max-h-44 mt-1 whitespace-pre-wrap"
+                  <pre className="text-(length:--sem-text-label) leading-5 px-2 py-1 rounded mt-1 whitespace-pre-wrap [overflow-wrap:anywhere]"
                     style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', fontFamily: 'var(--mono, monospace)' }}>{d.evidence.query}</pre>
                 </details>
               )}
@@ -296,10 +349,22 @@ export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; on
       </div>
 
       {/* footer: hand the dossier to the user's assistant — the UI never narrates */}
-      <div className="px-3 py-2 shrink-0 flex items-center gap-2" style={{ borderTop: '1px solid var(--sem-border)' }}>
+      <div className={inline ? 'py-2 shrink-0 flex items-center gap-2' : 'px-3 py-2 shrink-0 flex items-center gap-2'} style={inline ? undefined : { borderTop: '1px solid var(--sem-border)' }}>
         <GiveToAssistant size="md" primary sendKey={`explain|${payload.measureName}|${JSON.stringify(payload.entries)}|${payload.extraPredicates.join(';')}`}
           build={() => explainTask(payload.measureName, d?.valueEvaluated ? (d.isBlank ? 'a blank' : fmtNum(d.value, fmt)) : fmtNum(payload.value), prompt)} />
       </div>
+    </div>
+  );
+}
+
+/** One press changes the split: the columns that also explain most of the number, the one shown on. */
+function SplitBy({ options, chosen, onPick }: { options: string[]; chosen?: string | null; onPick: (column: string) => void }) {
+  return (
+    <div className="ex-by" role="group" aria-label="Split by" data-testid="explain-split-by">
+      <span className="ex-by-label">Split by</span>
+      {options.map((o) => (
+        <button key={o} type="button" className="ex-by-opt" aria-pressed={o === chosen} data-column={o} onClick={() => onPick(o)}>{columnLabel(o, options)}</button>
+      ))}
     </div>
   );
 }
@@ -341,18 +406,21 @@ function CheckRow({ c, likely }: { c: BlankCheck; likely: boolean }) {
 function ContributorBars({ rows, format }: { rows: ContributorRow[]; format?: string | null }) {
   const vals = rows.map((r) => Math.abs(Number(r.value) || 0));
   const max = Math.max(...vals, 1e-9);
+  // One grid for every row, so the bars start and end on the same lines and the amount and the share each keep their own column ("$4,901,153.49" and
+  // "12.5%" cannot run together, hero 25 H8). The bars share one scale; "everything else" is drawn quieter. A member name wraps rather than being cut off.
   return (
-    <div className="flex flex-col gap-1">
-      {rows.map((r, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <span className="text-(length:--sem-text-label) w-32 shrink-0 truncate" title={r.member} style={{ color: 'var(--sem-fg)' }}>{r.member}</span>
-          <div className="flex-1 h-2 rounded" style={{ background: 'var(--sem-surface-2)' }}>
-            <div className="h-2 rounded" style={{ width: `${Math.max(2, (Math.abs(Number(r.value) || 0) / max) * 100)}%`, background: 'var(--sem-muted)', opacity: r.member.startsWith('(everything else') ? 0.4 : 0.9 }} />
+    <div className="ex-parts" data-testid="explain-contributors">
+      {rows.map((r, i) => {
+        const rest = r.member.startsWith('(everything else');
+        return (
+          <div key={i} className={rest ? 'ex-part ex-part-rest' : 'ex-part'}>
+            <span className="ex-part-name" title={r.member}>{r.member}</span>
+            <div className="ex-part-track"><div className="ex-part-fill" style={{ width: `${Math.max(2, (Math.abs(Number(r.value) || 0) / max) * 100)}%` }} /></div>
+            <span className="ex-part-amt tnum">{fmtNum(r.value, format)}</span>
+            <span className="ex-part-pct tnum">{r.pct != null ? r.pct.toFixed(1) + '%' : ''}</span>
           </div>
-          <span className="text-(length:--sem-text-label) tnum w-16 text-right shrink-0" style={{ color: 'var(--sem-fg)' }}>{fmtNum(r.value, format)}</span>
-          <span className="text-(length:--sem-text-label) tnum w-10 text-right shrink-0" style={{ color: 'var(--sem-muted)' }}>{r.pct != null ? r.pct + '%' : ''}</span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

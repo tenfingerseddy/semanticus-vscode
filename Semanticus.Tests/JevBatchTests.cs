@@ -202,37 +202,7 @@ namespace Semanticus.Tests
             Assert.Equal("useful", answers.For(PlanRankPoint.QuestionFor("a")).Score);
         }
 
-        // ---- chunks --------------------------------------------------------------------------------------------------
-
-        [Fact]
-        public void Objects_are_grouped_by_table_in_order_and_cut_into_chunks()
-        {
-            var asks = new[] { "A/1", "A/2", "B/1", "A/3", "A/4", "A/5" };
-
-            var chunks = JevTableBatch.Chunks(asks, a => a.Split('/')[0], 2);
-
-            Assert.Equal(new[] { "A/1,A/2", "A/3,A/4", "A/5", "B/1" }, chunks.Select(c => string.Join(",", c)));
-        }
-
-        [Fact]
-        public void A_chunk_whose_snapshot_would_pass_the_limit_is_split_never_truncated()
-        {
-            var big = new string('x', 20 * 1024);
-            TableBatch<string> Build(IReadOnlyList<string> chunk)
-            {
-                var b = new TableBatch<string> { TableRef = "table:T", Asks = chunk.ToList() };
-                b.Snapshot = new Dictionary<string, object>(StringComparer.Ordinal) { { "objects", chunk.Select(_ => (object)big).ToList() } };
-                return b;
-            }
-
-            var batches = JevTableBatch.Fit(new[] { "a", "b", "c", "d" }, Build).ToList();
-
-            Assert.All(batches, b => Assert.True(b.Asks.Count <= 2, "60 KB holds two of these, not four"));
-            Assert.Equal(new[] { "a", "b", "c", "d" }, batches.SelectMany(b => b.Asks));
-            // A single object over the limit is left as it is (the client refuses an oversized snapshot), never cut short.
-            var alone = JevTableBatch.Fit(new[] { "a" }, c => { var b = Build(c); b.Snapshot = new Dictionary<string, object> { { "objects", new object[] { new string('y', 70 * 1024) } } }; return b; }).ToList();
-            Assert.Single(alone);
-        }
+        // ---- the run's cap (the packing itself is in JevBatchAcrossTablesTests) --------------------------------------------------------------------------------------------------
 
         [Fact]
         public void A_run_takes_whole_chunks_within_its_cap_and_never_none()

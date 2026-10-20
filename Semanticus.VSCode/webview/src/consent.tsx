@@ -107,7 +107,7 @@ const CARD = {
   lead: "To rank the plan and answer questions, Semanticus sends this model's shape to the advice service. It never sends your data.",
   goesTitle: 'What goes',
   goes: ['table, column and measure names', 'data types, formats, folders', 'counts and relationships',
-    'the questions you type into the ask box', 'the words you type to describe a task or a workflow',
+    'the questions you type into the ask box', 'the words you type to describe a task',
     'the words of your data questions', 'measure and column descriptions, when you ask about your data',
     'other names the model gives a measure, when your data question uses one',
     'how a data question was read, in the words of the question, with no values or dates'],
@@ -322,6 +322,21 @@ export function useAskForOpenModel(): void {
     const off = onReconnect((by) => { if (by === 'otherDoor') ask(); });
     return () => { live = false; off(); };
   }, [tier, learn.phase]);
+}
+
+/**
+ * An answer on screen says Jev was not asked for want of permission, and it was not the person's own words that asked (the assistant ran it and the
+ * Studio followed it here, hero 24 D5). The open-model ask may already have been answered or missed, so this asks for the open model the same way
+ * the open does: once per model, never for someone who decided, and only as a card that asks. The answer's own Allow button stays beside it.
+ */
+export function useAskWhenAnswerNeedsPermission(needs: boolean): void {
+  const tier = useTier();
+  useEffect(() => {
+    if (!needs || tier !== 'pro') return;
+    let live = true;
+    void whenFirstRunClosed().then(() => live ? raiseConsentCardForOpenModel() : false).catch(() => { /* a failed read is not a reason to interrupt somebody */ });
+    return () => { live = false; };
+  }, [needs, tier]);
 }
 
 /**
@@ -630,6 +645,9 @@ export function ConsentCard() {
 // ---- the permission line in Your assistant > What Pro decides --------------------------------------
 
 const NEVER_SAVED_LINE = 'Save this model before you can let Pro decide for it. Permission is kept for one model at a time.';
+const NO_MODEL_LINE = 'Open a model before you can let Pro decide for it. Permission is kept for one model at a time.';
+/** With no model open there is nothing to save, so the line says to open one (UAT round 2, N18). */
+export const permissionNeedsLine = (modelOpen: boolean): string => (modelOpen ? NEVER_SAVED_LINE : NO_MODEL_LINE);
 const FOOTNOTE = 'Each model you open asks you once, whoever opens it.';
 
 /** "21 Sep", in the reader's own zone. A date with no day in it reads as a different promise. */
@@ -653,9 +671,11 @@ export function ProAdviceLine() {
   const tier = useTier();
   const [consent, setConsent] = useState<ConsentInfoW | null>(null);
   const [busy, setBusy] = useState(false);
+  const [modelOpen, setModelOpen] = useState(true);
 
   const read = useCallback(() => {
     void rpc<ConsentInfoW>('getConsent').then(setConsent).catch(() => setConsent(null));
+    void rpc<{ sessionId?: string | null }>('sessionInfo').then((i) => setModelOpen(!!i?.sessionId), () => undefined);
   }, []);
 
   useEffect(() => {
@@ -688,7 +708,7 @@ export function ProAdviceLine() {
     <div className="mt-3 border-b pb-2" style={{ borderColor: 'var(--sem-rule)' }} data-testid="consent-line">
       <div className="flex items-center gap-2">
         {noModel ? (
-          <span data-testid="consent-never-saved" className="text-xs" style={{ color: 'var(--sem-muted)' }}>{NEVER_SAVED_LINE}</span>
+          <span data-testid="consent-never-saved" className="text-xs" style={{ color: 'var(--sem-muted)' }}>{permissionNeedsLine(modelOpen)}</span>
         ) : consent.current ? (
           <>
             <span data-testid="consent-state" className="text-xs">Pro advice for this model: <b>on</b>{since ? ` since ${since}` : ''}</span>

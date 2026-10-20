@@ -5,8 +5,9 @@
 // What the player does, one line each:
 //   a step is played as a StudioNote with by "tour" through the one notes store, so the strip, the screen move and the cursor
 //     are the ones Claude's notes use. The tour calls no engine tool and no assistant.
-//   the wait after a step is the note's read time ("read"), a set time ({ ms }, never shorter than the read time), or until the
-//     person presses the shown control ({ press: true }).
+//   a step stays on screen until the person presses Next (or the shown control). It never moves on by itself: a reader who is
+//     still on step 3 when a timer moved the tour to step 4 would press Next and skip step 4. Next always goes to the step after
+//     the one on screen.
 //   when the person takes the wheel, the tour stops where it is and waits for Continue. It never moves the screen against them.
 //   the last step ends the chapter: the end line is the assistant try-out when one is connected, else a plain pointer to connect.
 import { readTimeMs } from './notes-store';
@@ -22,6 +23,10 @@ export type TourStep = {
   /** null or missing: take the sentence from the place map. */
   how?: string | null;
   wait: TourWait;
+  /** What to say when the tour is about the person's own model and `say` talks about the demo's numbers. */
+  sayOwn?: string;
+  /** A page that is empty on the demo (it has no data): the step plays on the person's own model only. */
+  ownOnly?: boolean;
   /** Index into the demo model's recorded answers. The Ask page shows that answer with the Example tag while the step plays. */
   example?: number;
 };
@@ -34,6 +39,14 @@ export type TourChapter = {
   tryWithClaude: string;
   steps: TourStep[];
 };
+
+/** The chapter as it plays: on the person's own model the steps speak of that model, and on the demo the steps that need data are left out. */
+export function chapterFor(chapter: TourChapter, own: boolean): TourChapter {
+  const steps = chapter.steps
+    .filter((s) => own || !s.ownOnly)
+    .map((s) => (own ? { ...s, say: s.sayOwn ?? s.say, example: undefined } : s));
+  return { ...chapter, steps };
+}
 
 export type ChapterEntry = { id: string; title: string; minutes: number; line: string };
 
@@ -66,7 +79,7 @@ export function noteOfStep(chapterId: string, index: number, step: TourStep, how
   };
 }
 
-/** How long the player waits before the next step, or null when the person's press ends the wait. */
+/** How long a step is meant to be read, or null when the person's press of the shown control ends it. The player does not use it as a timer. */
 export function waitMs(step: TourStep): number | null {
   const read = readTimeMs(step.say);
   if (step.wait === 'read') return read;
@@ -108,8 +121,6 @@ export type TourSnapshot = {
 };
 
 export type TourPorts = {
-  setTimer(fn: () => void, ms: number): unknown;
-  clearTimer(handle: unknown): void;
   push(note: StudioNote): void;
   canMove(): boolean;
   places: readonly { id: string; how: string }[];
@@ -124,7 +135,6 @@ export function createTourPlayer(ports: TourPorts) {
   let example: number | null = null;
   let waitingForPress = false;
   let shown = false;            // the step at `index` has been pushed
-  let timer: unknown = null;
   const listeners = new Set<() => void>();
   let snap = build();
 
@@ -132,14 +142,13 @@ export function createTourPlayer(ports: TourPorts) {
     return { status, chapterId: chapter?.id ?? null, index, total: chapter?.steps.length ?? 0, example, waitingForPress };
   }
   function emit() { snap = build(); listeners.forEach((fn) => fn()); }
-  function stopTimer() { if (timer !== null) { ports.clearTimer(timer); timer = null; } }
 
   function finish() {
-    stopTimer(); status = 'done'; waitingForPress = false; shown = false; emit();
+    status = 'done'; waitingForPress = false; shown = false; emit();
   }
 
   function advance() {
-    stopTimer(); waitingForPress = false;
+    waitingForPress = false;
     if (!chapter) return;
     if (index + 1 >= chapter.steps.length) { finish(); return; }
     index += 1; shown = false;
@@ -148,15 +157,13 @@ export function createTourPlayer(ports: TourPorts) {
 
   function playStep() {
     if (!chapter || status === 'idle' || status === 'done') return;
-    if (!ports.canMove()) { status = 'paused'; stopTimer(); emit(); return; }
+    if (!ports.canMove()) { status = 'paused'; emit(); return; }
     status = 'playing';
     const step = chapter.steps[index];
     shown = true;
     if (typeof step.example === 'number') example = step.example;
     ports.push(noteOfStep(chapter.id, index, step, howOf(step, ports.places), sessionId, ports.now()));
-    const wait = waitMs(step);
-    waitingForPress = wait === null;
-    if (wait !== null) timer = ports.setTimer(advance, wait);
+    waitingForPress = waitMs(step) === null;
     emit();
   }
 
@@ -173,7 +180,6 @@ export function createTourPlayer(ports: TourPorts) {
 
     /** Starts a chapter on the demo model's session. A chapter already playing is replaced. */
     start(next: TourChapter, session: string) {
-      stopTimer();
       chapter = next; sessionId = session; index = 0; example = null; shown = false; waitingForPress = false;
       if (next.steps.length === 0) { status = 'done'; emit(); return; }
       status = 'playing';
@@ -183,20 +189,20 @@ export function createTourPlayer(ports: TourPorts) {
     /** The person pressed the control the step showed. Ends a press wait. A press at any other time changes nothing. */
     pressed() { if (status === 'playing' && waitingForPress) advance(); },
 
-    /** Next: leaves the wait now and plays the next step. */
+    /** Next: plays the step after the one on screen. */
     next() { if (status === 'playing') advance(); else if (status === 'paused') resume(); },
 
     /** The person took the wheel (or switched to I drive): the tour stops where it is. */
     interrupt() {
       if (status !== 'playing') return;
-      stopTimer(); status = 'paused'; emit();
+      status = 'paused'; emit();
     },
 
     resume,
 
     /** Leaves the tour. The caller closes the demo model. */
     stop() {
-      stopTimer(); chapter = null; status = 'idle'; index = 0; example = null; shown = false; waitingForPress = false; emit();
+      chapter = null; status = 'idle'; index = 0; example = null; shown = false; waitingForPress = false; emit();
     },
   };
 }

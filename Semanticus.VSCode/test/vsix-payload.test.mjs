@@ -21,6 +21,8 @@ const required = [
   'extension/assistant-pack/plugins/semanticus/.claude-plugin/plugin.json',
   'extension/assistant-pack/plugins/semanticus/.codex-plugin/plugin.json',
   ...skillManifest.skills.map(skill => `extension/assistant-pack/${skill.path}`),
+  // The Copilot test's student agent ships in the pack (hero24 found the verifier refusing it while packaging).
+  ...skillManifest.agents.map(agent => `extension/assistant-pack/${agent.path}`),
   'extension/out/extension.js',
   'extension/media/studio/studio.js',
   'extension/media/studio/studio.css',
@@ -81,7 +83,7 @@ for (const [unixTarget, measuredBytes, rejectedBytes] of [
 // stages THIRD-PARTY-NOTICES.md into the extension folder. A check that merely allows the file would stay
 // green the day the staging step is deleted, so drop the entry from the payload and the verifier must
 // refuse the package by name. Both licence documents are held this way, so neither can leave alone.
-for (const noticeFile of ['extension/NOTICE', 'extension/THIRD-PARTY-NOTICES.md', ...skillManifest.skills.map(skill => `extension/assistant-pack/${skill.path}`)]) {
+for (const noticeFile of ['extension/NOTICE', 'extension/THIRD-PARTY-NOTICES.md', ...skillManifest.skills.map(skill => `extension/assistant-pack/${skill.path}`), ...skillManifest.agents.map(agent => `extension/assistant-pack/${agent.path}`)]) {
   const without = entries.filter((entry) => entry.fileName !== noticeFile);
   assert.equal(without.length, entries.length - 1, `${noticeFile} is not in the payload fixture`);
   assert.throws(
@@ -112,6 +114,7 @@ for (const forbidden of [
   'extension/media/.kube/config',
   'extension/media/.ssh/id_ed25519',
   'extension/unexpected.txt',
+  'extension/assistant-pack/plugins/semanticus/agents/unlisted-agent.md',
   '../outside.txt',
 ]) {
   assert.throws(
@@ -260,7 +263,7 @@ assert.doesNotMatch(marketplaceReadme, /releases\/download\/v?\d/u, 'README link
 assert.doesNotMatch(marketplaceReadme, /one[- ]click/iu, 'README says one click');
 assert.doesNotMatch(extensionPackage.description, /one[- ]click/iu, 'package.json description says one click');
 for (const image of ['https://semanticus.com.au/assets/shots/plan.png', 'https://semanticus.com.au/assets/shots/diagram-matrix.png',
-  'https://semanticus.com.au/assets/shots/workflows.png'])
+  'https://semanticus.com.au/assets/shots/query.png', 'https://semanticus.com.au/assets/shots/validation.png'])
   assert.ok(marketplaceReadme.includes(image), 'README lost its image ' + image);
 // The repository front page (the public mirror's README) has the same links and the same rule.
 const frontPage = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');
@@ -270,7 +273,8 @@ assert.doesNotMatch(frontPage, /one[- ]click/iu, 'the front page says one click'
 // F-285: a platform table whose rows all open the same release page picks nothing. The Marketplace is the install
 // path, and a manual download gets one link to releases/latest that names the five files there.
 assert.doesNotMatch(frontPage, /^\|.*releases\/latest.*\|\s*$/mu, 'no install table row points a platform at the shared release page');
-for (const image of ['https://semanticus.com.au/assets/shots/diagram.png', 'https://semanticus.com.au/assets/shots/workflows.png'])
+for (const image of ['https://semanticus.com.au/assets/shots/plan.png', 'https://semanticus.com.au/assets/shots/query.png',
+  'https://semanticus.com.au/assets/shots/validation.png', 'https://semanticus.com.au/assets/shots/diagram-matrix.png'])
   assert.ok(frontPage.includes(image), 'the front page lost its image ' + image);
 
 console.log('VSIX payload allow-list and runnable-engine inventory contracts passed');

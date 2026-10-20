@@ -666,8 +666,9 @@ export function filterHeldHeight(expanded, filter, held) {
 // The Diagram's first frame (journey m11 F17). Fitting a whole bus matrix into a Studio about 790px wide put the
 // card text at 3 to 4 screen px. The first frame keeps the text readable instead: when the whole diagram only fits
 // below this zoom, the frame holds this zoom and starts at the diagram's top-left corner (where the bus matrix puts
-// the facts). Fit still shows everything, on request. 0.85 keeps the cards' smallest text (11px) at 9 screen px.
-export const FIRST_FIT_MIN_ZOOM = 0.85;
+// the facts). Fit still shows everything, on request. 0.77 keeps the card names (13px) at 10 screen px or more; Fit uses the same floor, and the canvas pans for what does not fit
+// (UAT round 2, item 49: at 0.6 the names were 8px with the side bar open, the normal layout).
+export const FIRST_FIT_MIN_ZOOM = 0.77;
 
 /**
  * @param bounds      the cards' bounding box in flow coordinates: { x, y, width, height }
@@ -675,11 +676,24 @@ export const FIRST_FIT_MIN_ZOOM = 0.85;
  * @param height      the canvas height in screen px
  * @param fittedZoom  the zoom a full fit would use
  * @param pad         screen px left clear at the edge the frame starts from
+ * @param minZoom     the smallest zoom the text may have
+ * @param cards       optional: each card's { x, w } in flow coordinates. With them, the frame never ends on a half cut card: when the
+ *                    cards past the right edge only start inside it, the frame zooms in a little (up to 1) until they are out of view
  * @returns           null when the full fit is readable (use it), else the { x, y, zoom } to show
  */
-export function readableFirstView(bounds, width, height, fittedZoom, pad, minZoom = FIRST_FIT_MIN_ZOOM) {
+export function readableFirstView(bounds, width, height, fittedZoom, pad, minZoom = FIRST_FIT_MIN_ZOOM, cards = null) {
   if (!(width > 0) || !(height > 0) || fittedZoom >= minZoom) return null;
-  const z = minZoom;
+  let z = minZoom;
+  if (Array.isArray(cards) && cards.length > 1 && bounds.width * z + 2 * pad > width) {
+    const whole = cards.filter((c) => (c.x + c.w - bounds.x) * z + 2 * pad <= width);
+    const cut = cards.filter((c) => !whole.includes(c) && (c.x - bounds.x) * z + pad < width);
+    if (whole.length > 0 && cut.length > 0) {
+      const right = Math.max(...whole.map((c) => c.x + c.w));
+      const zz = Math.min(1, (width - pad - 8) / (right - bounds.x));
+      const clean = zz >= z && cut.every((c) => (c.x - bounds.x) * zz + pad >= width) && (right - bounds.x) * zz + pad <= width;
+      if (clean) z = zz;
+    }
+  }
   // An axis that fits at this zoom is centred on it; one that does not starts at its top or left edge.
   const along = (start, size, room) => (size * z + 2 * pad <= room ? (room - size * z) / 2 - start * z : pad - start * z);
   return { x: along(bounds.x, bounds.width, width), y: along(bounds.y, bounds.height, height), zoom: z };
@@ -700,4 +714,26 @@ export function changedPositions(before, after) {
     if (!was || Math.abs(was.x - p.x) > 0.5 || Math.abs(was.y - p.y) > 0.5) out[id] = p;
   }
   return out;
+}
+
+/**
+ * The view after a zoom press (the plus and minus buttons). A frame that starts at the diagram's left edge with more diagram
+ * past the right edge (the readable first frame) keeps that left edge where it is, so zooming out does not slide the cards
+ * sideways. Any other frame zooms about the middle of the canvas, as the buttons always did.
+ *
+ * @param view    the current viewport { x, y, zoom }
+ * @param bounds  the cards' bounding box in flow coordinates
+ * @param width   the canvas width in screen px
+ * @param height  the canvas height in screen px (the frame always zooms about its vertical middle)
+ * @param factor  the zoom multiplier (above 1 zooms in)
+ */
+export function zoomPinned(view, bounds, width, height, factor, minZoom = 0.15, maxZoom = 2) {
+  const zoom = Math.min(maxZoom, Math.max(minZoom, view.zoom * factor));
+  const left = bounds.x * view.zoom + view.x;
+  const right = (bounds.x + bounds.width) * view.zoom + view.x;
+  const pinned = left >= 0 && left < width / 4 && right > width;
+  const anchor = pinned ? left : width / 2;
+  const flowX = pinned ? bounds.x : (width / 2 - view.x) / view.zoom;
+  const flowY = (height / 2 - view.y) / view.zoom;
+  return { x: anchor - flowX * zoom, y: height / 2 - flowY * zoom, zoom };
 }

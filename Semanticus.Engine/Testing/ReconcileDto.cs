@@ -90,11 +90,14 @@ namespace Semanticus.Engine
         /// NEVER rewritten: the author applies the same narrowing there (the drawer says so).</summary>
         public string FilterDax { get; set; }
 
-        /// <summary>Absolute tolerance floor. Must be finite and &gt;= 0.</summary>
-        public double ToleranceAbsolute { get; set; }
+        /// <summary>Absolute tolerance floor. Must be finite and &gt;= 0. A request that leaves it out gets
+        /// <see cref="TolerancePolicy.Default"/> (1e-9), never zero: zero read an average that agrees to fourteen
+        /// places as a difference (UAT 18 Oct, round 3). A number that was SAVED, zero included, is kept.</summary>
+        public double ToleranceAbsolute { get; set; } = TolerancePolicy.Default.Absolute;
 
-        /// <summary>Relative tolerance, a FRACTION of abs(sql) (1.0 = 100%, not 1%). Must be finite and &gt;= 0.</summary>
-        public double ToleranceRelative { get; set; }
+        /// <summary>Relative tolerance, a FRACTION of abs(sql) (1.0 = 100%, not 1%). Must be finite and &gt;= 0.
+        /// Left out means <see cref="TolerancePolicy.Default"/> (1e-7), as for <see cref="ToleranceAbsolute"/>.</summary>
+        public double ToleranceRelative { get; set; } = TolerancePolicy.Default.Relative;
 
         /// <summary>REQUIRED: "zero" | "null" | "distinct" (BlankIsZero / BlankIsNull / BlankIsDistinct). No default.</summary>
         public string BlankPolicy { get; set; }
@@ -254,12 +257,22 @@ namespace Semanticus.Engine
         /// request). Never set alongside a green <see cref="Status"/>.</summary>
         public string Error { get; set; }
 
+        /// <summary>The driver's or server's own words behind a plain <see cref="Error"/>, kept for a Details view.</summary>
+        public string RawError { get; set; }
+
         /// <summary>True when <see cref="Error"/> is an agent-policy refusal (the run never executed), so a wrapper can
         /// route "get approval" vs "fix the request".</summary>
         public bool PolicyRefused { get; set; }
 
         /// <summary>The exact pending approval created by an Ask refusal, so the human UI can route to it.</summary>
         public string ApprovalId { get; set; }
+
+        /// <summary>The server and database the SQL was (or would have been) read from.</summary>
+        public string Server { get; set; }
+        public string Database { get; set; }
+
+        /// <summary>The server this request names that is not saved on this machine. When set, no sign-in token was made and no SQL ran.</summary>
+        public string UnsavedServer { get; set; }
 
         /// <summary>Harness result-contract navigation: the exact next call/action, or null when terminal.</summary>
         public string SuggestedNextAction { get; set; }

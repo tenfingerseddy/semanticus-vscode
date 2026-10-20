@@ -49,8 +49,14 @@ namespace Semanticus.Engine.Composer
         public const string Prefix = "step:";
 
         /// <summary>The most questions one call asks: every candidate's include first, then the listed arguments in
-        /// template order until this is reached. tools/relay/templates.mjs holds the relay's bound to it.</summary>
-        public const int MaxQuestions = 64;
+        /// template order until this is reached or the questions fill the room Jev's context leaves
+        /// (<see cref="MaxQuestionBytes"/>). tools/relay/templates.mjs holds the relay's bound to it. Raised from 64 to 100 on 15 Oct 2026
+        /// (m16/jev-batch): the last question for the adds goes in one request per this many, and a draft rarely has more than a handful.</summary>
+        public const int MaxQuestions = 100;
+
+        /// <summary>The most the questions of one call may weigh: what is left of the request body budget (JevTableBatch.MaxBodyBytes) once the
+        /// words and the table names (at most about 20 KB) are counted.</summary>
+        public const int MaxQuestionBytes = JevTableBatch.MaxBodyBytes - 30 * 1024;
 
         /// <summary>An argument is put to Jev only when the model lists this many options or fewer; a longer list is left
         /// for the person to choose from, because a pick among hundreds of columns is not a draft decision.</summary>
@@ -193,7 +199,7 @@ namespace Semanticus.Engine.Composer
             foreach (var t in templates)
                 foreach (var (arg, from) in ListedArgs(t))
                 {
-                    if (questions.Count >= MaxQuestions) break;
+                    if (questions.Count >= MaxQuestions || questions.Sum(JevTableBatch.QuestionBytes) >= MaxQuestionBytes) break;
                     var opts = (options?.Invoke(from) ?? Array.Empty<DraftOption>())
                         .Where(o => o != null && !string.IsNullOrWhiteSpace(o.Ref) && o.Ref != None)
                         .GroupBy(o => o.Ref, StringComparer.Ordinal).Select(g => g.First()).ToArray();

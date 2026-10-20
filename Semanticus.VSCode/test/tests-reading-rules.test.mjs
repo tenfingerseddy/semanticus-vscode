@@ -137,15 +137,13 @@ assert.equal(model.relationshipAttention(3), '3 relationships need attention');
 assert.equal(model.relationshipAttention(0), 'Nothing needs attention');
 
 // ---------------------------------------------------------------------------------------------------
-// 7 (Astra 3). A total-only comparison proves very little and says so before the last click.
+// 7 (UAT 1.5.104). A total-only comparison can pass; the one line says what it leaves out and offers a field, it does not warn.
 // ---------------------------------------------------------------------------------------------------
 {
   const note = model.limitedEvidenceNote(0);
   assert.ok(note, 'a total-only comparison must carry a note');
-  assert.match(note, /proves very little/);
-  // Fable's wording, decided against the engine's ReconcileContract: groupBy is 'required for a
-  // verdict', so the cost of leaving it empty is a VERDICT CEILING, not a vague weakness.
-  assert.match(note, /A comparison with no groups can show a matching total but can never pass as verified\./);
+  assert.equal(note, 'This compares the overall total only. Add a field to compare each group as well.');
+  assert.doesNotMatch(note, /never pass|proves very little/, 'a total that ties passes, so the note must not say it cannot');
   assert.equal(model.limitedEvidenceNote(2), null, 'a grouped comparison needs no such warning');
 }
 
@@ -158,5 +156,106 @@ assert.equal(model.TABLE_COUNT_FOOTER,
 
 // No em dash anywhere in the reading rules.
 assert.doesNotMatch(readFileSync(resolve(root, 'webview/src/tests-model.ts'), 'utf8'), /—/, 'no em dashes in user-facing copy');
+
+// ---------------------------------------------------------------------------------------------------
+// UAT 1.5.104 (17 Oct): "Table row counts" read "Not run" and "2 not counted" while all 5 countable tables matched, because two
+// calculated tables can never be counted. Only a table with a source to count against belongs to the row, and a row nobody made
+// (no table mapped, nothing counted) is not a check.
+// ---------------------------------------------------------------------------------------------------
+{
+  const counted = (n) => ({ canCount: true, source: 'mapping', lastVerdict: 'Pass', lastModelCount: n, lastSourceCount: n });
+  const calculated = { canCount: false, source: 'none', lastVerdict: null, lastModelCount: null, lastSourceCount: null };
+  const five = [counted(1848), counted(731), counted(52), counted(60145), counted(8)];
+  assert.equal(model.countsFamilyChip([...five, calculated, calculated]), 'Pass', 'tables that cannot be counted never hold the row back');
+  assert.deepEqual(model.countsFamilyFinding([...five, calculated, calculated]), 'All 5 match');
+  const differ = { canCount: true, source: 'mapping', lastVerdict: 'Fail', lastModelCount: 10, lastSourceCount: 12 };
+  assert.equal(model.countsFamilyChip([...five, differ]), 'Differs');
+  assert.equal(model.countsFamilyFinding([...five, differ]), '1 differs');
+  const unreadable = { canCount: true, source: 'mapping', lastVerdict: 'NotVerifiable', lastModelCount: null, lastSourceCount: null };
+  assert.equal(model.countsFamilyChip([...five, unreadable]), 'Could not check', 'a table that was tried and could not be counted is not "not run"');
+  const mappedNotRun = { canCount: true, source: 'mapping', lastVerdict: null, lastModelCount: null, lastSourceCount: null };
+  assert.equal(model.countsFamilyChip([mappedNotRun, mappedNotRun]), 'Not run');
+  assert.equal(model.countsFamilyFinding([mappedNotRun, mappedNotRun]), '2 not counted yet');
+  const found = { canCount: true, source: 'endpoint', lastVerdict: null, lastModelCount: null, lastSourceCount: null };
+  assert.equal(model.countsFamilyChip([found, found, found]), null, 'a fresh model shows no row counts nobody made');
+  assert.equal(model.countsFamilyChip([calculated]), null, 'nothing countable: no row');
+  assert.equal(model.countsFamilyChip([]), null);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// UAT 1.5.104 (17 Oct): the check form started empty. The model's own source is chosen for the person, and a plain SUM of a column
+// whose table maps to that source starts the SQL as a guess they can change.
+// ---------------------------------------------------------------------------------------------------
+{
+  assert.equal(model.defaultSqlSourceId('b', [{ id: 'a' }, { id: 'b' }]), 'b', 'the model\'s linked source wins');
+  assert.equal(model.defaultSqlSourceId('gone', [{ id: 'a' }, { id: 'b' }]), '', 'a link to a source that is no longer saved chooses nothing');
+  assert.equal(model.defaultSqlSourceId(undefined, [{ id: 'only' }]), 'only', 'the only source is the obvious one');
+  assert.equal(model.defaultSqlSourceId(undefined, [{ id: 'a' }, { id: 'b' }]), '', 'two sources and no link: the person chooses');
+  assert.equal(model.defaultSqlSourceId(undefined, []), '');
+
+  const maps = [{ modelTable: 'Sales', sqlSourceId: 's1', schema: 'dbo', entity: 'Sales', canCount: true }, { modelTable: 'Date', sqlSourceId: 's1', schema: 'dbo', entity: 'DimDate', canCount: true }];
+  assert.equal(model.guessSumSql('SUM(Sales[NetSalesAmount])', maps, 's1'), 'SELECT SUM(NetSalesAmount) FROM dbo.Sales');
+  assert.equal(model.guessSumSql("SUM('Sales'[NetSalesAmount])", maps, 's1'), 'SELECT SUM(NetSalesAmount) FROM dbo.Sales');
+  assert.equal(model.guessSumSql(' sum ( Sales[Net Sales Amount] ) ', maps, 's1'), 'SELECT SUM([Net Sales Amount]) FROM dbo.Sales', 'a name with spaces is bracketed');
+  assert.equal(model.guessSumSql('SUM(Sales[NetSalesAmount])', maps, 's2'), null, 'the table maps to another source: no guess');
+  assert.equal(model.guessSumSql('SUM(Sales[A]) + SUM(Sales[B])', maps, 's1'), null, 'only a plain SUM is guessed');
+  assert.equal(model.guessSumSql('DIVIDE([Net Sales],[Orders])', maps, 's1'), null);
+  assert.equal(model.guessSumSql('SUM(Product[Cost])', maps, 's1'), null, 'a table with no mapping is not guessed');
+  assert.equal(model.guessSumSql('SUM(Sales[NetSalesAmount])', [{ ...maps[0], canCount: false }], 's1'), null);
+{
+  // Round 2 N10: with groups chosen the guess selects them first, in order, then the number, so the defaults run.
+  const star = [
+    { modelTable: 'Sales', sqlSourceId: 's1', schema: 'dbo', entity: 'Sales', canCount: true },
+    { modelTable: 'Product', sqlSourceId: 's1', schema: 'dbo', entity: 'Product', canCount: true },
+    { modelTable: 'Date', sqlSourceId: 's1', schema: 'dbo', entity: 'Date', canCount: true },
+  ];
+  const links = [
+    { fromTable: 'Sales', fromColumn: 'ReturnDateKey', toTable: 'Date', toColumn: 'DateKey', isActive: false },
+    { fromTable: 'Sales', fromColumn: 'ProductKey', toTable: 'Product', toColumn: 'ProductKey', isActive: true },
+    { fromTable: 'Sales', fromColumn: 'OrderDateKey', toTable: 'Date', toColumn: 'DateKey', isActive: true },
+  ];
+  const grouped = model.guessSumSql('SUM(Sales[NetSalesAmount])', star, 's1', ['column:Product/Brand', 'column:Date/Year'], links);
+  assert.equal(grouped, [
+    'SELECT t1.Brand, t2.Year, SUM(t0.NetSalesAmount)', 'FROM dbo.Sales t0',
+    'JOIN dbo.Product t1 ON t0.ProductKey = t1.ProductKey', 'JOIN dbo.Date t2 ON t0.OrderDateKey = t2.DateKey',
+    'GROUP BY t1.Brand, t2.Year'].join('\n'), 'groups first in the order chosen, an active link wins');
+  assert.equal(model.guessSumSql('SUM(Sales[NetSalesAmount])', star, 's1', ["'Sales'[Region]"], links), 'SELECT t0.Region, SUM(t0.NetSalesAmount)\nFROM dbo.Sales t0\nGROUP BY t0.Region', 'a group in the same table needs no join');
+  assert.equal(model.guessSumSql('SUM(Sales[NetSalesAmount])', star, 's1', ['column:Customer/Region'], links), null, 'a group it cannot reach is no guess, not a SQL that fails');
+  assert.equal(model.guessSumSql('SUM(Sales[NetSalesAmount])', star, 's1', [], links), 'SELECT SUM(NetSalesAmount) FROM dbo.Sales', 'no groups: the plain total, as before');
+  // Round 2 N11: a ratio is shown the way its measure shows it; anything else is left as it was.
+  assert.equal(model.shownNumber('0.5812049141182254', '0.0%'), '58.1%');
+  assert.equal(model.shownNumber('0.5812049141182254', '0%'), '58%');
+  assert.equal(model.shownNumber('0.5812049141182254', '0.00%;-0.00%'), '58.12%');
+  assert.equal(model.shownNumber('36251380.48', '#,##0.00'), '36251380.48', 'no percent in the format: as it was');
+  assert.equal(model.shownNumber('58.1%', '0.0%'), '58.1%', 'text a person typed is left alone');
+  assert.equal(model.shownNumber('BLANK', '0.0%'), 'BLANK');
+  assert.equal(model.shownNumber('0.58', undefined), '0.58');
+  // Round 2 N15: a new check's name is distinct from the ones already saved.
+  assert.equal(model.distinctTitle('Net Sales ties to source SQL', []), 'Net Sales ties to source SQL');
+  assert.equal(model.distinctTitle('Net Sales ties to source SQL', ['Net Sales ties to source SQL']), 'Net Sales ties to source SQL 2');
+  assert.equal(model.distinctTitle('Net Sales ties to source SQL', ['net sales ties to source sql', 'Net Sales ties to source SQL 2']), 'Net Sales ties to source SQL 3');
+}
+  assert.equal(model.guessSumSql('SUM(Sales[NetSalesAmount])', [{ modelTable: 'Sales', sqlSourceId: 's1', entity: 'Sales', canCount: true }], 's1'), 'SELECT SUM(NetSalesAmount) FROM dbo.Sales', 'no schema: dbo');
+}
+
+// A source chosen after the last count makes that count old: the row waits for a run instead of showing the older failure.
+{
+  const old = { canCount: true, source: 'mapping', setWhenUtc: '2026-10-17T22:40:00Z', lastRunUtc: '2026-10-17T22:38:00Z', lastVerdict: 'NotVerifiable', lastModelCount: null, lastSourceCount: null };
+  assert.equal(model.countsFamilyChip([old]), 'Not run', 'a mapping saved after the last count: not counted yet');
+  assert.equal(model.countsFamilyFinding([old]), '1 not counted yet');
+  const fresh = { ...old, lastRunUtc: '2026-10-17T22:41:00Z', lastVerdict: 'Pass', lastModelCount: 5, lastSourceCount: 5 };
+  assert.equal(model.countsFamilyChip([fresh]), 'Pass', 'a count taken after the mapping stands');
+}
+
+// UAT recheck 19 Oct (D3): Ctrl+S told Validation "The model changed. These results may be out of date" when nothing had changed. A save (or a publish
+// that landed) tells the window with a notice that moves no object; only a notice that carries a change makes the results old.
+{
+  assert.equal(model.makesResultsOld({ label: 'save', deltas: [] }), false, 'a save moves nothing');
+  assert.equal(model.makesResultsOld({ label: 'publish', deltas: [] }), false, 'a publish that landed moves nothing in the copy');
+  assert.equal(model.makesResultsOld({ label: 'set_property', deltas: [{ kind: 'update', ref: 'measure:Sales/Net Sales' }] }), true, 'an edit makes the results old');
+  assert.equal(model.makesResultsOld({ label: 'undo', replay: 'undo', deltas: [] }), true, 'an undo walks the timeline: old');
+  assert.equal(model.makesResultsOld({ label: 'save', deltas: [{ kind: 'update', ref: 'measure:Sales/Net Sales' }] }), true, 'a notice that does carry a change is a change, whatever its label');
+  assert.equal(model.makesResultsOld({}), true, 'an unlabelled notice is treated as a change, never silently ignored');
+}
 
 console.log('Tests page reading rules passed');

@@ -95,6 +95,42 @@ namespace Semanticus.Engine.Query
             }
         }
 
+        /// <summary>A column that holds a year of some kind: a calendar year, a fiscal year, an FY. Not a month or a quarter of one.</summary>
+        internal static bool IsYearLevel(QueryColumn c)
+        {
+            if (c.Kind != "whole" && c.Kind != "text") return false;
+            var w = QuerySplitShortlist.NameWords(c.Name);
+            return (w.Contains("year") || w.Contains("fy")) && !w.Contains("month") && !w.Contains("quarter") && !w.Contains("week") && !w.Contains("day");
+        }
+
+        /// <summary>One year mention narrows ONE date level (the UAT of 17 Oct: "in 2024" filtered Fiscal Year and Year at once, which
+        /// keeps January to June 2024 and showed it as the whole year). Of the year columns that matched the same typed year, the
+        /// fiscal one is kept when the question says fiscal, the calendar one otherwise, and the model's plain Year when it marks
+        /// fiscal as its year (no calendar column is left to prefer). The others are dropped, so every word shown about the dates is
+        /// made from the filters that run.</summary>
+        internal static void OneYearLevel(JevQueryReader.Reading reading, string question, QueryCatalog cat)
+        {
+            var fiscalAsked = PeriodQualifiers.AsksFiscal(question);
+            var groups = reading.Filters
+                .Where(f => f.Op == QueryOps.Is && IsYearLevel(f.Candidate.Column) && System.Text.RegularExpressions.Regex.IsMatch((f.Candidate.Words ?? "").Trim(), @"^(?:19|20)\d\d$"))
+                .GroupBy(f => f.Candidate.Words.Trim())
+                .Where(g => g.Select(x => x.Candidate.Column).Distinct().Count() > 1).ToList();
+            foreach (var g in groups)
+            {
+                var columns = g.Select(x => x.Candidate.Column).Distinct().ToList();
+                bool Kind(QueryColumn c) => QuerySplitShortlist.NameWords(c.Name).Any(PeriodQualifiers.KindInName);
+                var keep = (fiscalAsked ? columns.FirstOrDefault(Kind) : null)
+                    ?? columns.FirstOrDefault(c => PeriodDates.Calendar(c, cat))
+                    ?? columns.FirstOrDefault(c => !Kind(c))
+                    ?? columns[0];
+                foreach (var drop in g.Where(x => x.Candidate.Column != keep).ToList())
+                {
+                    reading.Filters.Remove(drop);
+                    reading.Assumptions.RemoveAll(a => a.Key == "filter:" + drop.Candidate.Id);
+                }
+            }
+        }
+
         /// <summary>"in 2007" names one year: the year is the value, so a year the column does not hold (offered to Jev only as a
         /// bound) is read as "is" unless a bound word sits right before it ("since 2007") (B2, hero run 2).</summary>
         internal static void FixYearIn(JevQueryReader.Reading reading, string question)
@@ -180,6 +216,8 @@ namespace Semanticus.Engine.Query
         /// the calendar reading stays one click away. Null when nothing is wrong. A fact of the model: the columns the reading uses.</summary>
         public static string Fiscal(string question, QuerySpec spec, QueryCatalog cat, JevQueryReader.Reading reading = null)
         {
+            var twoLevels = TwoYearLevels(spec, cat);
+            if (twoLevels != null) return twoLevels;
             var named = PeriodQualifiers.Unexplained(question, spec, reading, cat);
             if (named == null) return null;
             var calendar = spec.GroupBy.Concat(spec.Filters.Select(f => f.Column)).Distinct().Where(IsCalendar).ToList();
@@ -192,6 +230,68 @@ namespace Semanticus.Engine.Query
                 return said + ", but this reading uses the calendar (" + shown + "). The model has " + cat.Shown(have[0]) + " for it.";
             return said + (named.Fiscal ? ", a fiscal period, and this model has no fiscal year, so " : ", a period this model has no column for, so ")
                 + "this reading uses the calendar (" + shown + ").";
+        }
+
+        /// <summary>The reading filters two different year columns to the same year (Fiscal Year and Year are 2024): the dates they keep
+        /// together are neither year, so no figure is shown as the answer. Null when each year is filtered at one level.</summary>
+        internal static string TwoYearLevels(QuerySpec spec, QueryCatalog cat)
+        {
+            var levels = spec.Filters.Where(f => f.Op == QueryOps.Is && IsYearLevel(f.Column)).ToList();
+            foreach (var a in levels)
+                foreach (var b in levels)
+                {
+                    if (string.CompareOrdinal(a.Column.Id, b.Column.Id) >= 0) continue;
+                    if (!a.Values.Any(v => b.Values.Any(w => string.Equals(Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture), Convert.ToString(w, System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)))) continue;
+                    return $"The question names one year, but this reading filters both {cat.Shown(a.Column)} and {cat.Shown(b.Column)} to it, and those two keep different dates.";
+                }
+            return null;
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex HowManyThing = new System.Text.RegularExpressions.Regex(
+            @"\bhow\s+many\s+(?:of\s+)?(?:(?:the|our|my|all|your)\s+)*([a-z][a-z_]*)", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex CountCall = new System.Text.RegularExpressions.Regex(
+            @"\b(?:DISTINCTCOUNT|DISTINCTCOUNTNOBLANK|COUNTROWS|COUNT|COUNTA|APPROXIMATEDISTINCTCOUNT)\s*\(", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>Whether this measure is a count of the entity: its name says the entity and its DAX counts, or its DAX counts the
+        /// entity's table or key directly. A sum of order lines or an amount is not.</summary>
+        internal static bool CountsThing(QueryMeasure m, string table, QueryCatalog cat, int depth = 0)
+        {
+            var dax = m.Expression ?? "";
+            var plain = FrequencyReading.PlainName(table).ToLowerInvariant();
+            var names = new[] { plain, FrequencyReading.Plural_(plain).ToLowerInvariant(), plain.TrimEnd('s') };
+            var named = QuerySplitShortlist.NameWords(m.Name).Any(w => names.Contains(w));
+            if (CountCall.IsMatch(dax))
+            {
+                if (named) return true;
+                var key = FrequencyReading.EntityKey(table, cat);
+                return dax.IndexOf("'" + table + "'", StringComparison.OrdinalIgnoreCase) >= 0 || dax.IndexOf(table + "[", StringComparison.OrdinalIgnoreCase) >= 0
+                    || (key != null && dax.IndexOf(key.Name, StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+            // "Active Customers" = CALCULATE ( [Customers], ... ): the name says the thing and the measure it builds on counts it.
+            if (!named || depth >= 3) return false;
+            return cat.Measures.Any(o => o != m && dax.IndexOf("[" + o.Name + "]", StringComparison.OrdinalIgnoreCase) >= 0 && CountsThing(o, table, cat, depth + 1));
+        }
+
+        /// <summary>The question counts a THING ("how many customers ..."), and no number the reading shows is a count of that thing: a
+        /// sum of order lines or an amount would be shown as the answer (UAT 17 Oct: 400,342 for 3,431 customers). Returns the plain
+        /// line and, when the model has a measure that does count the thing, that measure for the offer. Null when the question counts
+        /// no table of the model, or a number shown counts it (a measure whose meaning is that count). A measure whose DAX the engine
+        /// cannot read is not judged.</summary>
+        internal static (string Line, string Plural, QueryMeasure Counter)? CountOfThing(string question, QuerySpec spec, QueryCatalog cat)
+        {
+            if (spec.Measures.Count == 0 || cat == null) return null;
+            var m = HowManyThing.Match(question ?? "");
+            if (!m.Success) return null;
+            var word = m.Groups[1].Value.ToLowerInvariant();
+            var found = FrequencyReading.TablesNamed(new List<string> { word }, cat);
+            if (found.Count == 0) return null;
+            var table = found.Values.First();
+            if (FrequencyReading.EntityKey(table, cat) == null) return null;
+            if (spec.Measures.Any(x => string.IsNullOrWhiteSpace(x.Expression) || CountsThing(x, table, cat))) return null;
+            var plural = FrequencyReading.Plural_(FrequencyReading.PlainName(table)).ToLowerInvariant();
+            var counter = cat.VisibleMeasures.FirstOrDefault(x => CountsThing(x, table, cat) && cat.Unreached(table, x).Length == 0);
+            var shown = string.Join(" and ", spec.Measures.Select(x => x.Name));
+            return ($"The question counts {plural}, but {shown} is not a count of {plural}. Nothing here counts {plural} that way yet.", plural, counter);
         }
 
         private static readonly System.Text.RegularExpressions.Regex ShareWords = new System.Text.RegularExpressions.Regex(

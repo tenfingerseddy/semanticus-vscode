@@ -199,11 +199,42 @@ function slice(source, start, end, what) {
   // The card's memory is the host's, for the window's run, and asked by every panel through one message. A swap is not told to it:
   // the assistant's open asks like any other.
   assert.doesNotMatch(extension, /noteSwap/, 'no swap is told to the card\'s memory any more: it never stays silent after the assistant\'s open');
-  assert.match(extension, /msg\?\.type === 'claimConsentAsk'[\s\S]{0,200}?type: 'consentAsk', id: msg\.id, ask: consentAsks\.claim\(msg\.scope\)/,
+  assert.match(extension, /msg\?\.type === 'claimConsentAsk'[\s\S]{0,600}?type: 'consentAsk', id: msg\.id, ask: !demoOpen && consentAsks\.claim\(msg\.scope\)/,
     'the panels ask the host whether the card may ask');
+  // The tour's throwaway demo copy is never asked about, and not being asked is not recorded as asked (1.6, v2-fix-r2-start).
+  // The read sits in scratchCopyOpen, outside the relay, whose engine calls all go through its rpc branch (join11-relay-scope).
+  assert.match(extension, /msg\?\.type === 'claimConsentAsk'[\s\S]{0,400}?const demoOpen = await scratchCopyOpen\(\)/, 'a demo copy that is open does not raise the card');
+  assert.match(extension, /async function scratchCopyOpen\(\)[\s\S]{0,300}?return isScratchCopyPath\(info\?\.source\)/, 'the demo-copy read checks the open model\'s source');
   assert.equal((extension.match(/new ConsentAsks\(\)/g) ?? []).length, 1, 'one memory for the window, shared by every panel');
   // The person's own opens keep the old default, so they still open Studio and re-arm the card.
   assert.match(bindBody, /by: 'person' \| 'otherDoor' = 'person'/, 'a caller that says nothing is the person');
 }
 
 console.log('assistant-swap-quiet: ok');
+
+// ---- hero 24 D5: an answer the assistant ran says Jev was not asked for want of permission -------------------------------------------
+// The open-model ask has its own rules (above). The page that shows such an answer asks the same question, through the same rules, so a card
+// that was missed at the open is still offered once, and the person who decided is not asked.
+{
+  const consent = readFileSync(join(webview, 'src', 'consent.tsx'), 'utf8');
+  const ask = readFileSync(join(webview, 'src', 'queriesask.tsx'), 'utf8');
+  assert.match(consent, /export function useAskWhenAnswerNeedsPermission\(needs: boolean\)[\s\S]{0,400}raiseConsentCardForOpenModel\(\)/,
+    'the answer-driven ask goes through the open-model ask, which skips a decided model');
+  assert.match(ask, /useAskWhenAnswerNeedsPermission\(!fromWords && !!answer && answer\.needsPermission === true\)/,
+    'the Query page asks when an answer it did not ask for says permission is missing');
+}
+
+// ---- UAT round 2: Not now is remembered for that model, across a reload ----------------------------------------------------------------------
+// The memory lived only in the window's run, so Reload Window asked again about a model the person had put off. It is kept in the editor's
+// own store (globalState) too, and a fresh window reads it back.
+{
+  const { ConsentAsks } = load(join(root, 'src', 'consentAsks.ts'), {});
+  const store = new Map();
+  const memento = { get: (k, d) => (store.has(k) ? store.get(k) : d), update: async (k, v) => { store.set(k, v); } };
+  const first = new ConsentAsks(); first.remember(memento);
+  assert.equal(first.claim('M1'), true, 'a model not asked about is asked once');
+  const reloaded = new ConsentAsks(); reloaded.remember(memento);
+  assert.equal(reloaded.claim('M1'), false, 'after a reload the same model is not asked again');
+  assert.equal(reloaded.claim('M2'), true, 'another model still is');
+  assert.match(extension, /consentAsks\.remember\(context\.globalState\)/, 'the window gives the memory its store');
+}

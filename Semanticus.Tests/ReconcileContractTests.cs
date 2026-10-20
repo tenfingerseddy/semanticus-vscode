@@ -110,6 +110,8 @@ namespace Semanticus.Tests
         public async Task Grouping_is_optional_to_run_but_without_it_a_check_can_never_do_better_than_couldnt_check()
         {
             using var engine = await ModelAsync();
+            // The model's own partitions name this server; a sign-in goes only to a server saved on this machine.
+            SqlSourceRegistry.Save(null, "Fabric", "fabric.example.com", "LH_Gold", "azcli", null);
 
             var grandTotalOnly = Valid();
             grandTotalOnly.GroupBy = Array.Empty<string>();

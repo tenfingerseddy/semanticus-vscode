@@ -481,7 +481,7 @@ namespace Semanticus.Tests
             // The service the engine builds for a real session carries the durable answer store; this one does too.
             f.Engine.UseDecisionsForTest(new DecisionService(first, new DecisionBudget(), answers: new DecisionAnswerStore()));
             var before = await SettledPlanAsync(f);
-            Assert.Equal(3, first.Seen.Count(r => r.PointName == Point));   // one request per table (Customer, Sales, Returns), not per object (14)
+            Assert.Equal(1, first.Seen.Count(r => r.PointName == Point));   // one request for the model (Customer, Sales, Returns), not per object (14)
             // Permission is bound to a marker inside the model, so the restart opens the file as saved.
             var path = System.IO.Path.Combine(f.Workspace, "AiSchemaRestart.bim");
             await f.Engine.SaveAsync(path, "bim", false, "human");
@@ -513,7 +513,11 @@ namespace Semanticus.Tests
                 await again.JevSettledForTest();
                 var asked = second.Seen.Where(r => r.PointName == Point).ToArray();
                 Assert.NotEmpty(asked);
-                Assert.All(asked, r => Assert.Equal("Customer", r.Snapshot["table_name"]?.ToString()));
+                Assert.All(asked, r =>
+                {
+                    using var objects = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(r.Snapshot["objects"]));
+                    Assert.All(objects.RootElement.EnumerateArray(), o => Assert.Equal("Customer", o.GetProperty("table").GetString()));
+                });
             }
             finally
             {
@@ -533,7 +537,7 @@ namespace Semanticus.Tests
             var first = new CapturingOracle(inner);
             f.Engine.UseDecisionsForTest(new DecisionService(first, new DecisionBudget(), answers: store));
             await SettledPlanAsync(f);
-            Assert.Equal(3, first.Seen.Count(r => r.PointName == Point));   // one request per table (Customer, Sales, Returns), not per object (14)
+            Assert.Equal(1, first.Seen.Count(r => r.PointName == Point));   // one request for the model (Customer, Sales, Returns), not per object (14)
             var folder = System.IO.Path.Combine(ConnectionRegistry.Root(), "decision-answers");
             string[] Kept() => System.IO.Directory.Exists(folder)
                 ? System.IO.Directory.GetFiles(folder, "*.jsonl").Where(p => new System.IO.FileInfo(p).Length > 0).ToArray()
@@ -551,7 +555,7 @@ namespace Semanticus.Tests
             await SettledPlanAsync(f);
 
             // Answers bought under the old permission are not served under the new one.
-            Assert.Equal(3, second.Seen.Count(r => r.PointName == Point));   // one request per table, not per object (14)
+            Assert.Equal(1, second.Seen.Count(r => r.PointName == Point));   // one request for the model, not per object (14)
         }
 
         [Trait(TestCost.Key, TestCost.Sweep)]
@@ -569,7 +573,7 @@ namespace Semanticus.Tests
             var first = new CapturingOracle(inner);
             f.Engine.UseDecisionsForTest(f.Engine.BuildDecisions(first, new DecisionBudget()));
             await SettledPlanAsync(f);
-            Assert.Equal(3, first.Seen.Count(r => r.PointName == Point));   // one request per table (Customer, Sales, Returns), not per object (14)
+            Assert.Equal(1, first.Seen.Count(r => r.PointName == Point));   // one request for the model (Customer, Sales, Returns), not per object (14)
             var path = System.IO.Path.Combine(f.Workspace, "AiSchemaRestartProduct.bim");
             await f.Engine.SaveAsync(path, "bim", false, "human");
 
@@ -740,13 +744,18 @@ namespace Semanticus.Tests
             using var f = await ModelAsync("AiSchemaCap.bim");
             var oracle = await AnswerAsync(f, picks: new Dictionary<string, (string, double)> { ["column:Customer/CustomerKey"] = ("exclude", 0.95) });
             f.Engine.AiSchemaCapForTest = 5;
+            f.Engine.JevPerTableForTest = true;   // the cap is asked in whole requests: one a table here, so the first batch is Customer's
 
             await f.Engine.GetModelPlanAsync();
             await f.Engine.JevSettledForTest();
             // The cap counts OBJECTS and asks whole table chunks (m11/jev-batch): Customer's four objects fit under 5, Sales' eight
             // after them would not, so the first batch is ONE request (Customer, which holds Customer[CustomerKey]).
             Assert.Equal(1, oracle.Seen.Count(r => r.PointName == Point));
-            Assert.Equal(new[] { "Customer" }, oracle.Seen.Where(r => r.PointName == Point).Select(r => r.Snapshot["table_name"]?.ToString()).ToArray());
+            Assert.Equal(new[] { "Customer" }, oracle.Seen.Where(r => r.PointName == Point).SelectMany(r =>
+            {
+                using var objects = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(r.Snapshot["objects"]));
+                return objects.RootElement.EnumerateArray().Select(o => o.GetProperty("table").GetString()).Distinct().ToArray();
+            }).ToArray());
             // Reading the plan shows the first batch and starts the next one, so the count on the row is 4 or more.
             var plan = await f.Engine.GetModelPlanAsync();
             var row = plan.Items.Single(i => i.Id == Prefix + "table:Customer");
@@ -842,8 +851,8 @@ namespace Semanticus.Tests
             await SettledPlanAsync(f);
 
             var sent = oracle.Seen.Where(r => r.PointName == Point).ToArray();
-            // One request per table (m11/jev-batch): 3 tables, holding 3 tables + 7 visible columns (the hidden one is not asked) + 4 measures.
-            Assert.Equal(3, sent.Length);
+            // One request for the whole model (m16/jev-batch): 3 tables, holding 3 tables + 7 visible columns (the hidden one is not asked) + 4 measures.
+            Assert.Single(sent);
             var declared = DecisionRegistry.Require(Point).SnapshotFields;
             var allowed = new HashSet<string>(StringComparer.Ordinal)
             {
@@ -853,14 +862,14 @@ namespace Semanticus.Tests
             };
             foreach (var r in sent)
             {
-                // A batched request sends the table's name and fields once and its objects as a list; nothing undeclared.
-                Assert.Equal(new[] { "objects", "table_fields", "table_name" }, r.Snapshot.Keys.OrderBy(x => x, StringComparer.Ordinal));
+                // A batched request sends each table's fields once (a map keyed by the table's name) and its objects as a list; nothing undeclared.
+                Assert.Equal(new[] { "objects", "table_fields" }, r.Snapshot.Keys.OrderBy(x => x, StringComparer.Ordinal));
                 Assert.All(r.Snapshot.Keys, k => Assert.Contains(k, declared));
                 using var entries = JsonDocument.Parse(JsonSerializer.Serialize(r.Snapshot["objects"]));
                 Assert.Equal(entries.RootElement.GetArrayLength(), r.Questions.Count);
                 foreach (var entry in entries.RootElement.EnumerateArray())
                 {
-                    Assert.Equal(new[] { "facts", "kind", "name" }, entry.EnumerateObject().Select(p => p.Name).OrderBy(x => x, StringComparer.Ordinal));
+                    Assert.Equal(new[] { "facts", "kind", "name", "table" }, entry.EnumerateObject().Select(p => p.Name).OrderBy(x => x, StringComparer.Ordinal));
                     Assert.All(entry.GetProperty("facts").EnumerateObject(), p => Assert.Contains(p.Name, allowed));
                 }
                 var json = JsonSerializer.Serialize(r.Snapshot);

@@ -111,7 +111,7 @@ const ROWS: RowDef[] = [
   { cap: 'EditLocal', title: 'Edit the working model', sub: 'Never touches a live target.', kind: 'localAllow' },
   { cap: 'DeployFile', title: 'Write model files', sub: 'Never touches a live target.', kind: 'localAllow' },
   { cap: 'DeployLive', title: 'Publish to a published model', sub: 'Publish changes to the design of a live model.', kind: 'gated' },
-  { cap: 'DeployDelete', title: 'Delete from a published model', sub: 'Cannot be undone.', kind: 'gated' },
+  { cap: 'DeployDelete', title: 'Delete from a published model', sub: 'A saved version is kept. Undo publish brings it back.', kind: 'gated' },
   { cap: 'Rollback', title: 'Roll back a published model', sub: 'Restore a live model to an earlier version.', kind: 'gated' },
   { cap: 'Refresh', title: 'Refresh live data', sub: 'Refresh a partition on the live model.', kind: 'gated' },
   { cap: 'Governance', title: 'Change these settings', sub: 'Never allowed for the assistant.', kind: 'infoDeny' },

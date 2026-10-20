@@ -16,6 +16,7 @@ namespace Semanticus.Engine
         public string Source { get; set; }
         public bool LiveConnected { get; set; }   // a unified live open (open_local / open_live) also bound the query engine
         public string Account { get; set; }       // the account (UPN) this open signed in as, when known — null = "account unknown" (azcli/sp/local)
+        public string Note { get; set; }          // one plain line when the open had something to say (a copy saved inside the model folder was left out); null otherwise
     }
 
     /// <summary>The non-secret coordinates of the live model a session was opened from (open_live/open_local bind it).
@@ -803,6 +804,11 @@ namespace Semanticus.Engine
         /// <summary>Set when a first save went somewhere other than where it was aimed: one plain sentence saying where it went and
         /// why ("Saved to ..., next to 'Northstar', so that model is left as it was."). Null when the save went where it was asked.</summary>
         public string Note { get; set; }
+        /// <summary>The fact, not a guess: the folder this model was saved to sits inside a git repository. An assistant reads it before it
+        /// writes over a person's only copy, and never says "it is in git" without it.</summary>
+        public bool InGit { get; set; }
+        /// <summary>True when this save is a copy kept beside the model (a backup the person can go back to); false for a save that moved or replaced the model's own file.</summary>
+        public bool IsBackupCopy { get; set; }
     }
 
     /// <summary>Result of a metadata-only deploy of the open session to a live XMLA model (deploy_live).</summary>
@@ -1024,6 +1030,9 @@ namespace Semanticus.Engine
         public bool KeepsUnsavedWork { get; set; }
         public FileRecoveryInfo FileRecovery { get; set; }
         public bool DiskDiverged { get; set; }
+        /// <summary>Where a copy of this live model was kept, while that copy holds every change so far; null otherwise. A live model's save writes a copy,
+        /// never the service, so "unsaved" reads "copy kept, not published" once there is one.</summary>
+        public string KeptCopyPath { get; set; }
         public int Tables { get; set; }
         public int Measures { get; set; }
         /// <summary>The model's TOM compatibility level (1400, 1604, 1702 and so on); 0 when no model is open.
@@ -1558,6 +1567,8 @@ namespace Semanticus.Engine
         public string How { get; set; }
         /// <summary>"moved" | "noted" | "noStudio".</summary>
         public string Screen { get; set; }
+        /// <summary>What the page already holds for the assistant's own work, when there is something to say (hero 27 P6). Null otherwise.</summary>
+        public string Shown { get; set; }
     }
 
     /// <summary>One button of suggest_next: a short label and the words the person would type to the assistant.</summary>

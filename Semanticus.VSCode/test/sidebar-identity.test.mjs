@@ -316,7 +316,7 @@ assert.ok(!shortcuts.includes('Reference Model tree'),
   for (const id of ['semanticus.setFormat', 'semanticus.summarizeBy', 'semanticus.dataCategory', 'semanticus.relToggleActive', 'semanticus.roleAddMember', 'semanticus.deleteObject', 'semanticus.renameObject'])
     assert.equal(palette.get(id), 'focusedView == semanticusModel', `${id} is listed only with the Model tree focused`);
   assert.equal(titleOf('semanticus.manageLicense'), 'Semanticus Pro');
-  for (const [id, title] of [['semanticus.restartEngine', 'Restart Engine'], ['semanticus.studioSearch', 'Find and Replace'], ['semanticus.scanBpa', 'Check Model Quality'],
+  for (const [id, title] of [['semanticus.restartEngine', 'Restart Engine'], ['semanticus.scanBpa', 'Check Model Quality'],
     ['semanticus.scanReadiness', 'Check AI Readiness'], ['semanticus.quickOpenModel', 'Semanticus: Open Recent Model…'], ['semanticus.amCalendar', 'New Calendar…'], ['semanticus.amDaxLib', 'Browse DaxLib…']])
     assert.equal(titleOf(id), title);
   for (const c of manifest.contributes.commands) assert.ok(!/[—–]/.test(c.title), `no em dash in ${c.title}`);

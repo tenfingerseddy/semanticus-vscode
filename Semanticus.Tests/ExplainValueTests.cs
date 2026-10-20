@@ -176,6 +176,91 @@ namespace Semanticus.Tests
             Assert.All(c.Rows, r => Assert.Null(r.Pct));
         }
 
+        // ---- the split that explains the number (Kane, 17 Oct: "what makes it up seems fairly useless") ----
+
+        private static SplitTrial Trial(string dim, params double[] values)
+            => new SplitTrial { Dimension = dim, Members = values.Select((v, i) => new KeyValuePair<string, double>(dim + i, v)).ToList() };
+
+        private static double Total(SplitTrial t) => t.Members.Sum(m => m.Value);
+
+        [Fact]
+        public void A_split_that_leaves_most_of_the_number_unexplained_is_never_chosen()
+        {
+            // Kane's cell: 225 cities, the top five hold 15%. Four quarters hold all of it.
+            var city = Trial("'Store'[City]", Enumerable.Range(0, 225).Select(i => i < 5 ? 40.0 : 4.6).ToArray());
+            var each = Total(city) / 4;
+            var quarter = Trial("'Date'[Quarter]", each, each, each, each);
+            var c = ExplainLogic.PickSplit(new[] { city, quarter }, Total(city), 5);
+            Assert.True(c.Additive);
+            Assert.Equal("'Date'[Quarter]", c.Dimension);
+            Assert.DoesNotContain(c.Rows, r => r.Member.Contains("everything else"));
+            Assert.True(ExplainLogic.SumMatchesTotal(c.Rows.Sum(r => double.Parse(r.Value, System.Globalization.CultureInfo.InvariantCulture)), Total(city)));
+        }
+
+        [Fact]
+        public void When_no_column_explains_most_of_the_number_one_plain_line_says_so()
+        {
+            var flat = Trial("'Store'[City]", Enumerable.Repeat(5.0, 20).ToArray());   // 20 equal parts: the top five hold 25%
+            var c = ExplainLogic.PickSplit(new[] { flat }, Total(flat), 5);
+            Assert.Empty(c.Rows);
+            Assert.Equal("No single column explains most of this number.", c.Note);
+            Assert.Empty(c.Alternatives);
+        }
+
+        [Fact]
+        public void A_column_with_few_values_beats_one_with_many_even_when_the_many_cover_more()
+        {
+            var many = Trial("'Store'[City]", Enumerable.Range(0, 20).Select(i => i < 5 ? 17.0 : 1.0).ToArray());   // top five: 85 of 100
+            var few = Trial("'Product'[Category]", 22, 20, 15, 12, 10, 8, 7, 6);                                      // 8 values, top five: 79 of 100
+            var c = ExplainLogic.PickSplit(new[] { many, few }, 100, 5);
+            Assert.Equal("'Product'[Category]", c.Dimension);
+            Assert.Equal(new[] { "'Store'[City]" }, c.Alternatives);
+        }
+
+        [Fact]
+        public void Among_columns_with_few_values_the_top_parts_that_cover_the_most_win_and_ties_keep_the_model_order()
+        {
+            var weak = Trial("'Product'[Style]", 25, 20, 15, 12, 10, 8, 6, 4);          // top five: 82
+            var strong = Trial("'Product'[Category]", 50, 30, 10, 5, 2, 1, 1, 1);       // top five: 97
+            var tieA = Trial("'Date'[Quarter]", 25, 25, 25, 25);                           // all of it: 100
+            var tieB = Trial("'Date'[Half]", 50, 50);                                      // all of it: 100
+            var c = ExplainLogic.PickSplit(new[] { weak, strong, tieA, tieB }, 100, 5);
+            Assert.Equal("'Date'[Quarter]", c.Dimension);   // 100 percent, and first in the model's order
+            // The row goes one column per table first (the chosen table's second column waits), then a second per table.
+            Assert.Equal(new[] { "'Product'[Category]", "'Date'[Half]", "'Product'[Style]" }, c.Alternatives);
+        }
+
+        [Fact]
+        public void Columns_that_cut_the_number_the_same_way_are_one_choice()
+        {
+            var number = Trial("'Date'[Quarter number]", 40, 30, 20, 10);
+            var name = Trial("'Date'[Quarter name]", 40, 30, 20, 10);       // the same four parts under other labels
+            var other = Trial("'Store'[Region]", 50, 30, 20);
+            var c = ExplainLogic.PickSplit(new[] { number, name, other }, 100, 5);
+            Assert.Equal("'Date'[Quarter number]", c.Dimension);
+            Assert.Equal(new[] { "'Store'[Region]" }, c.Alternatives);
+        }
+
+        [Fact]
+        public void A_split_with_one_value_or_a_cut_off_scan_is_not_a_split()
+        {
+            var one = Trial("'Store'[Country]", 100);
+            var cut = Trial("'Customer'[Name]", 60, 40); cut.Truncated = true;
+            var good = Trial("'Product'[Category]", 60, 40);
+            Assert.Equal("'Product'[Category]", ExplainLogic.PickSplit(new[] { one, cut, good }, 100, 5).Dimension);
+        }
+
+        [Fact]
+        public void A_number_whose_parts_do_not_add_up_still_shows_how_it_differs_and_says_why()
+        {
+            var a = Trial("'Product'[Brand]", 0.3, 0.5, 0.2);
+            var c = ExplainLogic.PickSplit(new[] { a }, 0.35, 5);
+            Assert.False(c.Additive);
+            Assert.Empty(c.Rows);
+            Assert.Contains("do not add up", c.Note);
+            Assert.NotEmpty(c.Spread);
+        }
+
         // ---- blank-by-design + RLS advisory (pure) ----
 
         [Fact]
@@ -276,6 +361,34 @@ namespace Semanticus.Tests
             Assert.NotEmpty(d.Lineage);
             Assert.Contains("No live connection", d.Summary);
             Assert.NotNull(d.Evidence.Query);                          // the exact DAX it WOULD run, for transparency
+        }
+
+        // Hero 24 D1: a Studio card that rendered again and again asked the live model the same explain about 3,500 times in 13 minutes. The engine answers the
+        // same request once, whoever asks and however often, and answers it again after a few seconds or when anything in the request differs.
+        [Fact]
+        public async Task The_same_explain_asked_in_a_storm_is_answered_once_by_the_engine()
+        {
+            var e = await OpenAsync();
+            Task<ExplainDossier> Ask(ExplainFilterContext ctx) => e.ExplainValueAsync("measure:Date/Days In Current Quarter", ctx, true, null, 5, "human");
+            var storm = Enumerable.Range(0, 200).Select(_ => Ask(new ExplainFilterContext { GroupBy = new[] { "'Date'[Year]" } })).ToArray();
+            var all = await Task.WhenAll(storm);
+            Assert.All(all, d => Assert.Same(all[0], d));
+            Assert.Same(all[0], await Ask(new ExplainFilterContext { GroupBy = new[] { "'Date'[Year]" } }));   // a repeat just after: the same answer
+            Assert.NotSame(all[0], await Ask(new ExplainFilterContext { GroupBy = new[] { "'Date'[Month]" } }));   // another context is another question
+        }
+
+        // Verifier v-fix-hero24: the repeat window must never serve the answer to a DIFFERENT request. An edit to the measure is a new
+        // model revision, so an explain asked just after it must describe the measure as it is now, not as it was three seconds ago.
+        [Fact]
+        public async Task An_explain_asked_just_after_the_measure_was_edited_describes_the_edited_measure()
+        {
+            var e = await OpenAsync();
+            const string m = "measure:Date/Days In Current Quarter";
+            var before = await e.ExplainValueAsync(m, null, true, null, 5, "human");
+            await e.SetDaxAsync(m, "1 + 41", "human");
+            var after = await e.ExplainValueAsync(m, null, true, null, 5, "human");
+            Assert.Equal("1 + 41", after.Expression?.Trim());
+            Assert.NotSame(before, after);
         }
 
         [Fact]
@@ -380,6 +493,84 @@ namespace Semanticus.Tests
             var (_, _, error, _) = LocalEngine.PickCellValue(Rs(new object[] { 2023, 1.0, 1 }, new object[] { 2024, 2.0, 1 }), 1);
             Assert.NotNull(error);
             Assert.Contains("single-member", error);   // teaches: pin each group-by column to one member
+        }
+
+        // UAT 17 Oct: after Query > Explain the footer said the model had unsaved changes and closing asked to save, though the person changed
+        // nothing. A read-only analysis keeps its record in SEMANTICUS_HOME, never in the model, and History still lists it. A real edit is unchanged.
+        private static async Task WithScratchHomeAsync(Func<string, Task> body)
+        {
+            var home = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "smx-ev-home-" + Guid.NewGuid().ToString("N"));
+            var orig = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
+            try
+            {
+                System.IO.Directory.CreateDirectory(home);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, System.IO.Path.Combine(home, ".semanticus"));
+                await body(home);
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, orig);
+                try { System.IO.Directory.Delete(home, true); } catch { }
+            }
+        }
+
+        private static string TempBimCopy()
+        {
+            var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "smx-ev-" + Guid.NewGuid().ToString("N"));   // not "semanticus-*": that is the ephemeral marker
+            System.IO.Directory.CreateDirectory(dir);
+            var bim = System.IO.Path.Combine(dir, "AdventureWorks.bim");
+            System.IO.File.Copy(TestModels.FindBim(), bim);
+            return bim;
+        }
+
+        [Fact]
+        public async Task An_explained_number_never_marks_the_model_unsaved_and_History_still_lists_it()
+        {
+            await WithScratchHomeAsync(async _ =>
+            {
+                var sm = new SessionManager();
+                using var e = new LocalEngine(sm, new Fake(false));
+                await e.OpenAsync(TempBimCopy());
+                Assert.False((await e.SessionInfoAsync()).HasUnsavedEdits);
+
+                for (var i = 0; i < 3; i++)
+                    await e.FinishExplainAsync(sm.Current, new ExplainDossier
+                    {
+                        Status = "ok", Measure = "measure:Date/Days In Current Quarter", Name = "Days In Current Quarter",
+                        ValueEvaluated = true, Value = "63", IsBlank = false, Summary = "It is 63.",
+                    }, "human");
+
+                Assert.False((await e.SessionInfoAsync()).HasUnsavedEdits, "asking about a number changed nothing, so nothing is unsaved");
+                Assert.False(sm.Current.HasUnsavedChanges);
+                Assert.Empty((await e.ListVerifiedEditsAsync()).Records);   // nothing was written into the model
+
+                var rows = (await e.GetPlanHistoryAsync()).Rows.Where(r => r.Kind == "record" && r.Title == "explain_value").ToArray();
+                Assert.Equal(3, rows.Length);
+                Assert.All(rows, r => { Assert.Equal(0, r.Revision); Assert.Equal("explained", r.Verified); Assert.NotNull(r.Record); });
+                Assert.Equal(3, rows.Select(r => r.Id).Distinct().Count());
+            });
+        }
+
+        [Fact]
+        public async Task A_real_edit_still_marks_the_model_unsaved_and_keeps_its_audit_record_inside_the_model()
+        {
+            await WithScratchHomeAsync(async _ =>
+            {
+                var sm = new SessionManager();
+                using var e = new LocalEngine(sm, new Fake(true));
+                await e.OpenAsync(TempBimCopy());
+                await e.FinishExplainAsync(sm.Current, new ExplainDossier { Status = "ok", Measure = "measure:Date/Days In Current Quarter", ValueEvaluated = true, Value = "63", IsBlank = false, Summary = "It is 63." }, "human");
+                Assert.False((await e.SessionInfoAsync()).HasUnsavedEdits);
+
+                var mref = (await e.ListMeasuresAsync())[0].Ref;
+                await e.SetVerifiedModeAsync(true, "human");
+                await e.SetDaxAsync(mref, "1 + 1", "human");
+
+                Assert.True((await e.SessionInfoAsync()).HasUnsavedEdits);
+                var rec = Assert.Single((await e.ListVerifiedEditsAsync()).Records);   // the edit's record is in the model; the explain's is not
+                Assert.Equal("set_dax", rec.Op);
+                Assert.False(string.IsNullOrEmpty(rec.Hash));
+            });
         }
     }
 }

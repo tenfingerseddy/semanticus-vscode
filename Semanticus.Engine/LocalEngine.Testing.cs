@@ -59,6 +59,15 @@ namespace Semanticus.Engine
                 return review;
             }
 
+            // A server the person typed into this call is theirs; an assistant's, or one read from the model, must be a saved source.
+            if (DeployGuard.IsAgent(origin) || string.IsNullOrWhiteSpace(req.Server))
+                if (!SqlHostTrust.IsSavedOrMicrosoft(review.EffectiveServer))
+                {
+                    review.TestError = SqlHostTrust.UnsavedWords(review.EffectiveServer);
+                    review.SuggestedNextAction = "save the server as a SQL source in Connections, then test again";
+                    return review;
+                }
+
             string token;
             try { token = await AcquireSqlTokenAsync(req.AuthMode, req.TenantId, origin, CancellationToken.None).ConfigureAwait(false); }
             catch (Exception ex)
@@ -146,6 +155,10 @@ namespace Semanticus.Engine
                     + "never writes it); in grouped mode it returns the grouping key columns then the aggregate value.",
                     ReconcileStatus.InputError);
 
+            // A check can only read. Refused before anything is resolved or signed in, on every path that runs a check's SQL.
+            var notRead = SqlReadOnlyGuard.Refusal(req.Sql) ?? SqlReadOnlyGuard.Refusal(req.SqlGrandTotal);
+            if (notRead != null) return ReconcileRunResult.Fail(notRead, ReconcileStatus.InputError);
+
             // Resolve the measure, RESOLVE each grouping entry against the model's real columns (P1-3 — raw text is
             // NEVER spliced into DAX; only engine-constructed refs for resolved objects are emitted), and derive the
             // SQL coordinates in ONE model read (pure, no mutation). Done BEFORE the live check so a bad ref / injection
@@ -194,6 +207,18 @@ namespace Semanticus.Engine
             if (sqlGate != null)
                 return ReconcileRunResult.Fail(sqlGate, ReconcileStatus.InputError, refused: true, approvalId: sqlApprovalId);
 
+            // A sign-in token goes only to a server the person chose on this machine (SqlHostTrust). A check, a model's partitions
+            // and a teammate's suite file all come from somebody else's hands and can name a host its sender owns. A server a person
+            // types into a call of their own, in this session, is theirs; a saved check never counts as typed, and neither does
+            // an address read from the model. Nothing is minted and nothing runs for any other host.
+            var typedByPerson = resolvedSource == null && !DeployGuard.IsAgent(origin) && !string.IsNullOrWhiteSpace(req.Server);
+            if (!typedByPerson && !SqlHostTrust.IsSavedOrMicrosoft(server))
+            {
+                var refused = ReconcileRunResult.Fail(SqlHostTrust.UnsavedWords(server), ReconcileStatus.InputError, next: "list_sql_sources");
+                refused.Server = server; refused.Database = database; refused.UnsavedServer = server;
+                return refused;
+            }
+
             var live = _live;
             if (live == null)
                 return ReconcileRunResult.Fail(LiveConnectionNeeded,
@@ -216,6 +241,8 @@ namespace Semanticus.Engine
                 + "execution timestamps are recorded but snapshot isolation is NOT guaranteed.";
             var result = new ReconcileRunResult
             {
+                Server = server,
+                Database = database,
                 ToleranceAbsolute = req.ToleranceAbsolute,
                 ToleranceRelative = req.ToleranceRelative,
                 BlankPolicy = blank.ToString(),
@@ -248,13 +275,10 @@ namespace Semanticus.Engine
 
                 result.SqlExecutedAtUtc = memberSql.At;
                 var sqlRs = await memberSql.Task.ConfigureAwait(false);
-                if (!string.IsNullOrEmpty(sqlRs.Error)) return QueryFail("SQL member query", sqlRs.Error, result.DaxQuery);
+                if (!string.IsNullOrEmpty(sqlRs.Error)) return QueryFail("SQL member query", sqlRs.Error, result.DaxQuery, server);
                 result.SqlElapsedMs = sqlRs.ElapsedMs;
                 if (sqlRs.Columns.Length < groupBy.Length + 1)
-                    return ReconcileRunResult.Fail(
-                        $"The ground-truth SQL returned {sqlRs.Columns.Length} column(s) but grouped mode needs the {groupBy.Length} "
-                        + "grouping key column(s) (same order as groupBy) followed by the aggregate value column.",
-                        ReconcileStatus.InputError);
+                    return ReconcileRunResult.Fail(MissingGroupColumnsText(groupBy, sqlRs.Columns.Select(c => c.Name)), ReconcileStatus.InputError);
 
                 var daxRows = BuildMemberRows(daxRs, groupBy.Length, groupBy.Length);   // value at index = #keys ("__recon_value")
                 var sqlRows = BuildMemberRows(sqlRs, groupBy.Length, groupBy.Length);   // value = the column right after the keys
@@ -275,7 +299,7 @@ namespace Semanticus.Engine
                 {
                     var gt = await BuildGrandTotalCellAsync(live, probe.MeasureName, server, database, token, req.SqlGrandTotal, req.FilterDax, totalSql);
                     if (gt.Error != null)
-                        return gt.IsShape ? ReconcileRunResult.Fail(gt.Error, ReconcileStatus.InputError) : QueryFail(gt.Stage, gt.Error, result.DaxQuery);
+                        return gt.IsShape ? ReconcileRunResult.Fail(gt.Error, ReconcileStatus.InputError) : QueryFail(gt.Stage, gt.Error, result.DaxQuery, server);
                     cells.Add(gt.Cell);
                     result.DaxElapsedMs += gt.DaxMs; result.SqlElapsedMs += gt.SqlMs;
                 }
@@ -286,7 +310,7 @@ namespace Semanticus.Engine
                 result.DaxQuery = BuildReconcileDaxQuery(req, probe.MeasureName, Array.Empty<string>());
                 var gt = await BuildGrandTotalCellAsync(live, probe.MeasureName, server, database, token, req.Sql, req.FilterDax);
                 if (gt.Error != null)
-                    return gt.IsShape ? ReconcileRunResult.Fail(gt.Error, ReconcileStatus.InputError) : QueryFail(gt.Stage, gt.Error, result.DaxQuery);
+                    return gt.IsShape ? ReconcileRunResult.Fail(gt.Error, ReconcileStatus.InputError) : QueryFail(gt.Stage, gt.Error, result.DaxQuery, server);
                 cells.Add(gt.Cell);
                 result.DaxElapsedMs = gt.DaxMs; result.SqlElapsedMs = gt.SqlMs;
                 result.DaxExecutedAtUtc = gt.DaxAt; result.SqlExecutedAtUtc = gt.SqlAt;
@@ -320,18 +344,18 @@ namespace Semanticus.Engine
             if (truncated && judged.Status == ReconcileStatus.Reconciled)
             {
                 result.Status = ReconcileStatus.InsufficientCoverage;
-                result.Summary = "Insufficient coverage: the row cap was hit, so not every member was checked: a truncated run "
-                    + "cannot certify the measure. Raise maxRows or narrow the grouping, then re-run. "
-                    + $"(Of what was checked: {judged.Summary})";
+                result.Summary = "The row limit was reached, so not every row was compared. "
+                    + "Raise the limit or compare fewer groups, then run again. "
+                    + $"(Of the rows compared: {judged.Summary})";
             }
             else
             {
                 result.Status = judged.Status;
-                result.Summary = truncated ? judged.Summary + " [note: results were truncated at the row cap; coverage is incomplete]" : judged.Summary;
+                result.Summary = truncated ? judged.Summary + " (The row limit was reached, so some rows were not compared.)" : judged.Summary;
                 // (P2-6/contract f) Even a clean Reconciled verified only the members the two queries RETURNED — we do
                 // not know the universe of expected members, so say so rather than let it read as total coverage.
                 if (result.Status == ReconcileStatus.Reconciled)
-                    result.Summary += " Expected-member coverage is UNKNOWN: this reconciles the members observed, not that no member is missing.";
+                    result.Summary += " This compares the rows both queries returned. It cannot show a row that is missing from both.";
             }
 
             result.SuggestedNextAction = SuggestNext(result, grouped);
@@ -346,6 +370,26 @@ namespace Semanticus.Engine
         /// <summary>The exact DAX a reconcile REQUEST produces, given the already-resolved measure name and grouping
         /// refs. The one seam both the runner and its tests go through, so "the saved filters reach the query" is
         /// provable without a live endpoint (the resolution of names is the live path's own job).</summary>
+        /// <summary>The one plain line for a SQL that does not select its groups first (round 2 N10): which columns to add, never the engine's words.</summary>
+        internal static string MissingGroupColumnsText(string[] groupBy, IEnumerable<string> sqlColumns)
+        {
+            string Short(string g)
+            {
+                var engineRef = System.Text.RegularExpressions.Regex.Match(g, "^column:[^/]+/(.+)$");
+                if (engineRef.Success) return engineRef.Groups[1].Value.Trim();
+                var dax = System.Text.RegularExpressions.Regex.Match(g, "\\[(.+)\\]\\s*$");
+                return dax.Success ? dax.Groups[1].Value.Replace("]]", "]").Trim() : g;
+            }
+            var names = groupBy.Select(Short).ToList();
+            var have = new HashSet<string>(sqlColumns.Select(c => (c ?? "").Trim()), StringComparer.OrdinalIgnoreCase);
+            var missing = names.Where(n => !have.Contains(n)).ToList();
+            if (missing.Count == 0) return "Add the number to the SELECT, after " + JoinNames(names) + ".";
+            return "Add " + JoinNames(missing) + " to the SELECT, before the number.";
+        }
+
+        private static string JoinNames(List<string> names) =>
+            names.Count == 1 ? names[0] : string.Join(", ", names.Take(names.Count - 1)) + " and " + names[names.Count - 1];
+
         internal static string BuildReconcileDaxQuery(ReconcileRequest req, string measureName, string[] groupByRefs)
         {
             if (req == null) return null;
@@ -460,22 +504,22 @@ namespace Semanticus.Engine
             {
             var daxAt = DateTime.UtcNow;
             var daxRs = await live.ExecuteAsync(BuildDaxGrandTotalQuery(measureName, filterDax), 10, 120).ConfigureAwait(false);
-            if (daxRs.PolicyRefused) return GrandTotalOutcome.Failed("DAX grand-total query", daxRs.Error);
-            if (!string.IsNullOrEmpty(daxRs.Error)) return GrandTotalOutcome.Failed("DAX grand-total query", daxRs.Error);
+            if (daxRs.PolicyRefused) return GrandTotalOutcome.Failed("DAX total query", daxRs.Error);
+            if (!string.IsNullOrEmpty(daxRs.Error)) return GrandTotalOutcome.Failed("DAX total query", daxRs.Error);
             // ROW(...) always returns exactly one row with one column; anything else is an engine anomaly we fail on
             // rather than fabricate a total from.
             if (daxRs.Rows.Length != 1 || daxRs.Columns.Length == 0)
-                return GrandTotalOutcome.Failed("DAX grand-total query", $"expected exactly one total row/value but got {daxRs.Rows.Length} row(s), {daxRs.Columns.Length} column(s).");
+                return GrandTotalOutcome.Failed("DAX total query", $"the query returned {daxRs.Rows.Length} {(daxRs.Rows.Length == 1 ? "row" : "rows")} and {daxRs.Columns.Length} {(daxRs.Columns.Length == 1 ? "column" : "columns")}. It must return one number");
 
             var sqlAt = pending.At;
             var sqlRs = await pending.Task.ConfigureAwait(false);
-            if (!string.IsNullOrEmpty(sqlRs.Error)) return GrandTotalOutcome.Failed("SQL grand-total query", sqlRs.Error);
+            if (!string.IsNullOrEmpty(sqlRs.Error)) return GrandTotalOutcome.Failed("SQL total query", sqlRs.Error);
             // (P1-5) A grand total must be exactly ONE row with a value column. ZERO rows is NOT a present NULL — that
             // would fabricate a judgeable total and could green a run under BlankIsNull. It is a malformed total query
             // (a SUM over an empty set still returns one NULL row; zero rows means it was not an aggregate) — fail
             // closed as an InputError, never coerce it to a present-empty.
             if (sqlRs.Rows.Length != 1)
-                return GrandTotalOutcome.Shape("The grand-total SQL returned " + sqlRs.Rows.Length + " row(s): it must aggregate to EXACTLY one row/value at total context (no GROUP BY). Zero rows is not a NULL total.");
+                return GrandTotalOutcome.Shape("The total SQL returned " + sqlRs.Rows.Length + (sqlRs.Rows.Length == 1 ? " row" : " rows") + ". It must return one row with one number, so leave out GROUP BY. No rows is not a total of zero.");
             if (sqlRs.Columns.Length == 0)
                 return GrandTotalOutcome.Shape("The grand-total SQL returned no value column: it must return the single aggregate value.");
 
@@ -562,8 +606,10 @@ namespace Semanticus.Engine
             var refs = new string[groupBy.Length];
             for (var i = 0; i < groupBy.Length; i++)
             {
-                if (!TryResolveGroupColumn(m, groupBy[i], out var daxRef, out var why))
-                    return new MeasureSourceProbe { Error = $"groupBy entry '{groupBy[i]}' {why}. Pass each grouping column as a 'column:Table/Column' ref or a plain 'Table'[Column]; run list_columns to see them." };
+                if (!TryResolveGroupColumn(m, groupBy[i], out var daxRef, out var why, out var gone))
+                    return new MeasureSourceProbe { Error = gone
+                        ? GroupColumnGoneMessage(groupBy[i])
+                        : $"The grouping entry '{groupBy[i]}' {why}. Give each grouping column as 'column:Table/Column' or as 'Table'[Column]." };
                 refs[i] = daxRef;
             }
 
@@ -656,9 +702,9 @@ namespace Semanticus.Engine
         // Resolve one grouping entry to a model column and return an engine-constructed, escaped DAX ref ('Table'[Col]).
         // Accepts either a canonical 'column:Table/Column' ref or a DAX-style 'Table'[Column] / Table[Column]. Anything
         // that does not resolve to exactly one real column fails (with a reason) — no raw text ever reaches the query.
-        private static bool TryResolveGroupColumn(Model m, string entry, out string daxRef, out string why)
+        private static bool TryResolveGroupColumn(Model m, string entry, out string daxRef, out string why, out bool gone)
         {
-            daxRef = null; why = null;
+            daxRef = null; why = null; gone = false;
             var e = (entry ?? "").Trim();
             if (e.Length == 0) { why = "is empty"; return false; }
 
@@ -666,13 +712,13 @@ namespace Semanticus.Engine
             if (e.StartsWith("column:", StringComparison.OrdinalIgnoreCase))
             {
                 col = ObjectRefs.Resolve(m, e) as Column;
-                if (col == null) { why = "did not resolve to a model column"; return false; }
+                if (col == null) { why = "did not resolve to a model column"; gone = true; return false; }
             }
             else if (TryParseDaxColumn(e, out var tableName, out var columnName))
             {
-                if (!m.Tables.Contains(tableName)) { why = $"names table '{tableName}', which is not in the model"; return false; }
+                if (!m.Tables.Contains(tableName)) { why = $"names table '{tableName}', which is not in the model"; gone = true; return false; }
                 var table = m.Tables[tableName];
-                if (!table.Columns.Contains(columnName)) { why = $"names column '{columnName}' on '{tableName}', which does not exist"; return false; }
+                if (!table.Columns.Contains(columnName)) { why = $"names column '{columnName}' on '{tableName}', which does not exist"; gone = true; return false; }
                 col = table.Columns[columnName];
             }
             else
@@ -683,6 +729,16 @@ namespace Semanticus.Engine
 
             daxRef = ColumnDaxRef(col);
             return true;
+        }
+
+        /// <summary>A saved grouping column that no longer exists, in the person's words: it was renamed or removed, and the way on is to pick it again.</summary>
+        internal static string GroupColumnGoneMessage(string entry)
+        {
+            var e = (entry ?? "").Trim();
+            string name = e;
+            if (e.StartsWith("column:", StringComparison.OrdinalIgnoreCase)) name = e.Substring(7).Replace('/', ' ');
+            else if (TryParseDaxColumn(e, out var t, out var c)) name = t + " " + c;
+            return $"The column {name} was renamed or removed, so this check cannot group by it. Pick the column again.";
         }
 
         // Parse a DAX-style column reference: 'Quoted Table'[Column] or Table[Column]. Deliberately strict — a bare
@@ -714,12 +770,33 @@ namespace Semanticus.Engine
         // ---- small helpers ----------------------------------------------------------------------------
         // The attempted DAX rides on the failure too (sol finding): the query that FAILED is exactly the
         // evidence the drill-down needs; discarding it left failed outcomes with nothing to show.
-        private static ReconcileRunResult QueryFail(string stage, string error, string daxQuery = null)
+        private static ReconcileRunResult QueryFail(string stage, string error, string daxQuery = null, string server = null)
         {
-            var f = ReconcileRunResult.Fail($"{stage} failed: {error}. A failed query is never a passing run; fix it and re-run.",
+            // A server that cannot be reached says so in one plain line; the driver's own words ride along for Details.
+            if (stage != null && stage.StartsWith("SQL", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(server) && SqlServerUnreachable(error))
+            {
+                var unreachable = ReconcileRunResult.Fail($"Could not reach the server {server.Trim()}. Check the server name.", ReconcileStatus.InsufficientCoverage);
+                unreachable.DaxQuery = daxQuery;
+                unreachable.RawError = (error ?? "").Trim();
+                return unreachable;
+            }
+            var f = ReconcileRunResult.Fail($"The {stage} did not run: {(error ?? "").Trim().TrimEnd('.')}. Fix it and try again.",
                 ReconcileStatus.InsufficientCoverage);
             f.DaxQuery = daxQuery;
+            f.RawError = (error ?? "").Trim();
             return f;
+        }
+
+        /// <summary>The driver could not open a connection at all (a wrong or unreachable server name), as opposed to a query that ran and failed.</summary>
+        internal static bool SqlServerUnreachable(string error)
+        {
+            if (string.IsNullOrEmpty(error)) return false;
+            return error.IndexOf("network-related or instance-specific", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("server was not found", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("provider: TCP Provider", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("provider: Named Pipes Provider", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("provider: SQL Network Interfaces", StringComparison.OrdinalIgnoreCase) >= 0
+                || error.IndexOf("No such host is known", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static string SuggestNext(ReconcileRunResult r, bool grouped)
@@ -730,7 +807,7 @@ namespace Semanticus.Engine
                     return $"inspect the worst offender ({r.WorstKey}); SQL is the ground truth, so check the measure's DAX or the relationship feeding it";
                 case ReconcileStatus.InsufficientCoverage:
                     return grouped ? "raise maxRows or narrow the grouping so every member is checked"
-                                   : "supply groupBy + a member SQL to verify per-member; a matching total can hide the blank-row trap";
+                                   : "add a group and a SQL query for each group, so differences inside groups show";
                 case ReconcileStatus.InputError:
                     return "fix the request per the message, then re-run";
                 case ReconcileStatus.NothingVerifiable:
@@ -776,7 +853,7 @@ namespace Semanticus.Engine
             public bool IsShape;   // a malformed grand-total SQL (wrong row/column shape) is an InputError, not an execution failure
 
             public static GrandTotalOutcome Failed(string stage, string error) => new GrandTotalOutcome { Stage = stage, Error = error };
-            public static GrandTotalOutcome Shape(string error) => new GrandTotalOutcome { Stage = "SQL grand-total query", Error = error, IsShape = true };
+            public static GrandTotalOutcome Shape(string error) => new GrandTotalOutcome { Stage = "SQL total query", Error = error, IsShape = true };
         }
     }
 }

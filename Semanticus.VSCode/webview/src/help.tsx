@@ -104,9 +104,9 @@ const HELP: Record<string, TabHelp> = {
         "bullets": [
           "Jev is the Semanticus helper that makes small choices for you on Pro. A choice about the model arrives as a Plan row you can read, change or drop.",
           "It picks a column's format, chooses a base measure for a number column, chooses what Copilot sees, and puts the plan in order.",
-          "It drafts from your words too: a workflow you describe on the Workflows page becomes steps, a task you type with Ctrl J becomes a draft at once, and a task you type on the Plan becomes one when you press Draft the steps.",
+          "It drafts from your words too: a task you type with Ctrl J becomes a draft at once, and a task you type on the Plan becomes one when you press Draft the steps.",
           "What Pro decides, on the Pro page, lists every choice, says which are on, and switches each one off for this model.",
-          "Nothing goes to Jev until you agree on the card. Then it gets names, types, formats, folders, descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula), and the words you type: questions, and the words that describe a task or a workflow.",
+          "Nothing goes to Jev until you agree on the card. Then it gets names, types, formats, folders, descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula), and the words you type: questions, and the words that describe a task.",
           "Words you type go as you typed them. A row or a value from your tables never goes.",
           "Your agreement is kept outside the model files. A small marker is written into the model so the agreement stays with it, and you will see it in a commit."
         ]
@@ -115,8 +115,7 @@ const HELP: Record<string, TabHelp> = {
     "pro": "Running the plan, with Jev's proposals, is a Semanticus Pro feature. Every row, your tasks, Move up, the switch and History are free.",
     "seeAlso": [
       { "label": "Model quality", "tab": "bpa" },
-      { "label": "AI readiness", "tab": "readiness" },
-      { "label": "Workflows", "tab": "workflows" }
+      { "label": "AI readiness", "tab": "readiness" }
     ]
   },
   "diagram": {
@@ -148,31 +147,6 @@ const HELP: Record<string, TabHelp> = {
         "bullets": [
           "Use the Model list in the VS Code sidebar to create tables, columns and measures. A measure is a calculation, such as total sales. Right-click a table to see the available actions.",
           "Select an item in the Model list to edit its name, description and other settings in Properties."
-        ]
-      }
-    ]
-  },
-  "search": {
-    "title": "Find and replace",
-    "lead": "Find names, descriptions and formulas across the model. Review replacements before changing anything.",
-    "start": [
-      "Type at least two characters in the search box.",
-      "Select a result to find the item and its settings. Turn on Include DAX & M to search formulas and data-loading code.",
-      "To change text, enter a replacement and preview one result, or use Replace all to collect the edits under Plan > Pending changes."
-    ],
-    "sections": [
-      {
-        "h": "Narrow your search",
-        "bullets": [
-          "Match case distinguishes upper- and lowercase letters. Whole word finds complete words. Regular expression is an optional pattern search for advanced users.",
-          "The result-type filters change which results you see. They do not narrow the changes prepared by Replace all."
-        ]
-      },
-      {
-        "h": "Review replacements",
-        "bullets": [
-          "Replace all collects the edits under Plan > Pending changes for review. It does not apply them immediately.",
-          "Check each pending change. Some fields are read-only or need a dedicated editor; the result explains why they cannot be replaced here."
         ]
       }
     ]
@@ -212,43 +186,45 @@ const HELP: Record<string, TabHelp> = {
       }
     ]
   },
-  "daxlab": {
-    "title": "Queries",
-    "lead": "Try calculations, compare answers and investigate slow queries. Experiments here do not change the saved model.",
+  "query": {
+    "title": "Query",
+    "pro": "Asking in plain words is a Semanticus Pro feature. Build and DAX still run any query you write, and your own assistant can still write and run one for you.",
+    "lead": "Ask a question about your numbers in plain words, or write and run a query. Semanticus shows how it read the question, runs it, and keeps the answer.",
     "start": [
-      "Choose a test model. In Visual mode, add a calculation to Values and a field such as Customer or Product to Rows.",
-      "Run the query to see the result. Use Performance to measure its speed.",
-      "For a rewritten formula, open Verify and compare the original with the candidate across relevant fields."
+      "Choose a test model. Choose Words and type a question, Build and pick your fields, or DAX and write the query.",
+      "Read the answer and the line that says how the question was read. Press any other visual that fits to see the same numbers another way.",
+      "Open the DAX beside the answer, press a number to explain it, measure its speed, or save a good answer as a check."
     ],
     "sections": [
+      {
+        "h": "Ask and read the answer",
+        "bullets": [
+          "Every question becomes one checked query that only reads. Nothing in the model changes. Each question and each query you run here is kept with the model under Asked before.",
+          "Read as always shows how the question was taken: the number, the splits and the filters. Change any part and the question runs again. A part with no data in the model is said in words, and no total is shown in its place.",
+          "On Pro you can type the question. Jev reads it into the parts and may pick the visual. Your words and the shape of the answer are sent. The model's values and rows never are. Reading typed questions can be switched off for a model under What Pro decides, on the Pro page. Build and DAX work without it."
+        ]
+      },
       {
         "h": "Build a query",
         "bullets": [
           "DAX is the formula language used by Power BI models. A query asks the model for a result.",
-          "Visual mode builds the query from your selected fields. Query mode lets you edit the DAX directly. Hover a result to see its filter context: the values, such as year or region, that were used to calculate it.",
+          "Build makes the query from your fields. DAX lets you edit the query directly. Press a number in the result to explain it: the values, such as year or region, that were used to calculate it.",
           "The model used for queries can differ from the model you are editing. Check the Testing details at the bottom of Studio."
         ]
       },
       {
-        "h": "Understand performance",
+        "h": "Understand speed",
         "bullets": [
-          "Quick measures elapsed time without clearing cached results. Cold / Warm compares a run after clearing the cache with repeat runs that can reuse earlier work.",
-          "Profile separates calculation work (Formula Engine) from reading stored data (Storage Engine) when the server provides those details. Missing trace events mean something was not recorded, not proof that no data was read.",
-          "Trace setup time is separate from query time. Plan shows the server's execution steps when available. Clearing a shared server's cache can slow other users' next queries; the existing confirmation explains that effect."
+          "Measure speed runs the query first with nothing kept, then again to see repeat speed, then records where the time went. Quick measures elapsed time without clearing cached results. Profile only records where the time went.",
+          "The split shows calculation work (formula engine) against reading stored data (storage engine) when the server provides those details. Missing trace events mean something was not recorded, not proof that no data was read.",
+          "Steps shows the server's plan when available, and Log each measure records the steps of a calculation. Clearing a shared server's cache can slow other users' next queries; the existing confirmation explains that effect."
         ]
       },
       {
-        "h": "Compare answers",
+        "h": "Compare answers and keep a good one",
         "bullets": [
-          "In Verify, enter Original and Candidate formulas. Choose fields from tables that matter to the calculation, such as Customer and Product, and include totals and edge cases.",
-          "A match supports the contexts actually checked. Empty, partial or unavailable checks do not establish that the rewrite is correct everywhere.",
-          "An intended change to the business rule needs a known answer saved as a check on Review > Validation. It should not be expected to match the old formula."
-        ]
-      },
-      {
-        "h": "Inspect intermediate values and save a change",
-        "bullets": [
-          "Debug records values from EVALUATEANDLOG(expression, \"label\") in a query. Log each measure adds logging for selected measures. No captured output means there is no debug result to inspect.",
+          "In Compare a rewrite, enter the original and the rewritten formula. Choose fields from tables that matter to the calculation, and include totals and edge cases. A match supports the contexts actually checked. An intended change to the business rule needs a known answer saved as a check on Review > Validation.",
+          "Save as a check keeps one number from an answer, or checks a measure against SQL or a trusted answer. It runs with your other checks in Validation.",
           "To keep a formula, edit the measure in the Model list or collect it under Plan > Pending changes. A local edit does not update the live test model until you publish it."
         ]
       }
@@ -284,28 +260,7 @@ const HELP: Record<string, TabHelp> = {
         "h": "If no rows appear",
         "bullets": [
           "Check the Testing connection at the bottom of Studio and any message above the preview. A model opened from a file can be edited without having a live server to query.",
-          "Use Edit > Queries to ask a specific question or filter the data. Use Edit > Advanced modelling > Power Query to change how data is loaded at the next refresh."
-        ]
-      }
-    ]
-  },
-  "askdata": {
-    "title": "Ask your data",
-    "pro": "Ask your data is a Semanticus Pro feature. Queries still runs any query you write, and your own assistant can still write and run one for you.",
-    "lead": "Type a question about your numbers, or choose a measure and the columns to split it by. Semanticus builds, checks and runs the query, and keeps the question.",
-    "start": [
-      "Choose a test model with a live connection.",
-      "Type your question and press Ask. Or choose a number, then the columns to split it by.",
-      "Change any part and the question runs again. Save a good answer as a check."
-    ],
-    "sections": [
-      {
-        "h": "What it does",
-        "bullets": [
-          "Every question becomes one checked query that only reads. Nothing in the model changes.",
-          "Each question is kept with the model, so you and your assistant can run it again.",
-          "On Pro you can also type the question. Jev reads it into the parts, shown as chips you can change, and Semanticus builds and checks the query. Your words are sent to be read. The model's values and rows never are.",
-          "Reading typed questions can be switched off for a model under What Pro decides, on the Pro page. The chips still work without it."
+          "Use Explore > Query to ask a specific question or filter the data. Use Edit > Advanced modelling > Power Query to change how data is loaded at the next refresh."
         ]
       }
     ]
@@ -322,7 +277,7 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "Read the breakdown",
         "bullets": [
-          "Data is the space used to store values. Dictionary is the list of unique values. Hash indexes help the model look values up.",
+          "Data is the space used to store values. Different values is the list of unique values. Lookup help lets the model find values fast.",
           "A column with many different values can use more memory. A size scan alone does not tell you the exact number of different values.",
           "Before-and-after numbers compare measured scans. A smaller number is not automatically a saving caused by your edit."
         ]
@@ -552,6 +507,39 @@ const HELP: Record<string, TabHelp> = {
       }
     ]
   },
+  "copilottest": {
+    "title": "Copilot test",
+    "lead": "Ask a small model the questions people will ask Copilot, see which it gets wrong, and change the instructions until it gets them right.",
+    "start": [
+      "Press New question bank. Your assistant writes 100 or more questions, and the engine proves each right answer by running it.",
+      "Press Run round 1. A small model answers every question seeing only what Copilot sees, and each answer is graded by number.",
+      "Read the misses and the changes your assistant tries, then run the next round."
+    ],
+    "sections": [
+      {
+        "h": "Read the score",
+        "bullets": [
+          "The big number is the share the student got right. The grey line is the held back questions: your assistant never sees their misses, so that score cannot be tuned to the bank.",
+          "When the line over the rounds stops going up, the changes have done what they can.",
+          "The student is a stand-in. A real Copilot score only comes from Copilot."
+        ]
+      },
+      {
+        "h": "Read a miss",
+        "bullets": [
+          "The student's DAX sits beside the right DAX. The line under them says the cause, found by Jev when it is on, or by plain rules.",
+          "A question marked could not check is never counted as right or wrong. Sign in to the live model and run the round again."
+        ]
+      },
+      {
+        "h": "Changes",
+        "bullets": [
+          "Your assistant changes the AI instructions, descriptions and other names as one undoable step. Each change says how many misses it fixed.",
+          "The changes are in your model and are not saved. Undo takes any of them back from the Plan's History."
+        ]
+      }
+    ]
+  },
   "tests": {
     "title": "Validation",
     "lead": "Check that calculations return the answers you trust, and that tables connect and count correctly.",
@@ -593,7 +581,7 @@ const HELP: Record<string, TabHelp> = {
       },
       {
         "label": "Compare two DAX formulas",
-        "tab": "daxlab"
+        "tab": "query"
       }
     ]
   },
@@ -603,7 +591,7 @@ const HELP: Record<string, TabHelp> = {
     "start": [
       "Open Review > Validation and press Reports.",
       "Select a report and read its outcome, model details and the checks that actually ran.",
-      "For an up-to-date result after a model change, go back to the first tab or to Workflows and run the checks again."
+      "For an up-to-date result after a model change, go back to the first tab and run the checks again."
     ],
     "sections": [
       {
@@ -616,7 +604,7 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "If the list is empty",
         "bullets": [
-          "Run checks on Validation or in Workflows and use their report-saving controls. Reports kept with the current model appear here.",
+          "Run checks on Validation and use their report-saving controls. Reports kept with the current model appear here.",
           "A report from another time or model is useful history, but it does not prove the current model is correct."
         ]
       }
@@ -625,10 +613,6 @@ const HELP: Record<string, TabHelp> = {
       {
         "label": "Run the model checks",
         "tab": "tests"
-      },
-      {
-        "label": "Run a workflow",
-        "tab": "workflows"
       }
     ]
   },
@@ -692,7 +676,7 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "Choose the amount of control",
         "bullets": [
-          "The main switch turns these assistant permission checks on or off. Workflow checks are separate, under Team rules on Workflows.",
+          "The main switch turns these assistant permission checks on or off.",
           "These settings help prevent accidental actions through Semanticus. They do not replace the access rights of the account connected to your data."
         ]
       }
@@ -837,10 +821,9 @@ const HELP: Record<string, TabHelp> = {
         ]
       },
       {
-        "h": "Use saved lessons and workflows",
+        "h": "Use saved lessons",
         "bullets": [
           "Insights are saved lessons. Edit their text and search terms, or adjust their importance. Review a suggested addition to your model notes before selecting Accept.",
-          "Saved workflows are reusable processes kept from earlier work. They live in Workflows, marked From a run, where Check and Check against past runs are in each one's menu.",
           "Recall searches for lessons relevant to your next task. Delete saved lessons removes lessons from future use for the chosen scope; it keeps the stored history."
         ]
       }
@@ -866,7 +849,7 @@ const HELP: Record<string, TabHelp> = {
     "start": [
       "On the Instructions tab, read what is saved now. The bar shows how many characters are used of the number this model allows.",
       "Press Edit, write or correct the instructions, then press Save.",
-      "Select the Notes tab for the model notes, the saved lessons and the saved workflows."
+      "Select the Notes tab for the model notes, and the saved lessons."
     ],
     "sections": [
       {
@@ -928,18 +911,17 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
       { q: 'Give my assistant the Semanticus guides', a: 'Run Semanticus: Install or Update Assistant Skills from the VS Code command palette. Choose your assistant, then refresh or restart it if needed. These guides use your existing Semanticus connection.' },
       { q: 'Check a business answer against a number I trust', a: 'Review > Validation > New check. Choose a known answer and enter the calculation, expected value and the filters the answer applies to.', tab: 'tests' },
       { q: 'Check model results against source data', a: 'Review > Validation > New check > Check against SQL. Review the SQL that supplies the expected answer and connect to its server and database. This needs a SQL connection as well as the live model.', tab: 'tests' },
-      { q: 'Read the saved check and workflow reports', a: 'Review > Validation > Reports lists the reports kept with this model. Open one to read its results, date and coverage.', tab: 'evidence' },
-      { q: 'Change when the assistant asks for permission', a: 'Permissions shows the current settings and waiting requests. Workflow requirements are a separate choice, under Team rules on Workflows.', tab: 'permissions' },
+      { q: 'Read the saved check reports', a: 'Review > Validation > Reports lists the reports kept with this model. Open one to read its results, date and coverage.', tab: 'evidence' },
+      { q: 'Change when the assistant asks for permission', a: 'Permissions shows the current settings and waiting requests.', tab: 'permissions' },
     ],
   },
   {
     group: 'Common terms explained',
     items: [
       { q: 'Semantic model, table, column and measure', a: 'A semantic model organises data and business calculations for reports. Tables contain rows; columns hold values such as date or customer. A measure calculates an answer, such as total sales.' },
-      { q: 'DAX and filter context', a: 'DAX is the formula language for model calculations. Filter context is the set of values used for an answer, such as sales for a particular product, region and year.', tab: 'daxlab' },
+      { q: 'DAX and filter context', a: 'DAX is the formula language for model calculations. Filter context is the set of values used for an answer, such as sales for a particular product, region and year.', tab: 'query' },
       { q: 'Power Query, M and partition', a: 'Power Query prepares data for loading. M is its formula language. A partition is a section of a model table with its own loading query.', tab: 'mcode' },
       { q: 'XMLA endpoint, SQL endpoint and tenant', a: 'An endpoint is a connection address. XMLA connects to a semantic model; a SQL endpoint connects to source tables, such as a Fabric warehouse or lakehouse. A tenant identifies the Microsoft organisation your account signs into.' },
-      { q: 'Workflow, starter and team rules', a: 'A workflow is a saved sequence of steps, and it is yours to change. A starter is a workflow that comes with Semanticus: Use makes a copy of it for you. Team rules say which workflows must be used for a task and how their checks apply. A check runs at a step and records whether it passed, failed or was not checked.', tab: 'workflows' },
       { q: 'Report, coverage and checking against SQL', a: 'A report is the recorded result of a check, kept under Review > Validation > Reports. Coverage says what was checked and what was left out. A check against SQL compares model results with an independent source answer.', tab: 'tests' },
       { q: 'Model quality, finding and override', a: 'Model quality checks the model against a library of design, naming and performance rules. A finding is an issue raised by a check. An override records your decision to accept that issue without fixing it.', tab: 'bpa' },
       { q: 'MCP and assistant skills', a: 'MCP is the connection that lets your assistant use Semanticus tools. A skill is a guide that helps it choose and use those tools for a task.' },
@@ -963,9 +945,9 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
     group: 'Explore and Edit (Studio)',
     items: [
       { q: 'Field parameters, calc groups, calendars, perspectives, RLS/OLS, DaxLib', a: 'Edit > Advanced modelling holds Power Query and six guided builders: Calendars, Calculation groups, Field parameters, RLS / OLS, Perspectives and DaxLib. The builders are also on the Model view "…" menu.', tab: 'advmodels' },
-      { q: 'Try a calculation and see which filters affect its answer', a: 'Edit > Queries, in Visual or Query mode against a live model.', tab: 'daxlab' },
-      { q: 'Check whether two DAX formulas return the same answers', a: 'Edit > Queries > Verify. Choose relevant fields, compare both formulas and read which contexts were checked.', tab: 'daxlab' },
-      { q: 'Compare a first run with a repeat run', a: 'Edit > Queries > Performance, then Cold / Warm.', tab: 'daxlab' },
+      { q: 'Try a calculation and see which filters affect its answer', a: 'Explore > Query, in Build or DAX against a live model.', tab: 'query' },
+      { q: 'Check whether two DAX formulas return the same answers', a: 'Explore > Query > Compare a rewrite. Choose relevant fields, compare both formulas and read which contexts were checked.', tab: 'query' },
+      { q: 'Compare a first run with a repeat run', a: 'Explore > Query > Speed, then Measure speed.', tab: 'query' },
       { q: 'Edit the load steps or incremental refresh', a: 'Edit > Advanced modelling > Power Query, or right-click a table and choose Edit M Code.', tab: 'mcode' },
       { q: 'Preview table rows', a: 'Explore > Data, or right-click a table and choose Preview Data.', tab: 'data' },
       { q: 'Find what depends on a field, and what nothing uses any more', a: 'Explore > Lineage > Impact, or right-click an object and choose Show Lineage & Impact.', tab: 'lineage' },
@@ -974,8 +956,9 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
     ],
   },
   {
-    group: 'Review, Publish and Workflows (Studio)',
+    group: 'Review and Publish (Studio)',
     items: [
+      { q: 'See how well Copilot answers questions about the model', a: 'Review > Copilot test. Your assistant writes the questions, a small model answers them, and each answer is graded by number.', tab: 'copilottest' },
       { q: 'Score and fix how well AI understands the model', a: 'Review > AI readiness. Apply a safe fix, or copy a ready prompt for the rest.', tab: 'readiness' },
       { q: 'Find design, naming and performance problems', a: 'Review > Model quality. Fix one finding, apply several fixes at once, or send them to Plan > Pending changes for review.', tab: 'bpa' },
       { q: 'Review a set of changes before applying', a: 'Plan > Pending changes. Keep or reject each item, then apply the rest as one undoable step.', tab: 'optimize' },
@@ -985,9 +968,6 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
       { q: 'Copy objects from another model', a: 'The Reference Model view (side bar): "Set Reference Model…", then right-click → "Copy into Open Model" (or Ctrl+C there, Ctrl+V in the Model tree).' },
       { q: 'Generate documentation', a: 'Review > Docs. Compose the guide, brand it, add your own explanations, then print to PDF.', tab: 'docs' },
       { q: 'Publish a Fabric Data Agent', a: 'Ask your assistant. The Data Agent screen is hidden for now, and your assistant can still choose the model data, add its guidance and publish.' },
-      { q: 'Edit a workflow', a: 'Workflows > Author. Steps, Canvas and Source edit one shared draft. Save workflow opens a full preview before the saved file changes.', tab: 'workflows' },
-      { q: 'Recover a workflow after the file changed', a: 'Workflows > Author. Choose Reload saved file to start from the newer file, or Review current file to compare it with your draft before keeping your work.', tab: 'workflows' },
-      { q: 'Check a workflow before running it', a: 'Workflows > Author. Read the workflow checks and warnings, then start a run only after the steps and answers match the task.', tab: 'workflows' },
     ],
   },
   {
@@ -996,10 +976,8 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
       { q: 'Connect your assistant to this model', a: 'Command palette > "Semanticus: Connect AI Assistant" writes the connection file. Nothing is connected until you refresh or restart your assistant so it reads that file. Keep Semanticus open in VS Code.' },
       { q: 'See what your assistant changed', a: 'Plan > History lists every change and who made it, newest first. Choose Your assistant to see only its changes. Undo to here takes a change back, with any made after it.', tab: 'plan' },
       { q: 'Undo or redo a change', a: 'Open Plan > History and use Undo to here or Redo to here on a row, or the palette commands "Semanticus: Undo" and "Semanticus: Redo". A set of changes undoes as one step. Publishing to a live server is separate and is not reversed by local Undo.', tab: 'plan' },
-      { q: 'Run a workflow that records what it checked', a: 'Workflows runs steps whose checks are recorded as you go. Workflows is a Pro feature.', tab: 'workflows' },
-      { q: 'Turn workflow checks off for a quick task', a: 'Workflows > Team rules > Checks in runs. Off means new runs skip the checks inside them; actions a team rule requires still go through their workflow. Runs already underway keep their original setting.', tab: 'workflows' },
       { q: 'Write the standing instructions your assistant starts from', a: 'Edit > AI instructions, Instructions tab. Write them once, save them in the model, and accept or reject anything your assistant suggests adding.', tab: 'instructions' },
-      { q: 'Save business context and lessons from earlier work', a: 'Edit > AI instructions, Notes tab, holds the model guide, saved insights, reusable workflows and a search over your notes.', tab: 'knowledge' },
+      { q: 'Save business context and lessons from earlier work', a: 'Edit > AI instructions, Notes tab, holds the model guide, saved insights and a search over your notes.', tab: 'knowledge' },
       { q: 'Accept a finding without fixing it', a: 'Use Accept on Review > AI readiness or Review > Model quality. A reason is required, and the finding stays visible as overridden.', tab: 'readiness' },
     ],
   },
@@ -1008,6 +986,7 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
     items: [
       { q: 'Open or connect a model', a: '"Semanticus: Open Model…" (tree toolbar or palette): a file (.bim/TMDL/PBIP), a running Power BI Desktop, or an XMLA endpoint (recent connections remembered).' },
       { q: 'Search the whole model', a: '"Semanticus: Find in Model" (the search icon on the Model view): names, descriptions and DAX.' },
+      { q: 'Replace a word across the model', a: 'Ask your assistant to do it, and undo it from Plan > History if you change your mind. Or save the model as TMDL and use VS Code search and replace over the saved TMDL and DAX files.' },
       { q: 'Save the model to disk', a: 'The Save icon on the Model view (TMDL beside the model).' },
       { q: 'Format DAX', a: 'In any DAX editor: Format Document (offline), or right-click → "Semanticus: Format DAX with DAX Formatter (online)".' },
     ],

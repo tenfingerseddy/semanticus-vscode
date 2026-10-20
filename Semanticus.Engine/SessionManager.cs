@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -88,15 +89,23 @@ namespace Semanticus.Engine
             // Normalise a modern TMDL PBIP entry point (.pbip / project folder / .SemanticModel folder) to its inner
             // 'definition' TMDL root the vendored TE2 loader can actually open; other formats pass through unchanged.
             var full = ModelPathResolver.Resolve(Path.GetFullPath(path));
+            // A copy saved INSIDE the model's own folder is a second model to the TMDL loader: it merges with the real one and the
+            // model cannot open. The model is loaded from its own files only; the session still follows the real folder.
+            var nested = ModelPathResolver.NestedModelRoots(full);
+            string loadFrom = full, strippedCopy = null;
+            if (nested.Length > 0) loadFrom = strippedCopy = CopyWithoutNestedModels(full, nested);
             var dispatcher = new ModelDispatcher();
             try
             {
                 // The handler MUST be built on the single-writer thread (its ctor sets the process-wide Singleton and
                 // builds the wrapper graph there). The TE2 handler now lives behind the IModelSession seam, so the
                 // concrete type + its build settings are owned by Te2ModelSession.Open (ModelSession.cs), not here.
-                IModelSession model = await dispatcher.RunAsync(() => (IModelSession)Te2ModelSession.Open(full));
+                IModelSession model = await dispatcher.RunAsync(() => (IModelSession)Te2ModelSession.Open(loadFrom));
                 var id = MintSessionId();
-                return new Session(id, dispatcher, model, Bus, full);
+                var session = new Session(id, dispatcher, model, Bus, full);
+                if (nested.Length > 0)
+                    session.OpenNote = $"Opened the model in '{Path.GetFileName(full.TrimEnd(Path.DirectorySeparatorChar))}'. A second copy saved inside it, in '{Path.GetRelativePath(full, nested[0])}', was left out of the model. Move that folder out of here when you no longer need it.";
+                return session;
             }
             catch
             {
@@ -105,6 +114,31 @@ namespace Semanticus.Engine
                 dispatcher.Dispose();
                 throw;
             }
+            finally
+            {
+                if (strippedCopy != null) { try { Directory.Delete(strippedCopy, true); } catch { } }
+            }
+        }
+
+        /// <summary>The model's own TMDL files in a temp folder, with every nested model folder left out (see <see cref="BuildOpenAsync"/>).</summary>
+        private static string CopyWithoutNestedModels(string root, string[] nested)
+        {
+            var temp = Path.Combine(Path.GetTempPath(), "semanticus_open_" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(temp);
+            try
+            {
+                foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+                {
+                    if (nested.Any(n => file.StartsWith(n + Path.DirectorySeparatorChar, StringComparison.Ordinal))) continue;
+                    var ext = Path.GetExtension(file);
+                    if (!ext.Equals(".tmdl", StringComparison.OrdinalIgnoreCase) && !ext.Equals(".tmd", StringComparison.OrdinalIgnoreCase)) continue;
+                    var dest = Path.Combine(temp, Path.GetRelativePath(root, file));
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                    File.Copy(file, dest);
+                }
+                return temp;
+            }
+            catch { try { Directory.Delete(temp, true); } catch { } throw; }
         }
 
         /// <summary>Build (don't publish) a brand-new empty model — see <see cref="BuildOpenAsync"/>.</summary>

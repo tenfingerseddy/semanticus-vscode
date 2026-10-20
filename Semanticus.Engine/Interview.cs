@@ -34,6 +34,9 @@ namespace Semanticus.Engine
         public bool ExpectRefusal { get; set; }                          // refusal tier: this question CANNOT be answered from the model
         public string FixRuleId { get; set; }                            // author-supplied readiness rule (primary failure→fix mapping)
         public string SeedSource { get; set; }                           // "user" | "claude" | "verified-answer" | ... (pre-seed hook)
+        // The Copilot test (15 Oct 2026): a question in the bank has a kind and may be held back. Null / false for a hand-written question.
+        public string Kind { get; set; }                                 // totals | filters | time | ranking | words | names | cannot
+        public bool HeldBack { get; set; }                               // graded every round, its misses never returned to the assistant
         // #157: two-part binding so a pack is only ever OFFERED for, and GRADED against, the right model.
         //  • ModelIdentity — the PANE identity: which editable model's interview this belongs to (live endpoint|
         //    database, else the FULL on-disk model path, else a session-scoped id for an unsaved model). Governs the
@@ -140,6 +143,8 @@ namespace Semanticus.Engine
             public bool? ExpectRefusal { get; set; }
             public string FixRuleId { get; set; }
             public string SeedSource { get; set; }
+            public string Kind { get; set; }             // Copilot test: the kind of question
+            public bool? HeldBack { get; set; }          // Copilot test: part of the held-back fifth
             public string ModelIdentity { get; set; }    // #157: PANE identity (which editable model's pack)
             public string ModelLabel { get; set; }       // #157: that model's display name (divider copy only, never a match key)
             public string ExecIdentity { get; set; }     // #157: EXECUTION identity (the live connection the oracle was confirmed against)
@@ -226,6 +231,8 @@ namespace Semanticus.Engine
                                 ExpectRefusal = d.ExpectRefusal ?? false,
                                 FixRuleId = d.FixRuleId,
                                 SeedSource = d.SeedSource,
+                                Kind = d.Kind,
+                                HeldBack = d.HeldBack ?? false,
                                 ModelIdentity = d.ModelIdentity,
                                 ModelLabel = d.ModelLabel,
                                 ExecIdentity = d.ExecIdentity,
@@ -370,6 +377,10 @@ namespace Semanticus.Engine
                 var actual = row[row.Length - 1];   // the value column is last (ROW(\"v\", …) / SUMMARIZECOLUMNS value arg)
                 if (OracleMatches(actual, q.ExpectedValue))
                     return (Correct, $"the answer {DaxBench.Fmt(actual)} matches the trusted value.");
+                // A ranking answer is a row of a name and its number. The trusted value is one cell of it (the top name, or its number), so the
+                // row is right when it holds that cell: the number is never held against the name (hero 24 D4).
+                if (row.Length > 1 && !IsBlankSentinel(q.ExpectedValue) && row.Any(c => c != null && OracleMatches(c, q.ExpectedValue)))
+                    return (Correct, $"the answer row holds the trusted value {q.ExpectedValue}.");
                 // Blank-vs-value mismatches get their own evidence lines: blank ≠ 0 ≠ error is the house
                 // convention, and "the cell was empty" is a different user experience than "the number was wrong".
                 if (actual == null)
@@ -400,6 +411,9 @@ namespace Semanticus.Engine
             if (exp.Count != act.Count)
                 return (SilentlyWrong, $"the query returned {act.Count} row(s) but the trusted answer has {exp.Count}. The answer's shape is wrong, not just a value.");
 
+            // Names and numbers match as a row, not by column place: the same cells in another order, or a row with a column more, are the same answer.
+            if (RowsHoldCells(exp, act)) return (Correct, $"all {act.Count} row(s) match the trusted answer.");
+
             string Key(object[] row) => string.Join("\u001F", row.Select(DaxBench.Fmt));
             var expSorted = exp.OrderBy(Key, StringComparer.Ordinal).ToList();
             var actSorted = act.OrderBy(Key, StringComparer.Ordinal).ToList();
@@ -413,6 +427,52 @@ namespace Semanticus.Engine
                         return (SilentlyWrong, $"row “{string.Join(", ", a.Select(DaxBench.Fmt))}” differs from the trusted answer (expected {DaxBench.Fmt(e[c])}, got {DaxBench.Fmt(a[c])}).");
             }
             return (Correct, $"all {act.Count} row(s) match the trusted answer.");
+        }
+
+        // One column mapping for the whole table: trusted column c is answer column map[c] in EVERY row, so the same cells in another column
+        // order are the same answer, but rows cannot each choose their own order (month 1 had 2 is not month 2 had 1). The mapping may leave
+        // answer columns unused (a column more is fine). A column may only trade places with a column of the other kind (a name and a number):
+        // two number columns in the same table keep their order, because swapping them can turn a wrong answer into the trusted one.
+        // Rows are few (a top list) and columns fewer, so a plain search is enough.
+        private static bool RowsHoldCells(List<object[]> expected, List<object[]> actual)
+        {
+            if (expected.Count != actual.Count || expected.Count > 12) return false;
+            var width = expected.Count == 0 ? 0 : expected[0].Length;
+            if (expected.Any(r => r.Length != width)) return false;
+            var map = new int[width];
+            var isText = Enumerable.Range(0, width).Select(c => expected.Any(r => r[c] is string)).ToArray();
+            var usedCol = new bool[actual.Count == 0 ? 0 : actual.Max(r => r.Length)];
+            var used = new bool[actual.Count];
+
+            bool RowsPlace(int i)
+            {
+                if (i == expected.Count) return true;
+                for (int a = 0; a < actual.Count; a++)
+                {
+                    if (used[a]) continue;
+                    var ok = true;
+                    for (int c = 0; c < width && ok; c++) ok = map[c] < actual[a].Length && CellMatches(actual[a][map[c]], expected[i][c]);
+                    if (!ok) continue;
+                    used[a] = true;
+                    if (RowsPlace(i + 1)) return true;
+                    used[a] = false;
+                }
+                return false;
+            }
+            bool MapColumn(int c)
+            {
+                if (c == width) return RowsPlace(0);
+                for (int g = 0; g < usedCol.Length; g++)
+                {
+                    if (usedCol[g]) continue;
+                    if (g < width && g != c && isText[c] == isText[g]) continue;   // same kind: this column keeps its place
+                    usedCol[g] = true; map[c] = g;
+                    if (MapColumn(c + 1)) return true;
+                    usedCol[g] = false;
+                }
+                return false;
+            }
+            return MapColumn(0);
         }
 
         // A blank-sentinel cell parses to NULL so its sort key (Fmt(null) = "(blank)") aligns with a blank result

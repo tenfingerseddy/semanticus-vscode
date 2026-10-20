@@ -48,7 +48,7 @@ assistant can use the same model work from any client:
 - Plan: every piece of work on the model and who does it, with History (every edit, who made it, undo to any point).
 - Explore: data previews, Ask your data (Pro; `ask_data` and `list_data_questions`; a question that can fairly be read two ways
   answers "Showing X. You may have meant Y."), the diagram, lineage and size by table.
-- Edit: find and replace, Queries (DAX), AI instructions with Model notes, advanced modelling and Power Query.
+- Edit: Queries (DAX), AI instructions with Model notes, advanced modelling and Power Query.
 - Review: Model quality, AI readiness, Validation with its Reports, and Docs.
 - Publish: compare with a destination, publish after you confirm, and roll back.
 - Workflows: your workflows and starters, Author for the one you open, and `describe_workflow_steps` to turn words into steps.

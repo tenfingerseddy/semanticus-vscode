@@ -167,6 +167,10 @@ namespace Semanticus.Engine
         // source object refers to. Rather than guess (an Update landing on one twin while the other is swept as a
         // Delete), the item is surfaced as Ambiguous — never applied, never deleted — with this human reason.
         public string Reason { get; set; }
+        // Set on a relationship Create and its Delete when the relationship is the same one with only its key columns (or their tables) renamed, and nothing else changed.
+        // A relationship is matched by its ends, so a rename reads as "new" plus "only on the service". The renamed columns carry it: it is not a change of its own,
+        // the page does not list it, and a publish that sent every other change went whole (verifier 18 Oct).
+        public bool CarriedByRename { get; set; }
         // RETAG / REPUBLISH: a same-NAMED object exists on both sides but with DIFFERENT non-empty LineageTags. Match
         // (correctly) does NOT pair them, so the SAME logical object surfaces as a right-only Delete + a left-only
         // Create. Applying that Delete against a published model DROPS the live object and its data (partitions, rows)

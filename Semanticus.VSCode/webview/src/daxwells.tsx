@@ -172,7 +172,8 @@ export function buildQuery(c: PivotConfig): string {
   const group = queryGroupRefs(c);
   const valExt = c.values.map((v) => `"${v.name}", ${v.ref}`);
   const inner = [...group, ...valExt];
-  if (!inner.length) return 'EVALUATE\nROW("(drag fields into the wells)", BLANK())';
+  // Nothing chosen is no query: a placeholder row stood in for it and ran as a real one, so the Answer read Blank (pro UAT 18 Oct, N1).
+  if (!inner.length) return '';
   const sc = `SUMMARIZECOLUMNS(\n    ${inner.join(',\n    ')}\n)`;
   const filters = c.filters.map(filterToDax).filter((x): x is string => !!x);
   if (!filters.length) return `EVALUATE\n${sc}${orderBy(c)}`;

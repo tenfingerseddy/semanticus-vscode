@@ -45,6 +45,9 @@ namespace Semanticus.Engine
                     Encrypt = SqlConnectionEncryptOption.Mandatory,
                     ConnectTimeout = 30,
                     ApplicationName = "Semanticus",
+                    // Every question this asks is a read, so the connection says so: a server that routes reads sends this one to a
+                    // replica, and one that does not simply ignores it.
+                    ApplicationIntent = ApplicationIntent.ReadOnly,
                 };
                 using var conn = new SqlConnection(csb.ConnectionString) { AccessToken = accessToken };
                 await conn.OpenAsync(ct).ConfigureAwait(false);

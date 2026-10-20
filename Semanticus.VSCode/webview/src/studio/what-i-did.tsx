@@ -4,6 +4,8 @@
 // The list is kept by the engine (getStudioNotes, 100 notes) and read on mount, so a reload keeps it; see notes-runtime.ts.
 import { useEffect, useRef, useState } from 'react';
 import type { StudioNote } from './types';
+import { useDriver } from './driver-store';
+import { useAssistantWorking } from './assistant-working';
 import './studio-notes.css';
 
 /** "09:41", the person's own clock. A time the engine wrote badly reads as nothing rather than "Invalid Date". */
@@ -12,9 +14,19 @@ export function timeOf(at: string): string {
   return Number.isFinite(t) ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 }
 
-export function WhatIDid({ log, unread, onShow, onClose }: {
-  log: readonly StudioNote[]; unread: ReadonlySet<string>; onShow: (id: string) => void; onClose: () => void;
+/** "Your assistant is checking ..." is true while it works and false after (UAT 18 Oct N21: it sat on the page 40 s after Claude finished). Once the work is over
+ *  the line says it in the past. A line that is not "<who> is <doing>" (a count, a fact about the model) already reads as past or as a fact. */
+export function pastSay(say: string): string {
+  return say.replace(/^(Your assistant|Claude(?: Code)?|[A-Z][\w ]{0,24}?) is ([a-z]+ing)\b/, '$1 was $2');
+}
+
+export function WhatIDid({ log, unread, over = false, onShow, onClose }: {
+  log: readonly StudioNote[]; unread: ReadonlySet<string>;
+  /** The assistant's work is over (it has made no call for a short quiet time): lines read in the past. */
+  over?: boolean;
+  onShow: (id: string) => void; onClose: () => void;
 }) {
+  const said = (text: string) => (over ? pastSay(text) : text);
   const list = useRef<HTMLOListElement>(null);
   const [all, setAll] = useState(false);
   // Newest last: open scrolled to the end, where the latest step is.
@@ -27,7 +39,7 @@ export function WhatIDid({ log, unread, onShow, onClose }: {
         {!all && latest && (
           <button type="button" className="sn-line sn-line-one" data-testid="what-i-did-latest" data-note={latest.id} onClick={() => onShow(latest.id)}>
             <span className="sn-line-time">{timeOf(latest.at)}</span>
-            <span className="sn-line-say sn-line-clip">{latest.say}</span>
+            <span className="sn-line-say sn-line-clip">{said(latest.say)}</span>
             {unread.has(latest.id) ? <span className="sn-dot" role="img" aria-label="Not shown yet" /> : <span />}
           </button>
         )}
@@ -49,7 +61,7 @@ export function WhatIDid({ log, unread, onShow, onClose }: {
                 <button type="button" className="sn-line" data-testid="what-i-did-line" data-note={note.id} onClick={() => onShow(note.id)}
                   title={note.how && note.by !== 'person' ? `To do this yourself: ${note.how}` : undefined}>
                   <span className="sn-line-time">{timeOf(note.at)}</span>
-                  <span className="sn-line-say">{note.say}</span>
+                  <span className="sn-line-say">{said(note.say)}</span>
                   {unread.has(note.id) ? <span className="sn-dot" role="img" aria-label="Not shown yet" data-testid="what-i-did-unread" /> : <span />}
                 </button>
               </li>
@@ -58,4 +70,10 @@ export function WhatIDid({ log, unread, onShow, onClose }: {
         )}
     </section>
   );
+}
+
+/** The list as the strip draws it: the lines turn to the past when the assistant's work is over. */
+export function WhatIDidNow(props: Omit<Parameters<typeof WhatIDid>[0], 'over'>) {
+  const working = useAssistantWorking(useDriver());
+  return <WhatIDid {...props} over={!working} />;
 }

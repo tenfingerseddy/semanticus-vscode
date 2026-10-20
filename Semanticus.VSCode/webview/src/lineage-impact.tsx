@@ -479,7 +479,7 @@ export const LOCAL_FOLDER_HINT =
 
 export function ChooseReportsDrawer({
   scope, selected, onClose, timeFormat = clockTime, returningTo,
-  workspaces, reports, workspaceId, signInMode = 'azcli', tenantId = '',
+  workspaces, reports, workspaceId, signInMode = 'interactive', tenantId = '',
   onWorkspaceId, onSignInMode, onTenantId, onLoadWorkspaces, onLoadReports, onToggle, onChoose, onCheck,
   folderPath = '', onFolderPath, onBrowse, onAddFolder, onRemove, busy, error, result, consent, onConsent,
 }: {

@@ -48,13 +48,12 @@ assert.doesNotMatch(app, /label: 'Analyse'/, 'the fifth area is Review, not Anal
 const stripTools = [...groupsBlock.matchAll(/\{ id: '([a-z]+)', label: '([^']+)' \}/g)].map((m) => [m[1], m[2]]);
 assert.deepEqual(stripTools, [
   ['plan', 'Plan'],
-  ['data', 'Data'], ['askdata', 'Ask your data'], ['diagram', 'Diagram'], ['lineage', 'Lineage'], ['stats', 'Size'],
-  ['search', 'Find and replace'], ['daxlab', 'Queries'],
+  ['data', 'Data'], ['query', 'Query'], ['diagram', 'Diagram'], ['lineage', 'Lineage'], ['stats', 'Size'],
   ['instructions', 'AI instructions'], ['advmodels', 'Advanced modelling'], ['mcode', 'Power Query'],
-  ['bpa', 'Model quality (BPA)'], ['readiness', 'AI readiness'], ['tests', 'Validation'], ['docs', 'Docs'],
+  ['bpa', 'Model quality (BPA)'], ['readiness', 'AI readiness'], ['copilottest', 'Copilot test'], ['tests', 'Validation'], ['docs', 'Docs'],
   ['deploy', 'Published'],
   ['workflows', 'Workflows'],
-], 'the strip is seventeen tools in six areas, each by the name its own tab has. Ask your data joined Explore on 26 September. Model notes became the Notes tab of AI instructions, and Pending changes and Model Spec folded into Plan, on 23 September; the Overview and Edit History retired into the Plan in slice 11.');
+], 'the strip is sixteen tools in six areas, each by the name its own tab has. Query joined Explore in 1.6 and replaced Ask your data and Queries. Copilot test joined Review on 15 October. Model notes became the Notes tab of AI instructions, and Pending changes and Model Spec folded into Plan, on 23 September; the Overview and Edit History retired into the Plan in slice 11.');
 assert.match(app, /type StudioTab = ToolId/, 'the shell must use the typed route tool ids');
 assert.match(app, /DESTINATION_OF_TOOL/, 'every stable tool id must map to an area');
 assert.match(app, /const \[route, setRoute\] = useState<Route>/, 'navigation must be held as one typed route');
@@ -95,12 +94,13 @@ assert.match(context, />Tests:</);
 assert.match(context, />Publish:</);
 assert.doesNotMatch(context, />Reference</, 'the bottom bar no longer carries a Reference slot');
 assert.match(bridge, /treeSelectionListeners/, 'native selection context requires a dedicated bridge event');
-assert.match(extension, /semanticus\.tryCalculation[\s\S]*navigateStudio\(context, 'daxlab'/, 'tree actions must open calculation with the selected measure');
+assert.match(extension, /semanticus\.tryCalculation[\s\S]*navigateStudio\(context, 'query'/, 'tree actions must open calculation with the selected measure');
 assert.match(extension, /semanticus\.addTestForMeasure[\s\S]*navigateStudio\(context, 'tests'/, 'tree actions must open tests with the selected measure');
 assert.match(extension, /type: 'treeSelection'[\s\S]*sessionId: currentSessionId/, 'tree selection must be stamped without navigating away from a draft');
 assert.match(extension, /targetSessionId !== currentSessionId[\s\S]*editDaxCmd\(node\)/, 'Model home Edit formula must relay its exact session-scoped object to the native editor');
 assert.match(app, /data-testid="publish-button"[^>]*>Publish</, 'the header must carry the one Publish control');
 assert.doesNotMatch(deploy, /data-testid="publish-button"/, 'the Published page must not repeat the header Publish button');
+assert.match(tests, /onOpenReports=\{\(\) => onPage\?\.\('reports'\)\}/, 'Validation A: Kept reports is still the evidence route, so an old link still lands on it');
 assert.doesNotMatch(tests, /<InterviewCard /, '1.2.0: the Model Interview evidence section left the Tests page');
 assert.match(connection, /Choose test model/);
 
@@ -109,14 +109,14 @@ const bindings = pkg.contributes.keybindings
   .map((x) => [x.args, x.key]);
 assert.deepEqual(bindings, [
   ['plan', 'ctrl+shift+1'], ['explore', 'ctrl+shift+2'], ['edit', 'ctrl+shift+3'],
-  ['review', 'ctrl+shift+4'], ['publish', 'ctrl+shift+5'], ['workflows', 'ctrl+shift+6'],
-], 'one key per area, in strip order, and the host command names the same ids the webview does');
+  ['review', 'ctrl+shift+4'], ['publish', 'ctrl+shift+5'],
+], 'one key per visible area, in strip order (Workflows retired 17 Oct: no key), and the host command names the same ids the webview does');
 // The host's own area picker offers the same six, by the same ids: a person who opens the command
 // instead of pressing the key must not be shown a list of areas that no longer exist.
 const pickerAreas = [...(extension.match(/const groups: Array<vscode\.QuickPickItem & \{ key: string \}> = \[[\s\S]*?\];/) || [''])[0]
   .matchAll(/key: '([a-z]+)'/g)].map((m) => m[1]);
-assert.deepEqual(pickerAreas, ['plan', 'explore', 'edit', 'review', 'publish', 'workflows'],
-  'Go to Studio Area offers the six areas');
+assert.deepEqual(pickerAreas, ['plan', 'explore', 'edit', 'review', 'publish'],
+  'Go to Studio Area offers the five visible areas (Workflows retired)');
 
 // --- the Edit row is a plain strip: Advanced modelling is one tab, and its page row lists every modelling page ----
 // Kane, 8 Oct 2026: no dropdown. Power Query has no segment on the Edit row; it is a button on the Advanced modelling
@@ -190,7 +190,7 @@ assert.doesNotMatch(app.slice(app.indexOf('const goGroup'), app.indexOf('const g
 const homes = Object.fromEntries([...(route.match(/AREA_HOME: Record<Area, ToolId> = \{[\s\S]*?\n\};/) || [''])[0]
   .matchAll(/(\w+): '(\w+)'/g)].map((m) => [m[1], m[2]]));
 assert.deepEqual(homes, {
-  plan: 'plan', explore: 'data', edit: 'search',
+  plan: 'plan', explore: 'data', edit: 'instructions',
   review: 'bpa', publish: 'deploy', workflows: 'workflows',
 }, 'every area opens on the first segment of its own row');
 
@@ -389,7 +389,7 @@ const pickerEntries = [...pickerBlock.matchAll(/\{ label: '([^']+)', key: '([a-z
 assert.ok(pickerEntries.length >= 20, `the host picker should offer every place, found ${pickerEntries.length}`);
 const shortcutEntries = [...((shortcuts.match(/const KEY_TABS[\s\S]*?\n\];/) || [''])[0])
   .matchAll(/\{ key: '[a-z]', tab: '([a-z]+)', label: '([^']+)' \}/g)].map((m) => [m[1], m[2]]);
-assert.ok(shortcutEntries.length >= 8, `the shortcut overlay should list its tab keys, found ${shortcutEntries.length}`);
+assert.ok(shortcutEntries.length >= 7, `the shortcut overlay should list its tab keys, found ${shortcutEntries.length}`);
 
 const misnamed = [
   ...pickerEntries.map(([key, label]) => namesARealPlace('the host tool picker', key, label)),
@@ -408,3 +408,28 @@ const dead = [...pickerEntries, ...shortcutEntries].map(([key]) => key).filter((
 assert.deepEqual([...new Set(dead)], [], 'an outside list hands the shell an id it does not accept');
 
 console.log('intent navigation tests passed');
+
+// Workflows retired (Kane 17 Oct): no key, no area pick, no tab pick reaches the page. The code stays; only the way in goes.
+assert.ok(!pkg.contributes.keybindings.some((x) => x.args === 'workflows'), 'no keybinding opens Workflows');
+assert.doesNotMatch(extension, /key: 'workflows'/, 'neither Studio picker lists Workflows');
+
+// UAT 18 Oct N15: "Live activity · your assistant: Labelled connection Contoso Sales as prod" was the person's own press. A feed entry says who did it.
+{
+  const { makeLoader } = await import('./helpers/webview-load.mjs');
+  const { actorOf } = makeLoader({})('activity-actor.ts');
+  assert.equal(actorOf({ origin: 'human' }), 'You', 'a press by the person is the person\'s');
+  assert.equal(actorOf({ origin: 'agent' }), 'Your assistant');
+  assert.equal(actorOf({ origin: 'unknown' }), 'Your assistant', 'an event with no known origin keeps the feed\'s old reading');
+  assert.doesNotMatch(activity, /Live activity · your assistant/, 'the feed header does not name one actor for every entry');
+  assert.match(activity, /actorOf\(e\)/, 'each entry names who did it');
+}
+
+// UAT 18 Oct N23: the footer said "unsaved" beside an assistant that had kept a copy and said the changes were saved. With a copy that holds every change it says what is true.
+{
+  const { makeLoader } = await import('./helpers/webview-load.mjs');
+  const { unsavedWord } = makeLoader({})('footer-words.ts');
+  assert.equal(unsavedWord({ liveBound: true, keptCopyPath: '/home/a/Semanticus/Model/Sales.bim' }), 'copy kept, not published');
+  assert.equal(unsavedWord({ liveBound: true, keptCopyPath: null }), 'unsaved', 'a live model with no copy yet is unsaved');
+  assert.equal(unsavedWord({ liveBound: false, keptCopyPath: null }), 'unsaved');
+  assert.match(context, /unsavedWord\(s\)/, 'the footer chip reads the one function');
+}

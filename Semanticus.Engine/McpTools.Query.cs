@@ -74,13 +74,24 @@ namespace Semanticus.Engine
             [Description("The most questions to return (default 50)")] int limit = 50)
             => engine.ListDataQuestionsAsync(limit);
 
-        [McpServerTool(Name = "pick_chart_kind"), Description("Pick the chart a Queries result opens as: Jev's pick among the charts the chart rules leave (queries.chart_kind). Pass the result's shape and the rules' own answer: 'fits' (the kinds the rules leave, in their order) and 'rules_pick'. Kinds are matrix, line, bar, area, table, card and scatter. Jev's chart pick is off in this version until its replay clears its bar, so today this returns the rules' pick with by 'rules' and a note saying why; it does the same whenever Jev is not asked or not sure. Returns kind, by (jev or rules), a fixed reason sentence written by Semanticus, the confidence when Jev answered, and a note. Sends the question's words and the shape only, never rows or values. Read-only; never changes the model. Ask your data is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "query_notebook"), Description("The Query page's notebook and its full history for the open model, the same rows the person sees. Each row is one question or one query run as written: its words or DAX, the reading, the number it showed (headline), how long it took, when, which door asked, and two flags: 'pinned' (stays at the top of the notebook) and 'inNotebook' (open in the notebook). The notebook is the rows that are pinned or open; the history is every row, newest first. 'action' is list (default), pin, unpin, close (the row leaves the notebook and stays in the history; a pinned row is unpinned too), reopen (a history row comes back into the notebook) or remove (delete the row for good). Every action but list needs 'id' from the list. Rows never carry data. Kept beside the model, never committed with it; an unsaved model keeps none. Free on every tier; it asks no one and sends nothing out. Use it to keep the person's notebook tidy or to find a query they asked before: reopen it, then show it with show_in_studio.")]
+        public static Task<QueryNotebookView> QueryNotebook(IEngine engine,
+            [Description("list (default), pin, unpin, close, reopen or remove")] string action = "list",
+            [Description("The row's id, from the list. Required for every action but list")] string id = null)
+            => engine.QueryNotebookAsync(action, id);
+
+        [McpServerTool(Name = "pick_chart_kind"), Description("Pick the visual a Query result opens as: Jev's pick among the visuals the visual rules leave (queries.chart_kind). Pass the result's shape and the rules' own answer: 'fits' (the kinds the rules leave, in their order) and 'rules_pick'. Kinds are total, bars, line, variance, dumbbell, bullet, slope, multiples, sparktable and table. Jev's visual pick is off in this version until its replay clears its bar, so today this returns the rules' pick with by 'rules' and a note saying why; it does the same whenever Jev is not asked or not sure. Returns kind, by (jev or rules), a fixed reason sentence written by Semanticus, the confidence when Jev answered, and a note. Sends the question's words and the shape only, never rows or values. Read-only; never changes the model. Ask your data is a Semanticus Pro feature.")]
         public static Task<ChartPick> PickChartKind(IEngine engine,
-            [Description("The result's shape as JSON: {\"dims\": [{\"name\": \"Region\", \"isDate\": false, \"distinct\": 4}], \"measures\": 1, \"rows\": 4}")] JsonElement shape,
-            [Description("The chart kinds the chart rules leave for this shape, in the rules' order")] string[] fits,
-            [Description("The chart the rules picked; the answer whenever Jev does not pick")] string rules_pick,
+            [Description("The result's shape as JSON: {\"dims\": [{\"name\": \"Region\", \"isDate\": false, \"distinct\": 4}], \"measures\": 1, \"rows\": 4}. Optional: \"measureNames\" (the display name of each number), \"sameUnit\" and \"negatives\" (yes or no facts)")] JsonElement shape,
+            [Description("The visuals the visual rules leave for this shape, in the rules' order")] string[] fits,
+            [Description("The visual the rules picked; the answer whenever Jev does not pick")] string rules_pick,
             [Description("The question in plain words, when there were any")] string words = null)
             => engine.PickChartKindAsync(new ChartPickAsk { Words = words, Shape = ShapeFrom(shape), Fits = fits, RulesPick = rules_pick });
+
+        [McpServerTool(Name = "pick_check_visuals"), Description("Pick the visual each check on the Validation page opens with: Jev's pick among the visuals the page's rules leave for each check (checks.visual_kind), for every check in ONE call. Pass 'checks', each { id, title, measure, kindWord, status (pass, differs, off or could_not_check), rows, hasPrior, runs, hasSplit, fits (the visuals the rules leave, in their order), rulesPick }. Visuals are total, bars, line, variance, dumbbell, bullet, slope, multiples, waterfall, sparktable, heat and table. At most 40 checks. Jev's visual pick is off in this version until its replay clears its bar, so today this returns the rules' pick for every check with by 'rules' and a note saying why; it does the same whenever Jev is not asked or not sure. Returns picks, each { id, kind, by (jev or rules), a fixed reason sentence written by Semanticus, confidence when Jev answered, note }, and one note for the call. Sends check names, measure names, status words and counts only, never rows or values. Read-only; never changes the model. Ask your data is a Semanticus Pro feature.")]
+        public static Task<CheckVisualPicks> PickCheckVisuals(IEngine engine,
+            [Description("The checks to pick for: [{\"id\": \"gl\", \"title\": \"Total Sales and the GL\", \"measure\": \"Total Sales\", \"kindWord\": \"against SQL\", \"status\": \"differs\", \"rows\": 12, \"hasPrior\": true, \"runs\": 8, \"hasSplit\": true, \"fits\": [\"variance\", \"bars\", \"table\"], \"rulesPick\": \"variance\"}]")] CheckVisualItem[] checks)
+            => engine.PickCheckVisualsAsync(new CheckVisualAsk { Checks = checks });
 
         private static ChartPickShape ShapeFrom(JsonElement v)
         {
@@ -115,7 +126,13 @@ namespace Semanticus.Engine
                         break;
                     case "measures": shape.Measures = p.Value.GetInt32(); break;
                     case "rows": shape.Rows = p.Value.GetInt32(); break;
-                    default: throw new ArgumentException($"shape carries '{p.Name}', which it does not take. It takes dims, measures and rows.");
+                    case "measureNames": case "measure_names":
+                        if (p.Value.ValueKind != JsonValueKind.Array) throw new ArgumentException("shape.measureNames must be a list of names.");
+                        shape.MeasureNames = p.Value.EnumerateArray().Select(x => x.GetString()).ToArray();
+                        break;
+                    case "sameUnit": case "same_unit": shape.SameUnit = p.Value.GetBoolean(); break;
+                    case "negatives": case "hasNegatives": case "has_negatives": shape.Negatives = p.Value.GetBoolean(); break;
+                    default: throw new ArgumentException($"shape carries '{p.Name}', which it does not take. It takes dims, measures, rows, measureNames, sameUnit and negatives.");
                 }
             }
             return shape;

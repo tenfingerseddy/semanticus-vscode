@@ -162,6 +162,12 @@ namespace Semanticus.RpcSmoke
                 Check("the agent's listDataQuestions reads the UI's ask from the same history",
                     askHistory.Questions.Length >= 1 && askHistory.Questions[0].Reading == asked.Reading && askHistory.Questions[0].Origin == "human");
 
+                // The Query notebook (1.6): the UI pins the row its ask left; the agent's queryNotebook reads the same pin.
+                var uiPin = await ui.Invoke<Semanticus.Engine.Query.QueryNotebookView>("queryNotebook", "pin", asked.QuestionId);
+                var agentNb = await agent.Invoke<Semanticus.Engine.Query.QueryNotebookView>("queryNotebook", "list", (string)null);
+                Check("the UI's pin on a notebook row is the agent's queryNotebook read, one history for both doors",
+                    uiPin.Done == "Pinned." && agentNb.Questions.Any(q => q.Id == asked.QuestionId && q.Pinned && q.InNotebook));
+
                 // ---- DOCUMENTATION NARRATIVE: dual-drive round-trip (annotation, MutateAsync broadcast, undo) ----
                 const string docCtx = "Revenue grain: one row per order line.";
                 var waitDoc = agent.Notify.WaitNextAsync(n => n.Origin == "human" && n.Label == "set doc narrative");

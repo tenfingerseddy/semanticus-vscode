@@ -150,22 +150,6 @@ interface Spec { line: string; free?: string; body: React.ReactNode }
 
 const PREVIEWS: Record<string, Spec> = {
 
-  // Ask your data (26 September 2026): the page as it is, a question built from parts, its answer and the list of
-  // questions asked before. Example data on a placeholder model; no call is made.
-  'askdata': {
-    line: 'Ask a question about your numbers. Semanticus builds and checks the query.',
-    free: 'Part of Pro. Queries and your assistant still run any query for free.',
-    body: <div className="flex gap-3 flex-wrap">
-      <Rail title="Asked before" items={['Net Sales by Store Region', 'Units by Category, top 10', 'Margin by Segment']} active="Net Sales by Store Region" />
-      <div className="grid gap-3 flex-1 min-w-0">
-        <Toolbar><Ctl>Net Sales</Ctl><span className="text-xs" style={{ color: 'var(--sem-muted)' }}>by</span><Ctl>Store Region</Ctl><Ctl>Year = 2025</Ctl><Ctl>Add</Ctl></Toolbar>
-        <div className="text-xs" style={{ color: 'var(--sem-muted)' }}>Built from your choices. Every column reaches Net Sales. The query checks out. 3 rows.</div>
-        <Table cols={['Store Region', 'Net Sales']} rows={[['Coast', '1,204,310'], ['Inland', '802,115'], ['North', '640,480']]} />
-        <Toolbar><Ctl>Show DAX</Ctl><Ctl>Open in Queries</Ctl><Ctl>Save as a check</Ctl></Toolbar>
-      </div>
-    </div>,
-  },
-
   // Workflows (lane W2, contract 21.1 row 8): the one page as it really is, your workflows as rows with a mark
   // per step in the doer hues, the last run, a Required mark and Run, drawn with the page's own classes.
   'workflows': {

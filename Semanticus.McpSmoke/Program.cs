@@ -334,6 +334,16 @@ namespace Semanticus.McpSmoke
                 Check("MCP list_data_questions reads that ask back, newest first, with its reading and no rows",
                     askHistory.Questions.Length >= 1 && askHistory.Questions[0].Reading == asked.Reading && askHistory.Questions[0].Origin == "agent");
 
+                // The Query notebook (1.6): the assistant pins the row its own ask left, reads it back, closes it (it stays in the history) and
+                // removes it, across the same process boundary the Studio uses for queryNotebook.
+                var nbRow = (await McpTools.QueryNotebook(claude)).Questions.First(q => q.Id == asked.QuestionId);
+                var nbPinned = await McpTools.QueryNotebook(claude, "pin", nbRow.Id);
+                var nbClosed = await McpTools.QueryNotebook(claude, "close", nbRow.Id);
+                Check("MCP query_notebook pins the ask's row, then closes it: it leaves the notebook and stays in the history",
+                    nbRow.InNotebook && nbPinned.Questions.First(q => q.Id == nbRow.Id).Pinned
+                    && nbClosed.Questions.First(q => q.Id == nbRow.Id) is { Pinned: false, InNotebook: false });
+                Check("MCP query_notebook removes the row for good", (await McpTools.QueryNotebook(claude, "remove", nbRow.Id)).Questions.All(q => q.Id != nbRow.Id));
+
                 var unbalanced = await McpTools.ValidateDax(claude, "CALCULATE ( SUM ( Sales[Amount] )");
                 Check("MCP validate_dax: unbalanced parentheses → Valid=false with an error diagnostic (line:col set)",
                     !unbalanced.Valid && unbalanced.Diagnostics.Any(d => d.Severity == "error" && d.Line >= 1 && d.Column >= 1));
@@ -1637,7 +1647,10 @@ namespace Semanticus.McpSmoke
                         groupBy: new[] { columnRef }, server: "srv", database: "db");
                     Check("MCP reconcile_measure on an ALLOWED target passes the gate then degrades honestly with no live connection (never a false green)",
                         recOffline != null && !recOffline.PolicyRefused && recOffline.Status != ReconcileStatus.Reconciled && !recOffline.Complete
-                        && recOffline.Error != null && recOffline.Error.IndexOf("connect", StringComparison.OrdinalIgnoreCase) >= 0
+                        // Since 1.6 a server the person never saved gets no sign-in (the SQL trust rule), so the honest reason may be that refusal
+                        // rather than the missing connection. Either way nothing runs and nothing reads green.
+                        && recOffline.Error != null && (recOffline.Error.IndexOf("connect", StringComparison.OrdinalIgnoreCase) >= 0
+                                                       || recOffline.Error.IndexOf("you have not saved", StringComparison.OrdinalIgnoreCase) >= 0)
                         && !string.IsNullOrEmpty(recOffline.SuggestedNextAction) && !recOffline.CoverageKnown);
                 }
                 finally { await owner.SetAgentPolicyPresetAsync(priorPreset, "human"); }   // restore the user's actual preset

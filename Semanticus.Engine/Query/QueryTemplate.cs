@@ -121,7 +121,15 @@ namespace Semanticus.Engine.Query
         /// <summary>How an order by a split column reads: "A to Z" or "Z to A", and for a column the model sorts by another (the months)
         /// "in the model's own order", because that is the order it runs in.</summary>
         internal static string SortWords(QueryColumn c, bool descending) =>
-            string.IsNullOrEmpty(c.SortByName) ? (descending ? "Z to A" : "A to Z") : (descending ? "in the model's own order, last first" : "in the model's own order");
+            !string.IsNullOrEmpty(c.SortByName) ? (descending ? "in the model's own order, last first" : "in the model's own order")
+            : IsTimeColumn(c) ? (descending ? "newest first" : "in time order")   // "with Year A to Z" read as an odd thing to say about a trend (UAT 17 Oct, P20b)
+            : (descending ? "Z to A" : "A to Z");
+
+        private static readonly System.Text.RegularExpressions.Regex TimeWords =
+            new System.Text.RegularExpressions.Regex(@"\b(?:year|month|quarter|week|date|day|period)s?\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>A column of days, or one named for a span of time: its order is time, not the alphabet.</summary>
+        internal static bool IsTimeColumn(QueryColumn c) => c.Kind == "date" || TimeWords.IsMatch(c.Name ?? "");
 
         private static string OrderRef(QuerySpec s, QueryColumn c) =>
             string.IsNullOrEmpty(c.SortByName) ? c.Dax : ColumnRef(c.Table, c.SortByName);

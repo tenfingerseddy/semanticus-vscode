@@ -636,7 +636,7 @@ namespace Semanticus.Engine
             {
                 Context = context,
                 Session = session,
-                File = PlanMemory.FileIn(SidecarDir(context)),
+                File = PlanMemory.FileIn(PlanSidecarDir(context)),
                 Identity = PaneIdentity(context.Session, context.Live),
             };
         }
@@ -675,7 +675,7 @@ namespace Semanticus.Engine
             if (binding.Nowhere)
             {
                 // No file yet: what the plan saw and saw finish is kept for as long as the model is open, and moves into the file at the first save.
-                var held = _sessionPlanTasks.GetOrCreateValue(binding.Context);
+                var held = HeldPlanState(binding);
                 lock (held) { change(held); PlanTasks.Trim(held); }
                 return true;
             }
@@ -743,6 +743,7 @@ namespace Semanticus.Engine
                 ReconcileTakenBackTasks(binding);
                 // A row set aside whose object was renamed has a new id now; the skip moves to it before anything reads it (hero15 H13).
                 await FollowSkipRenamesAsync(binding).ConfigureAwait(false);
+                await FollowTaskRenamesAsync(binding).ConfigureAwait(false);
 
                 // The memory is read BEFORE the facts, so every save mark in it (LastSave) was written before the model
                 // was read. A later one would credit a save the facts never saw ("Save the changes you have made").
@@ -754,6 +755,7 @@ namespace Semanticus.Engine
                 // explicit base measure (ColumnSummarizeFamily), so the starter rule's items stand aside, exactly as they
                 // did for measure.starter (which lost its replay and stays off).
                 facts.HeldClaims = new HashSet<string>(PlanTasks.HeldClaimsOf(memory.Tasks.Where(t => SkipFor(memory, t) == null)), StringComparer.OrdinalIgnoreCase);
+                facts.SetAsideClaims = new HashSet<string>(PlanTasks.SetAsideClaimsOf(memory.Tasks, t => SkipFor(memory, t) != null), StringComparer.OrdinalIgnoreCase);
                 facts.StarterByJev = jev.StarterLive || jev.LivePoints.Contains(DecisionRegistry.ColumnSummarize);
                 // ONE OWNER PER FORMAT. A kept line of a live Jev point that sets an object's format owns that object, and so does
                 // a SUGGESTION Jev made with some confidence (a format the rules cannot prove, unticked until the person ticks it): the
@@ -1184,8 +1186,8 @@ namespace Semanticus.Engine
             finally { _modelPlanGate.Release(); }
         }
 
-        /// <summary>How long after its latest edit an assistant still counts as working on a row (its gaps between calls run long; the header uses the same minute).</summary>
-        internal static readonly TimeSpan AssistantAtWorkWindow = TimeSpan.FromSeconds(60);
+        /// <summary>How long after its latest edit an assistant still counts as working on a row (its gaps between calls run long; the header uses the same short window, ASSISTANT_ACTIVE_MS; UAT 18 Oct N21: a minute left On it standing after Claude had finished; 45 s since a real drive paused 35 s between calls).</summary>
+        internal static readonly TimeSpan AssistantAtWorkWindow = TimeSpan.FromSeconds(45);
 
         /// <summary>A row the assistant's own tool calls touched a moment ago is flagged for the page to draw as On it, in the assistant's colour, and not "Waiting, ask your assistant"
         /// (hero20 D3: it wrote 213 descriptions under a row that said it waited). Read off the edit history, so a direct tool counts as much as a claimed task.
@@ -1531,7 +1533,12 @@ namespace Semanticus.Engine
             State = ModelPlanItemStates.Done,
         };
 
-        private string PlanMemoryFile() => PlanMemory.FileIn(SidecarDir());
+        /// <summary>Where this model's plan memory lives: the model's one place (LocalEngine.ModelHome.cs). Never the window's start folder, which
+        /// lost it for good (UAT F17: Who does it > Me came back after File > Open Folder); with no folder it waits in the home and moves into
+        /// the folder the model is given.</summary>
+        private string PlanSidecarDir(SessionContext context) => PlaceFor(context)?.Dir;
+
+        private string PlanMemoryFile() => PlanMemory.FileIn(PlanSidecarDir(_sessions.CurrentContext));
 
         /// <summary>Write something into the open model's plan memory. A test seam (neither door reaches it),
         /// so a test can say "this item was on the plan last time" without having to manufacture the evidence
@@ -1583,6 +1590,8 @@ namespace Semanticus.Engine
             /// <summary>The claims (finding keys, object refs) that open tasks handed over from a coverage or cleanup row carry. A held claim is the task's
             /// work, so the row leaves it out; anything that is not held is the row's.</summary>
             public HashSet<string> HeldClaims = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            /// <summary>What tasks the person set aside still hold: the cleanup row leaves these columns out (UAT 18 Oct N22).</summary>
+            public HashSet<string> SetAsideClaims = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             /// <summary>The model's compatibility level, 0 when unknown. "Raise compatibility level" is a row only while it blocks a named capability.</summary>
             public int CompatibilityLevel;
             /// <summary>Score points per readiness finding (ReadinessAnalyzer.Lifts), read only when a finding no row claims is likely, so the
@@ -1598,7 +1607,7 @@ namespace Semanticus.Engine
             /// <summary>The readiness safe findings (<see cref="SharedKeyOf"/>) whose write Model quality raises too: the rule is in both rule sets.</summary>
             public HashSet<string> BpaSharedFindings = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             /// <summary>For each field-name clash (its key, which is the clash finding's object name), the names of the fields that clash:
-            /// what the collisions row hands Find and replace (ModelPlanJump.Find).</summary>
+            /// what the collisions row carries for the assistant (ModelPlanJump.Find).</summary>
             public Dictionary<string, string[]> CollisionNames = new Dictionary<string, string[]>(StringComparer.Ordinal);
             /// <summary>How many reports' use of this model has been read: the sweep is report-aware for these, and
             /// only these (a reading proves nothing about any other report).</summary>
@@ -2157,7 +2166,7 @@ namespace Semanticus.Engine
             return items;
         }
 
-        private const string UnsavedItemId = "ship/unsaved";
+        internal const string UnsavedItemId = "ship/unsaved";
 
         // "Save the changes you have made" is judged on three save counts, each read in a dispatcher turn and none of
         // them late (verifier round 5):
@@ -2396,6 +2405,7 @@ namespace Semanticus.Engine
             var safe = (f.Unused?.Items ?? Array.Empty<UnusedItem>())
                 .Where(i => string.Equals(i.Verdict, "safe", StringComparison.Ordinal))
                 .Where(i => held == null || held.Count == 0 || !held.Contains(i.Ref ?? "\u0001"))   // a column an open task holds is that task's to remove
+                .Where(i => f.SetAsideClaims == null || f.SetAsideClaims.Count == 0 || !f.SetAsideClaims.Contains(i.Ref ?? "\u0001"))   // and one a set-aside task held stays unlisted
                 .ToArray();
             var unticked = f.CleanupUnticked;
             var total = safe.Length + unticked;
@@ -2525,6 +2535,8 @@ namespace Semanticus.Engine
         private static ModelPlanItem PublishItem(PlanFacts f)
         {
             if (f.Session?.HasUnsavedChanges != true || !f.UnsavedEdits) return null;
+            // A kept copy holds every change so far: the save this row asks for has happened, and only publishing is left (UAT 18 Oct N23).
+            if (f.Session.KeptCopyPath != null) return null;
 
             var why = new List<string> { "This model has changes that are not saved yet." };
             if (f.Session.DiskDiverged)
@@ -2792,7 +2804,7 @@ namespace Semanticus.Engine
         private static readonly HashSet<string> PersonOnlyFamilies =
             new HashSet<string>(StringComparer.Ordinal);
 
-        /// <summary>The names a collisions row hands Find and replace: every field of every clash it lists (a clash finding is filed
+        /// <summary>The names a collisions row carries for the assistant (ModelPlanJump.Find): every field of every clash it lists (a clash finding is filed
         /// under the clash's key; any other collision finding names its own object), each name once, at most <see cref="FindNameCap"/>.</summary>
         private static string[] CollidingNames(IEnumerable<ReadinessFinding> findings, IReadOnlyDictionary<string, string[]> clashes)
         {
@@ -2806,7 +2818,7 @@ namespace Semanticus.Engine
             return distinct.Length == 0 ? null : distinct;
         }
 
-        /// <summary>The most names a row hands Find and replace: a long list is no help in a search box.</summary>
+        /// <summary>The most names a row carries: a long list is no help to a reader.</summary>
         internal const int FindNameCap = 40;
 
         /// <summary>The five DAX-rewrite rules whose fix is words the assistant writes (a better formula) and not a change the engine can
@@ -2916,7 +2928,6 @@ namespace Semanticus.Engine
                 Earns = "Renaming or hiding the duplicates lets every word mean one thing, so questions stop landing on the wrong field.",
                 Value = "Copilot answers about the right thing",
                 Section = ModelPlanSections.Meaning,
-                Tool = "search", Label = "Find and replace",
                 Change = "rename it or hide it",
                 CaseOne = "name collision", CaseMany = "name collisions",
             },
@@ -2928,7 +2939,6 @@ namespace Semanticus.Engine
                 Earns = "Clear names let a reader, and an assistant, pick the right field without asking anyone.",
                 Value = "readers understand them",
                 Section = ModelPlanSections.Meaning,
-                Tool = "search", Label = "Find and replace",
                 Change = "give it a clearer name",
                 CaseOne = "unclear name", CaseMany = "unclear names",
             },
@@ -3028,7 +3038,7 @@ namespace Semanticus.Engine
                 Earns = "A rewrite makes them faster and lets a genuine problem show up instead of hiding.",
                 Value = "faster, honest calculations",
                 Section = ModelPlanSections.Trust,
-                Tool = "daxlab", Label = "Queries",
+                Tool = "query", Label = "Query",
                 CaseOne = "formula", CaseMany = "formulas",
             },
             ["limits"] = new ProposalWords
@@ -3049,7 +3059,7 @@ namespace Semanticus.Engine
                 Earns = "One written measure fixes the answer, and it is the thing Copilot will reach for.",
                 Value = "one answer per question",
                 Section = ModelPlanSections.Numbers,
-                Tool = "daxlab", Label = "Queries",
+                Tool = "query", Label = "Query",
                 Change = "add an explicit measure for it", ChangePrefix = "+ ",
                 CaseOne = "column totalled by accident", CaseMany = "columns totalled by accident",
             },
@@ -3261,6 +3271,8 @@ namespace Semanticus.Engine
         private PlanRankRun _planRankLanded;     // the newest run that landed uncancelled: the last known order
         private int _planRankRunsStarted;
         private int _planRankTrackingAttached;
+        private Action _planRankWanted;          // the newest ask a read wanted while a run for the same revision was still out (started when that run lands)
+        private string _planRankWantedKey;
 
         /// <summary>How many background ranking runs this engine has started. A free session must leave it at zero.</summary>
         internal int PlanRankRunsStartedForTest => Volatile.Read(ref _planRankRunsStarted);
@@ -3351,9 +3363,22 @@ namespace Semanticus.Engine
                 }
                 else if (!jevSettling)
                 {
-                    StartPlanRankRunLocked(key, s, decisions, point, isPro, enabled, fence,
-                        PlanRankPoint.Snapshot(f.ModelName, f.Tables_, f.Columns_, f.Measures_, f.Connected, scored),
-                        PlanRankPoint.Questions(scored));
+                    var snapshot = PlanRankPoint.Snapshot(f.ModelName, f.Tables_, f.Columns_, f.Measures_, f.Connected, scored);
+                    var questions = PlanRankPoint.Questions(scored);
+                    if (run != null && !run.Done && !run.Cancel.IsCancellationRequested
+                        && string.Equals(run.SessionId, s.Id, StringComparison.Ordinal) && run.Revision == s.Revision)
+                    {
+                        // A different list of rows (a Jev line landed, a row was skipped) for the SAME model revision. The ask in flight is
+                        // already charged, so cancelling it buys nothing: it was ~19 percent of a live run's tokens (15 Oct). Let it land,
+                        // then ask once for the newest list. Reads in between only replace what is wanted.
+                        _planRankWantedKey = key;
+                        _planRankWanted = () => StartPlanRankRunLocked(key, s, decisions, point, isPro, enabled, fence, snapshot, questions);
+                    }
+                    else
+                    {
+                        _planRankWanted = null; _planRankWantedKey = null;
+                        StartPlanRankRunLocked(key, s, decisions, point, isPro, enabled, fence, snapshot, questions);
+                    }
                 }
                 if (landed == null)
                 {
@@ -3403,8 +3428,23 @@ namespace Semanticus.Engine
                     current = ReferenceEquals(_planRankRun, run);
                     // A cancelled run is about a model that moved: it decided nothing, so it is forgotten and the
                     // next read asks for the model that is open now.
-                    if (cancelled) { if (current) _planRankRun = null; }
+                    if (cancelled) { if (current) { _planRankRun = null; _planRankWanted = null; _planRankWantedKey = null; } }
                     else _planRankLanded = run;
+
+                    // A read asked about a newer list while this one was out: ask once for it now, if the model has not moved on.
+                    if (current && !cancelled && _planRankWanted != null)
+                    {
+                        var next = _planRankWanted;
+                        var nextKey = _planRankWantedKey;
+                        _planRankWanted = null; _planRankWantedKey = null;
+                        var live = _sessions.Current;
+                        if (!string.Equals(nextKey, run.Key, StringComparison.Ordinal) && live != null
+                            && string.Equals(live.Id, run.SessionId, StringComparison.Ordinal) && live.Revision == run.Revision)
+                        {
+                            next();
+                            return;   // the new run tells the page when it lands; this one's order already stands for the rows it covered
+                        }
+                    }
                 }
 
                 // Tell the page once, whatever it said: "Jev is looking" has to go away either way.
@@ -3718,14 +3758,16 @@ namespace Semanticus.Engine
             }
 
             // The service's Ask your data is read the same way the words' is: both readings are named, the question
-            // is first only where the line plainly asks, and the person picks; it goes to Queries where the tier has
-            // no Ask your data. The question reading keeps the SERVICE'S OWN confidence, never a fixed 1, wherever it
+            // is first only where the line plainly asks, and the person picks; it goes to the same Query page
+            // where the tier has no question box. The question reading keeps the SERVICE'S OWN confidence, never a fixed 1, wherever it
             // sits, so a task read first carries the service's number on 'other'.
             if (string.Equals(tool, AskRouteCatalog.DataTool, StringComparison.Ordinal))
                 return AskRoutePoint.Readings(result, text, askData, questionConfidence: confidence);
 
-            result.Tool = tool;
-            result.Area = AskRouteCatalog.AreaOf(tool);
+            // The service chose among the word groups; a person and the assistant are sent to the PAGE (Query for both of
+            // the Query groups).
+            result.Tool = AskRouteCatalog.PageOf(tool);
+            result.Area = AskRouteCatalog.AreaOf(result.Tool);
             result.Fallback = null;
             return result;
         }

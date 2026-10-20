@@ -114,6 +114,11 @@ namespace Semanticus.Tests
             var f = new DecisionFixture(pro ? TestEntitlements.Pro : TestEntitlements.Free);
             await _templates.OpenCopyAsync(f, "measures-" + tables + "x" + perTable, b => BuildMeasuresAsync(b, tables, perTable), file);
             f.UseNull();
+            // These tests are about how a run that stops at its cap reports its progress and carries on. The real cap is a whole model now
+            // (JevTableBatch.MaxObjectsPerRun), so they ask for the sixty a run took before m16/jev-batch.
+            f.Engine.MeasuresCapForTest = 60;
+            f.Engine.ColumnFormatCapForTest = 60;
+            f.Engine.JevPerTableForTest = true;
             return f;
         }
 
@@ -132,6 +137,11 @@ namespace Semanticus.Tests
             var f = new DecisionFixture(pro ? TestEntitlements.Pro : TestEntitlements.Free);
             await _templates.OpenCopyAsync(f, "columns-" + tables + "x" + perTable, b => BuildColumnsAsync(b, tables, perTable), file);
             f.UseNull();
+            // These tests are about how a run that stops at its cap reports its progress and carries on. The real cap is a whole model now
+            // (JevTableBatch.MaxObjectsPerRun), so they ask for the sixty a run took before m16/jev-batch.
+            f.Engine.MeasuresCapForTest = 60;
+            f.Engine.ColumnFormatCapForTest = 60;
+            f.Engine.JevPerTableForTest = true;
             return f;
         }
 

@@ -323,6 +323,14 @@ namespace Semanticus.Engine
         {
             // The sign-in may wait for a person for a while, and for ever when they close the browser: it ends on Cancel, or on its own after the limit. The read of the
             // schema after it ends on Cancel only, so a big database is never cut short by a sign-in clock.
+            // A server the person typed in Studio is theirs; an assistant's is asked about like any other new host. Asked before the sign-in
+            // clock starts, so a question the person is slow to answer does not use up the time the sign-in has. The offline seams stand in
+            // for the whole network, so they ask nothing.
+            if (StartPlanSchemaReaderCtForTest == null && StartPlanSchemaReaderForTest == null)
+            {
+                var hostRefusal = await SqlHostRefusalAsync(server, database, request.AuthMode, request.TenantId, origin, typedByPerson: !DeployGuard.IsAgent(origin)).ConfigureAwait(false);
+                if (hostRefusal != null) throw new InvalidOperationException(hostRefusal);
+            }
             using var signIn = CancellationTokenSource.CreateLinkedTokenSource(cancel);
             signIn.CancelAfter(StartReadLimitForTest ?? StartSignInLimit);
             if (StartPlanSchemaReaderCtForTest != null || StartPlanSchemaReaderForTest != null)

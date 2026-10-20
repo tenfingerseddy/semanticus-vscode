@@ -80,10 +80,10 @@ test('B3 the question\'s statement holds only while the rows on screen were prod
 });
 
 test('B3 the Queries page shows the statement through that ownership, not through the editor alone', () => {
-  const lab = src('daxlab.tsx');
+  const lab = src('daxlab.tsx') + src('query.tsx');
   assert.match(lab, /answerOwnsResult\(/, 'the page asks whether the rows are the answer\'s');
   assert.doesNotMatch(lab, /current=\{ask\.answer\?\.dax \? askOwns : !res\}/, 'the statement is no longer bound to editor ownership alone');
-  assert.match(lab, /<AskLines ask=\{ask\} current=\{ask\.answer\?\.dax \? answerRows : !res\}/);
+  assert.match(lab, /<AskLines ask=\{q\.askBox\} current=\{q\.askState\.answer\?\.dax \? q\.answerRows : !q\.res\}/);
 });
 
 // ── B4 ────────────────────────────────────────────────────────────────────────────────────────────────────

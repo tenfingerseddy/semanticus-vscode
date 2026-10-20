@@ -176,6 +176,7 @@ export function plainProblems(text: unknown): string {
 // The spellings worth hand-writing, where the generic humaniser reads flat. Everything else falls through
 // to uiLabel, so no engine id can reach the audit trail (UX-02 / UX-06, D-209).
 const OP_LABEL: Record<string, string> = {
+  explain_value: 'Explained a number',
   blame_value: 'What moved this number?',
   apply_plan: 'Changes applied',
   'apply_plan-item': 'One change applied',
@@ -186,6 +187,8 @@ const OP_LABEL: Record<string, string> = {
   create_relationship: 'New relationship',
   compare_baseline: 'Baseline comparison',
   deploy_live: 'Published to a live model',
+  apply_model_diff: 'Published changes',
+  rollback_push: 'Undid a publish',
   save_model: 'Model saved',
 };
 
@@ -302,10 +305,24 @@ const EDIT_LABEL_WORDS: Record<string, string> = {
   'mark date table': 'Marked the date table',
   'bpa: apply all auto-fixes': 'Applied the safe quality fixes',
 };
+// A Properties-grid edit is labelled "set <Property>" ("set Expression", "set IsHidden on 3 objects"). The property name is the engine's, so it is
+// put into words here. Display only: the stored label is never edited.
+const GRID_PROPERTY_PHRASE: Record<string, string> = {
+  Expression: 'a formula', Description: 'the description', IsHidden: 'whether it is hidden', FormatString: 'the number format',
+  DisplayFolder: 'the folder', Name: 'the name', DataType: 'the data type', DataCategory: 'the data category', SortByColumn: 'the sort order',
+  SummarizeBy: 'how it adds up', IsActive: 'whether the link is active', CrossFilteringBehavior: 'the filter direction',
+};
+function gridEditWords(raw: string): string | null {
+  const m = /^set (\w+)(?: on (\d+) objects)?$/.exec(raw);
+  if (!m) return null;
+  const phrase = GRID_PROPERTY_PHRASE[m[1]]
+    ?? 'the ' + m[1].replace(/^Is(?=[A-Z])/, '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+  return 'Changed ' + phrase + (m[2] ? ' on ' + m[2] + ' objects' : '');
+}
 /** An undo step's engine label in plain words. */
 export function editWords(label: unknown): string {
   const raw = String(label ?? '').trim();
-  return EDIT_LABEL_WORDS[raw.toLowerCase()] ?? raw;
+  return EDIT_LABEL_WORDS[raw.toLowerCase()] ?? gridEditWords(raw) ?? raw;
 }
 
 /** The audit trail's name for a model operation. */
@@ -388,7 +405,7 @@ export const SIGN_IN_MODES: readonly SignInMode[] = [
   { value: 'interactive', label: 'Sign in in a browser', detail: 'A Microsoft sign-in page opens. Pick the account that can see this model.' },
   { value: 'devicecode', label: 'Use a code on another device', detail: 'You get a short code to type on your phone or another computer.' },
   { value: 'azcli', label: 'Use the Azure command line', detail: 'Uses the account the Azure command line on this computer is already signed in as.' },
-  { value: 'serviceprincipal', label: 'Use a service account', detail: 'Uses a set-up robot account rather than a person. Someone has to set it up on this computer first.' },
+  { value: 'serviceprincipal', label: 'Service identity', detail: 'Uses a set-up robot account rather than a person. Someone has to set it up on this computer first.' },
 ];
 
 /** The engine's spelling aliases, folded onto the one choice the picker shows for them. */
@@ -465,7 +482,7 @@ const KNOWN_SIGN_IN_PROBLEMS: { match: RegExp; lead: string; fix: SignInFix; fix
   },
   {
     match: /AZURE_CLIENT_ID|AZURE_CLIENT_SECRET|AZURE_TENANT_ID|client secret/i,
-    lead: 'No service account is set up on this computer, so signing in that way cannot work. Pick another way to sign in.',
+    lead: 'No service identity is set up on this computer, so signing in that way cannot work. Pick another way to sign in.',
     fix: 'chooseAccount', fixLabel: 'Choose a different account',
   },
   {

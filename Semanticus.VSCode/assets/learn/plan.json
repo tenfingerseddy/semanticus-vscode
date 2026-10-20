@@ -10,6 +10,7 @@
       "how": null, "wait": "read" },
     { "place": "plan", "focus": null, "press": null,
       "say": "Each row says what is wrong and why it matters. This model has a few gaps on purpose.",
+      "sayOwn": "Each row says what is wrong and why it matters.",
       "how": null, "wait": "read" },
     { "place": "plan", "focus": null, "press": "run-plan",
       "say": "Run the plan does every ready row together. This tour only shows you the button.",

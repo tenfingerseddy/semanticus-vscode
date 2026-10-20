@@ -103,7 +103,8 @@ await check('the slot says one thing, in a fixed order', () => {
   // Never empty (Kane, 13 Oct): with no step, whoever drives and whether or not an assistant is connected, one quiet line holds the place.
   const quietLine = { kind: 'quiet', text: 'Nothing waiting for your assistant' };
   assert.deepEqual(C.slotOf({ ...base, hasNext: false }), quietLine);
-  assert.deepEqual(C.slotOf({ ...base, hasNext: false, driver: { ...base.driver, connected: false } }), quietLine);
+  // With no assistant connected the one quiet line offers the connection instead (UAT F8): the page speaks to the person.
+  assert.deepEqual(C.slotOf({ ...base, hasNext: false, driver: { ...base.driver, connected: false } }), { kind: 'connect', text: C.CONNECT_WORDS });
   assert.deepEqual(C.slotOf({ ...base, hasNext: false, driver: { ...base.driver, mode: 'iDrive' } }), quietLine);
   assert.equal(C.slotOf({ ...base, hasNext: false, driver: { ...base.driver, assistantWorking: true } }).kind, 'work', 'the assistant is working: its work, not the quiet line');
   assert.equal(C.slotOf({ ...base, driver: { ...base.driver, wheel: true } }).kind, 'wheel');
@@ -306,6 +307,32 @@ await check('no string on the calm page has an em dash or "one click"', () => {
     assert.ok(!text.includes('—'), `${f} has an em dash`);
     assert.ok(!/one click/i.test(text), `${f} says one click`);
   }
+});
+
+await check('while the press waits for Jev the slot says what Jev is choosing, with the real count, and no "n of total" that cannot move (m16/jev-batch)', () => {
+  const held = ['r1', 'r2', 'r3'];
+  const items = held.map((id) => item(id, 'Set how the columns add up', 'semanticus', 'ready'));
+  let steps = {};
+  const ev = (phase, itemIds, extra = {}) => ({ runId: 'x', itemIds, phase, wave: 2, ms: 10, ...extra });
+  const words = 'Jev is choosing 444 settings';
+  // a wait that names no row still says what it waits for: the sentence belongs to the press
+  const waiting = ev('waitjev', [], { waitedSeconds: 3, choosing: words });
+  assert.equal(P.choosingOf(waiting), words);
+  const w = C.pressWords(held, steps, items, false, 0, P.choosingOf(waiting));
+  assert.equal(w.verb, words);
+  assert.equal(w.count, '', 'the counter is not shown while the wait is for Jev');
+  // a wait that names rows folds into their steps as before, and the sentence is not repeated on every waiting row
+  steps = P.foldProgress(steps, ev('waitjev', held, { waitedSeconds: 3, choosing: words }));
+  assert.equal(P.stepWords(steps.r1), 'Waiting for Jev, 0:03');
+  assert.equal(P.stepNote(steps.r1), null, 'the sentence is the header slot\'s, not repeated on every waiting row');
+  // Jev answers: the next step of the press clears the sentence and the count is back
+  assert.equal(P.choosingOf(ev('apply', ['r1'], { changes: 4 })), null);
+  assert.equal(P.choosingOf(ev('waitjev', held, { waitedSeconds: 4 })), null, 'a wait with nothing out says nothing');
+  steps = P.foldProgress(steps, ev('apply', ['r1'], { changes: 4 }));
+  const after = C.pressWords(held, steps, items, false, 0, null);
+  assert.match(after.count, /^1 of 3$/u);
+  assert.equal(P.choosingOf(null), undefined);
+  for (const text of [w.verb, 'Jev is choosing']) { assert.ok(!text.includes('\u2014')); assert.ok(!/one click/iu.test(text)); }
 });
 
 await check('a row the assistant is working on reads On it, not Waiting (hero20 D3)', () => {

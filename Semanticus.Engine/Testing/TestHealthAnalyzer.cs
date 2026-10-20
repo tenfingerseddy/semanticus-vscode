@@ -15,6 +15,13 @@ namespace Semanticus.Engine
         public string TargetRef { get; set; }
         public Verdict Verdict { get; set; }
         public string Message { get; set; }
+        public string Detail { get; set; }           // the raw words behind a plain Message (a driver error), for the Details view
+        /// <summary>Set when the person accepted the exact difference this check saw. The verdict stays what the check found (a difference);
+        /// the check is counted as accepted: not a failure, and never a pass.</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public CheckWaiver Waiver { get; set; }
+        /// <summary>A waiver is stored for this check, but the difference it saw is not the one that was accepted, so it differs again.</summary>
+        public bool WaiverLapsed { get; set; }
         public bool Missing { get; set; }            // the bound target vanished — surfaced, never silently dropped
 
         // ---- drill-down evidence (carried on the LIVE run only; the lean history record never stores it) ----
@@ -54,6 +61,15 @@ namespace Semanticus.Engine
         /// says what it was going to ask with. Absent, never blank, when the check has neither.</summary>
         public string Filter { get; set; }
         public string SourceLabel { get; set; }
+
+        /// <summary>The server and database this check reads its SQL from, so the card can show where it goes. Absent when
+        /// the check never got as far as choosing one.</summary>
+        public string Server { get; set; }
+        public string Database { get; set; }
+
+        /// <summary>Set when the check names a server the person has not saved on this machine. Nothing was sent to it: no
+        /// sign-in token was made and no SQL ran. The card offers to open the source form with this host filled in.</summary>
+        public string UnsavedServer { get; set; }
 
         /// <summary>Where the check was AUTHORED versus where this run actually ASKED. Authoring is a record, not
         /// a pin — the run always uses the current connection — so both travel and the UI can say "authored
@@ -109,6 +125,8 @@ namespace Semanticus.Engine
         public int Suspect { get; set; }
         public int NotVerifiable { get; set; }
         public int Missing { get; set; }
+        /// <summary>Checks whose difference the person accepted. Not in <see cref="Passed"/> and not in <see cref="Failed"/>: they leave the grade's count.</summary>
+        public int Accepted { get; set; }
         public int RootFailures { get; set; }
         public TestCategoryHealth[] Categories { get; set; } = Array.Empty<TestCategoryHealth>();
     }
@@ -154,7 +172,9 @@ namespace Semanticus.Engine
             // against anything, so it can move neither the grade nor the coverage denominator dishonestly —
             // it gets its own loud count instead (hard thing #4: the suite rots visibly).
             var missing = reconciles.Count(o => o.Missing);
-            var reconVerdicts = reconciles.Where(o => !o.Missing).Select(o => o.Verdict).ToList();
+            // An accepted difference is the person's decision: it is no failure, and it is no pass, so it leaves the count the grade is worked out from.
+            var accepted = reconciles.Count(o => !o.Missing && o.Waiver != null);
+            var reconVerdicts = reconciles.Where(o => !o.Missing && o.Waiver == null).Select(o => o.Verdict).ToList();
 
             var cats = new List<TestCategoryHealth>();
             foreach (var (name, weight) in Categories)
@@ -178,7 +198,9 @@ namespace Semanticus.Engine
                     // Dormant unless something DECIDED: a category that is all-NotVerifiable (offline probes)
                     // must not average in at 100 — that would grade the un-checked as healthy (I1).
                     HasChecks = decisive > 0,
-                    Checked = v.Count,
+                    // An accepted difference was decided by the person, so it is covered: it counts in Checked (and in coverage below) while it leaves
+                    // the pass and fail counts the score is worked out from.
+                    Checked = v.Count + (name == "Correctness" ? accepted : 0),
                     Passed = pass,
                     Failed = fail,
                     Suspect = susp,
@@ -212,7 +234,7 @@ namespace Semanticus.Engine
             int checkedAll = cats.Sum(c => c.Checked);
             int nvAll = cats.Sum(c => c.NotVerifiable);
             int suspAll = cats.Sum(c => c.Suspect);
-            var decisiveAll = cats.Sum(c => c.Passed + c.Failed);
+            var decisiveAll = cats.Sum(c => c.Passed + c.Failed) + accepted;
             var coveragePct = checkedAll > 0 ? Math.Round(100.0 * decisiveAll / checkedAll, 1) : 0.0;
             // A letter may not outrun how much of the suite was actually decided. Grade A on 17% coverage
             // is a lie even when every decided check passed: the same thresholds that make a score an A
@@ -235,6 +257,7 @@ namespace Semanticus.Engine
                 Suspect = suspAll,
                 NotVerifiable = nvAll,
                 Missing = missing,
+                Accepted = accepted,
                 // E4 demotes intra-relationship cascades and the coordinator demotes cross-MEASURE cascades
                 // (DemoteDependentFailures) before this runs, so every surviving Fail IS a root cause. The
                 // relationship→measure cascade is still a later refinement; until then those Fails count as

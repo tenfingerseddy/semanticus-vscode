@@ -106,5 +106,14 @@ namespace Semanticus.Engine
 
         /// <summary>The Studio reports its mode (claudeDrives or iDrive) and state (idle, claudeDriving or personHasWheel).</summary>
         public Task setStudioDriver(string mode, string state) => _engine.SetStudioDriverAsync(mode, state);
+
+        /// <summary>A query the person ran as written in the Query page is a row of the notebook. Person-only: the assistant's own asks are kept by ask_data, and the rest of its work by query_notebook.</summary>
+        public Task<string> recordQueryRun(string dax, int rowCount, double elapsedMs, string headline = null, string replaces = null) => _engine.RecordQueryRunAsync(dax, rowCount, elapsedMs, headline, "human", replaces);
+
+        /// <summary>The page notes what it knows of a notebook row: its number as shown, the line for a part that could not apply, the times from Time all. Person-only.</summary>
+        public Task<bool> noteQueryRow(string id, QueryRowNote note) => _engine.NoteQueryRowAsync(id, note);
+
+        /// <summary>The window reports the person's personality, sounds and volume settings. Person-only: an assistant sets them with set_personality_settings, which goes through the gate.</summary>
+        public Task reportHostSettings(string personality, bool sounds, int soundVolume) => _engine.ReportHostSettingsAsync(personality, sounds, soundVolume);
     }
 }

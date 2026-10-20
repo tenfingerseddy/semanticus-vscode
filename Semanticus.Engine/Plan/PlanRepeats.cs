@@ -744,7 +744,7 @@ namespace Semanticus.Engine
         {
             if (!bound.Nowhere) return TryWritePlanMemory(bound, change);
             if (!PlanMemoryStillOpen(bound)) return false;
-            var held = _sessionPlanTasks.GetOrCreateValue(bound.Context);
+            var held = HeldPlanState(bound);
             lock (held) { change(held); PlanTasks.Trim(held); }
             return true;
         }

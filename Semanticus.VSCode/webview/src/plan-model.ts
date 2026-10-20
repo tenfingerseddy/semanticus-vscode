@@ -179,7 +179,7 @@ export interface PlanTarget {
   itemId?: string | null;
 }
 
-/** `find` is set on the collisions row only: the names Find and replace opens with (ModelPlanJump.Find). */
+/** `find` is set on the collisions row only: the clashing names, for the assistant (ModelPlanJump.Find). No page opens with them. */
 export interface PlanJump { tool: string; label: string; find?: string[] | null }
 /** One way to start a model, offered by an empty model's Plan (ModelPlanStart). */
 export interface PlanStart { id: string; label: string; line: string; jump: PlanJump; op?: string }
@@ -810,9 +810,28 @@ export function objectWords(ref: string | null | undefined): string {
  * Named objects: all of them, as before. Otherwise a count and the first few tables with what is in each, then how
  * many tables are left; with no tables, the first few objects the change lines name, then how many more.
  */
+/** The first few names and "and 7 more": an opened row is a short read, not a list of every object (UAT P13). */
+export function firstNames(names: readonly string[], few = 3): string {
+  const more = names.length - few;
+  return more > 0 ? `${names.slice(0, few).join(', ')} and ${more} more` : names.join(', ');
+}
+
+/** A row's why in plain words: the engine's brief to the assistant names tools (get_fix_prompt (system bpa), apply_fix, delete_objects), and a person
+ *  reads none of that. A sentence naming a tool is dropped, and what is left is cut at two sentences (UAT F16). */
+export function plainWhy(why: readonly string[] | null | undefined, sentences = 2): string {
+  const kept: string[] = [];
+  for (const w of why ?? []) {
+    for (const part of String(w ?? '').split(/(?<=[.!?])\s+/u)) {
+      const t = part.trim();
+      if (t && !/\b[a-z]+(?:_[a-z]+)+\b|\(system \w+\)/u.test(t)) kept.push(t);
+    }
+  }
+  return kept.slice(0, sentences).join(' ');
+}
+
 export function objectsLine(item: Pick<PlanItem, 'objects' | 'touches' | 'tables' | 'diff'>, few = 3): string {
   const named = (item.objects ?? []).filter(Boolean);
-  if (named.length) return named.map(objectWords).join(', ');
+  if (named.length) return firstNames(named.map(objectWords), few);
   const count = /^\d[\d,]*\s+\S/u.test(item.touches ?? '') ? String(item.touches).split(/[;.]/u)[0].trim() : '';
   const tables = (item.tables ?? [])
     .map((t) => typeof t === 'string' ? { name: t, what: '' } : { name: t.name, what: t.what ?? '' })
@@ -1286,11 +1305,15 @@ export const DOER_ORDER: PlanDoer[] = ['semanticus', 'you', 'assistant'];
 export const NO_LONGER_NEEDED = 'No longer needed';
 /** The short form of a note too long for the state cell, so a Waiting row or a Ready row nobody can take says who and what to do without a hover. The full
  *  note stays on hover. Null when the note has no short form (the cell then shows it only when it fits). */
-export function stateNoteShort(note: string | null | undefined): string | null {
+export function stateNoteShort(note: string | null | undefined, assistantConnected = true): string | null {
   if (!note) return null;
+  // Plain words, never a phrase that reads like a button: "ask your assistant" was text that did nothing when pressed (UAT K7), and with no
+  // assistant at all it sent the person to someone who is not there (UAT F8).
+  const toAssistant = assistantConnected ? 'for your assistant' : 'needs an assistant';
   const waits = /^Waiting for (you|your assistant|Semanticus|another task)\b/u.exec(note);
-  if (waits) return /^Waiting for your assistant\. Ask it/u.test(note) ? 'ask your assistant' : `for ${waits[1]}`;
-  if (/^Ask your assistant to run the plan/u.test(note) || /^You paused your assistant's tasks\. Ask your assistant/u.test(note)) return 'ask your assistant';
+  if (waits) return /^Waiting for your assistant\. Ask it/u.test(note) ? toAssistant : `for ${waits[1]}`;
+  if (/^Ask your assistant to run the plan/u.test(note)) return toAssistant;
+  if (/^You paused your assistant's tasks\. Ask your assistant/u.test(note)) return 'paused by you';
   return null;
 }
 
@@ -1311,8 +1334,8 @@ export const STATE_WORD_LABEL: Record<PlanStateWord, string> = {
   checking: 'Applied, checking', done: 'Done', set_aside: 'Set aside',
 };
 
-/** The engine flags a row assistantAtWork for 60 s after the assistant's last edit (AssistantAtWorkWindow). The page reads again just after, so On it ends by itself. */
-export const AT_WORK_REREAD_MS = 61_000;
+/** The engine flags a row assistantAtWork for 45 s after the assistant's last edit (AssistantAtWorkWindow). The page reads again just after, so On it ends by itself. */
+export const AT_WORK_REREAD_MS = 46_000;
 
 /** The state word as sent. An engine older than slice 7 sends none; its own status is then read, never guessed past. */
 export function stateWordOf(item: PlanItem): PlanStateWord {
@@ -1428,9 +1451,9 @@ export const isTask = (item: PlanItem): boolean => item.id.startsWith('pt-');
  *  holds the two together. */
 export const PAGE_AREA: Record<string, string> = {
   plan: 'Plan', history: 'Plan',
-  data: 'Explore', askdata: 'Explore', diagram: 'Explore', lineage: 'Explore', stats: 'Explore',
-  search: 'Edit', daxlab: 'Edit', instructions: 'Edit', advmodels: 'Edit', mcode: 'Edit', knowledge: 'Edit',
-  bpa: 'Review', readiness: 'Review', tests: 'Review', docs: 'Review', evidence: 'Review',
+  data: 'Explore', query: 'Explore', askdata: 'Explore', diagram: 'Explore', lineage: 'Explore', stats: 'Explore',
+  search: 'Edit', daxlab: 'Explore', instructions: 'Edit', advmodels: 'Edit', mcode: 'Edit', knowledge: 'Edit',
+  bpa: 'Review', readiness: 'Review', copilottest: 'Review', tests: 'Review', docs: 'Review', evidence: 'Review',
   deploy: 'Publish',
   workflows: 'Workflows',
 };
@@ -1881,7 +1904,7 @@ export interface RunPhase { step: RunStep; changes?: number; reason?: string; ms
 
 /** plan/runProgress (the wire contract). `itemIds` is every row the step is about: the one batch check names the rows of the wave.
  *  `ms` is milliseconds since the press started, at the moment the step began (the engine's one stopwatch for the press). */
-export interface RunProgressEvent { runId: string; itemIds: string[]; phase: 'work' | 'waitjev' | 'apply' | 'check' | 'done' | 'skipped'; wave: number; changes?: number; reason?: string; ms: number; waitedSeconds?: number }
+export interface RunProgressEvent { runId: string; itemIds: string[]; phase: 'work' | 'waitjev' | 'apply' | 'check' | 'done' | 'skipped'; wave: number; changes?: number; reason?: string; ms: number; waitedSeconds?: number; choosing?: string }
 
 const asEvent = (v: unknown): RunProgressEvent | null => {
   const e = v as Partial<RunProgressEvent> | null;
@@ -1905,6 +1928,16 @@ export function foldProgress(steps: Readonly<Record<string, RunPhase>>, raw: unk
     };
   }
   return next;
+}
+
+/** What Jev is being asked right now, said by the engine while the press waits for it ("Jev is choosing how 48 columns add up and what Copilot
+ *  sees in 396 fields"). A waitjev event says it (or says nothing is out: null); any other step of the press ends it. Undefined for anything else.
+ *  It belongs to the press, not to a row, because a wait can name no row at all (the rows Jev looks at again may be none). */
+export function choosingOf(raw: unknown): string | null | undefined {
+  const e = asEvent(raw);
+  if (!e) return undefined;
+  if (e.phase === 'waitjev') return typeof e.choosing === 'string' && e.choosing.trim() ? e.choosing.trim() : null;
+  return null;
 }
 
 /** "0:08": seconds as minutes and seconds. */

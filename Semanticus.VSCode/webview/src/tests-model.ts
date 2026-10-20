@@ -2,11 +2,32 @@
 // what the engine sent into the words and states the page shows, so the wording can be tested without a
 // browser (test/tests-reading-rules.test.mjs runs this file). The page itself only lays these out.
 
-export type ResultChip = 'Pass' | 'Differs' | 'Could not check' | 'Off' | 'Not run';
+/**
+ * Does this change notice make the last run's results old? A save and a publish that landed tell the window too, with a notice that carries no change;
+ * they move nothing in the model the checks read. Anything else, an undo or redo included, does (UAT recheck 19 Oct, D3).
+ */
+export function makesResultsOld(n: { label?: string; replay?: string; deltas?: unknown[] | null }): boolean {
+  if (n.replay) return true;
+  return !((n.label === 'save' || n.label === 'publish') && !(n.deltas?.length));
+}
+
+// 'Accepted' is a check that differs and whose exact difference the person accepted (Waive). It is never a pass.
+export type ResultChip = 'Pass' | 'Differs' | 'Accepted' | 'Could not check' | 'Off' | 'Not run';
+
+/** "By you on 18 Oct. Known rounding.": who accepted a difference, when, and the note if there is one. */
+export function acceptedByLine(w?: { by?: string; when?: string; note?: string | null } | null): string {
+  if (!w) return '';
+  const who = w.by === 'agent' ? 'your assistant' : 'you';
+  const d = w.when ? new Date(w.when) : null;
+  const when = d && !Number.isNaN(d.valueOf()) ? ` on ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : '';
+  const note = (w.note ?? '').trim();
+  return `By ${who}${when}.${note ? ' ' + note.replace(/\.$/, '') + '.' : ''}`;
+}
 
 export interface OutcomeLike {
   verdict?: string;
   missing?: boolean;
+  waiver?: object | null;
 }
 
 export interface StoredResult<T> {
@@ -30,8 +51,58 @@ export function resultChip(enabled: boolean, outcome?: OutcomeLike | null): Resu
   if (!outcome) return 'Not run';
   if (outcome.missing) return 'Could not check';
   if (outcome.verdict === 'Pass') return 'Pass';
-  if (outcome.verdict === 'Fail' || outcome.verdict === 'Suspect') return 'Differs';
+  if (outcome.verdict === 'Fail' || outcome.verdict === 'Suspect') return outcome.waiver ? 'Accepted' : 'Differs';
   return 'Could not check';
+}
+
+// ---------------------------------------------------------------------------------------------------
+// The Table row counts row. A table belongs to it only when it has a source to count against (a calculated table never does), and the
+// row exists only when the person mapped a table or a run counted one: a fresh model must not open with a check nobody made.
+// ---------------------------------------------------------------------------------------------------
+export interface CountRowLike {
+  canCount: boolean; source?: string | null; lastVerdict?: string | null; lastModelCount?: number | null; lastSourceCount?: number | null;
+  setWhenUtc?: string | null; lastRunUtc?: string | null; lastMessage?: string | null;
+}
+// A count taken before the person chose this table's source says nothing about the source they chose: it waits for a run.
+const olderThanMapping = (r: CountRowLike) => r.source === 'mapping' && !!r.setWhenUtc && !!r.lastRunUtc && r.setWhenUtc > r.lastRunUtc;
+const lastOf = (r: CountRowLike): CountRowLike => (olderThanMapping(r) ? { canCount: r.canCount, source: r.source } : r);
+/** What the last count says about this row, or nothing when the person chose its source after that count. */
+export const effectiveLastCount = lastOf;
+const countedRow = (r: CountRowLike) => lastOf(r).lastModelCount != null && lastOf(r).lastSourceCount != null;
+const countDiffers = (r: CountRowLike) => countedRow(r) && lastOf(r).lastVerdict !== 'Pass' && lastOf(r).lastModelCount !== lastOf(r).lastSourceCount;
+const countMatches = (r: CountRowLike) => countedRow(r) && (lastOf(r).lastVerdict === 'Pass' || lastOf(r).lastModelCount === lastOf(r).lastSourceCount);
+const countTried = (r: CountRowLike) => !countedRow(r) && !!lastOf(r).lastVerdict;
+
+export function countsFamilyChip(rows: CountRowLike[]): ResultChip | null {
+  const countable = rows.filter((r) => r.canCount);
+  const made = countable.some((r) => r.source === 'mapping' || countedRow(r) || !!lastOf(r).lastVerdict);
+  if (countable.length === 0 || !made) return null;
+  if (countable.some(countDiffers)) return 'Differs';
+  if (countable.every(countMatches)) return 'Pass';
+  if (countable.some(countTried)) return 'Could not check';
+  return 'Not run';
+}
+
+export function countsFamilyFinding(rows: CountRowLike[]): string {
+  const countable = rows.filter((r) => r.canCount);
+  const n = (x: number) => x.toLocaleString('en-US');
+  const differ = countable.filter(countDiffers).length;
+  if (differ > 0) return `${n(differ)} ${differ === 1 ? 'differs' : 'differ'}`;
+  const tried = countable.filter(countTried).length;
+  if (tried > 0) return `${n(tried)} could not be counted`;
+  if (countable.every(countMatches)) return `All ${n(countable.length)} match`;
+  return `${n(countable.filter((r) => !countedRow(r)).length)} not counted yet`;
+}
+
+/** The line over the table rows. A row tried and not counted says "could not be counted"; one never tried says "not counted yet". The two words are the same ones the row's finding uses. */
+export function countsSummaryLine(rows: CountRowLike[]): string {
+  const n = (x: number) => x.toLocaleString('en-US');
+  const match = rows.filter(countMatches).length;
+  const differ = rows.filter(countDiffers).length;
+  const tried = rows.filter(countTried).length;
+  const waiting = rows.filter((r) => !countedRow(r) && !countTried(r)).length;
+  return [`${n(match)} match`, `${n(differ)} differ`,
+    ...(tried > 0 ? [`${n(tried)} could not be counted`] : []), ...(waiting > 0 ? [`${n(waiting)} not counted yet`] : [])].join(', ');
 }
 
 // What "all" actually includes, group by group, counted. A group with nothing in it is never offered:
@@ -134,6 +205,79 @@ export function sqlSourceBinding(input: SqlSourceBindingInput): SqlSourceBinding
   return { select: '', note: null, needsReplacement: false, keepsInline: false };
 }
 
+// The model's own source is chosen for the person: the one its endpoint is linked to, else the only one saved. A link to a source
+// that is gone chooses nothing (the form says so), and two sources with no link is the person's call.
+export function defaultSqlSourceId(linkedId: string | null | undefined, sources: { id: string }[]): string {
+  if (linkedId && sources.some((s) => s.id === linkedId)) return linkedId;
+  return !linkedId && sources.length === 1 ? sources[0].id : '';
+}
+
+export interface MappingLike { modelTable: string; sqlSourceId?: string | null; schema?: string | null; entity?: string | null; canCount: boolean }
+export interface LinkLike { fromTable: string; fromColumn: string; toTable: string; toColumn: string; isActive?: boolean }
+
+/** A group field in any of the three forms the form holds: column:Table/Column, 'Table'[Column] or Table[Column]. */
+export function groupField(ref: string): { table: string; column: string } | null {
+  const engine = /^column:([^/]+)\/(.+)$/.exec(ref.trim());
+  if (engine) return { table: engine[1], column: engine[2] };
+  const dax = /^(?:'((?:''|[^'])+)'|([A-Za-z0-9_ ]+?))\s*\[(.+)\]$/.exec(ref.trim());
+  return dax ? { table: (dax[1] ?? dax[2]).replace(/''/g, "'"), column: dax[3].replace(/]]/g, ']') } : null;
+}
+
+// A plain SUM of one column, over a table that maps to the chosen source, starts the SQL as a guess the person can change. Anything
+// else (two terms, DIVIDE, a table with no mapping) is not guessed: a wrong guess would be worse than an empty box.
+// With groups chosen the guess selects them first, in the order chosen, then the number, joining each group's table through the model's
+// own links. A group it cannot reach gives no guess, not a SQL that fails on its own defaults.
+export function guessSumSql(expression: string | null | undefined, mappings: MappingLike[], sourceId: string, groupBy: string[] = [], links: LinkLike[] = []): string | null {
+  const m = /^\s*SUM\s*\(\s*(?:'((?:''|[^'])+)'|([A-Za-z0-9_]+))\s*\[([^\]]+)\]\s*\)\s*$/i.exec(expression ?? '');
+  if (!m || !sourceId) return null;
+  const table = (m[1] ?? m[2]).replace(/''/g, "'"), column = m[3];
+  const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+  const mapOf = (t: string) => mappings.find((x) => x.canCount && x.sqlSourceId === sourceId && same(x.modelTable, t) && !!x.entity);
+  const map = mapOf(table);
+  if (!map) return null;
+  const name = (c: string) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(c) ? c : `[${c}]`);
+  const from = (x: MappingLike) => `${x.schema?.trim() || 'dbo'}.${x.entity!.trim()}`;
+  if (groupBy.length === 0) return `SELECT SUM(${name(column)}) FROM ${from(map)}`;
+  const aliases = new Map<string, string>([[table.toLowerCase(), 't0']]);
+  const joins: string[] = [];
+  const cols: string[] = [];
+  for (const ref of groupBy) {
+    const g = groupField(ref);
+    if (!g) return null;
+    const key = g.table.toLowerCase();
+    if (!aliases.has(key)) {
+      const dim = mapOf(g.table);
+      const link = [...links].sort((a, b) => Number(b.isActive !== false) - Number(a.isActive !== false)).find((l) =>
+        (same(l.fromTable, table) && same(l.toTable, g.table)) || (same(l.toTable, table) && same(l.fromTable, g.table)));
+      if (!dim || !link) return null;
+      const factSide = same(link.fromTable, table);
+      const alias = `t${aliases.size}`;
+      aliases.set(key, alias);
+      joins.push(`JOIN ${from(dim)} ${alias} ON t0.${name(factSide ? link.fromColumn : link.toColumn)} = ${alias}.${name(factSide ? link.toColumn : link.fromColumn)}`);
+    }
+    cols.push(`${aliases.get(key)}.${name(g.column)}`);
+  }
+  return [`SELECT ${cols.join(', ')}, SUM(t0.${name(column)})`, `FROM ${from(map)} t0`, ...joins, `GROUP BY ${cols.join(', ')}`].join('\n');
+}
+
+/** A ratio read the way its measure shows it: 0.5812049141182254 with format 0.0% is 58.1%. Any other number, format or text comes back as it was. */
+export function shownNumber(raw: string | null | undefined, formatString: string | null | undefined): string {
+  const text = (raw ?? '').trim();
+  const percent = /^([^%]*)%/.exec(formatString ?? '');
+  if (!percent || !/^-?\d*\.?\d+(?:[eE][-+]?\d+)?$/.test(text)) return text;
+  const places = /\.([0#]+)/.exec(percent[1])?.[1].length ?? 0;
+  return `${(Number(text) * 100).toFixed(places)}%`;
+}
+
+/** A new check's title, made distinct from the titles already saved: "X", then "X 2", "X 3". The check being edited keeps its own. */
+export function distinctTitle(title: string, taken: string[]): string {
+  const used = new Set(taken.map((t) => t.trim().toLowerCase()));
+  if (!used.has(title.trim().toLowerCase())) return title;
+  let n = 2;
+  while (used.has(`${title} ${n}`.toLowerCase())) n++;
+  return `${title} ${n}`;
+}
+
 // ONE validation, read by BOTH buttons in the drawer. "Try it now" used to call straight through with no
 // guard at all, so a check whose named source had gone was tried with the id dropped and the old inline
 // address kept, and the engine read the absent id as permission to use it (Astra, 2026-09-15, round two).
@@ -176,6 +320,8 @@ export function sourceAddedSinceAdd(baseline: string[] | null, current: string[]
 }
 
 export function comparisonSummary(differ: number, match: number, shown: number, total: number): string {
+  // Nothing differs and nothing matched either: every comparison was an unknown, which is not a match.
+  if (differ === 0 && match === 0 && total > 0) return `None of the ${total.toLocaleString()} comparisons could be checked.`;
   const head = differ === 0
     ? `Every comparison matches; ${match.toLocaleString()} of ${total.toLocaleString()}.`
     : `${differ.toLocaleString()} ${differ === 1 ? 'comparison differs' : 'comparisons differ'}; ${match.toLocaleString()} match.`;
@@ -232,27 +378,95 @@ const plainNumber = (value: number, shiftRight = 0): string => {
 
 // What the check allows before it calls a difference a difference. It used to print "1.00e-9 either way
 // or 1.00e-7%", which is a notation nobody typed and nobody reads (Astra, question 3).
-export function toleranceSentence(absolute?: number, relative?: number): string {
+export function toleranceSentence(absolute?: number, relative?: number, expected?: string): string {
   const abs = absolute ?? 0;
   const rel = relative ?? 0;
+  // A trusted "35.8%" is compared as 0.358 at the precision written: half of the last digit is always allowed (the engine's rule),
+  // so that is the allowance Details states, in points.
+  const pct = percentParts(expected);
+  if (pct) {
+    const allowed = Math.max(abs, rel * Math.abs(pct.ratio), pct.halfStep);
+    return `Allowed difference: ${points(allowed * 100)}.`;
+  }
   if (!abs && !rel) return 'Allowed difference: none. The numbers must match exactly.';
   if (!rel) return `Allowed difference: ${plainNumber(abs)}.`;
   if (!abs) return `Allowed difference: ${plainNumber(rel, 2)}%.`;
   return `Allowed difference: ${plainNumber(abs)} or ${plainNumber(rel, 2)}%, whichever is larger.`;
 }
 
+/** "58.1%" as 0.581 with the places written; null when the text is not a percent. */
+function percentParts(text?: string | null): { ratio: number; places: number; halfStep: number } | null {
+  const t = (text ?? '').trim();
+  const m = /^(-?[\d,]*\.?\d+)\s*%$/.exec(t);
+  if (!m) return null;
+  const body = m[1].replace(/,/g, '');
+  const dot = body.indexOf('.');
+  const places = dot < 0 ? 0 : body.length - dot - 1;
+  return { ratio: Number(body) / 100, places, halfStep: 0.5 * Math.pow(10, -(places + 2)) };
+}
+
+/** A gap in percentage points: two places, more only when two would round it to nothing. */
+function points(value: number): string {
+  const size = Math.abs(value);
+  let places = 2;
+  while (places < 8 && Number(size.toFixed(places)) === 0 && size > 0) places++;
+  const text = size.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: places });
+  return `${text} ${text === '1.00' || text === '1' ? 'point' : 'points'}`;
+}
+
+const groupedFigure = (text: string): string => {
+  const t = text.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(t)) return text;
+  const [whole, frac] = t.split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return frac ? `${grouped}.${frac}` : grouped;
+};
+
+/** The model's answer in the trusted number's own format: 35.8% beside 35.8%, a plain number rounded to the places the person wrote plus two. */
+export function shownFigure(actual?: string | null, expected?: string | null): string {
+  if (actual == null) return '';
+  const t = actual.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(t)) return actual;
+  const n = Number(t);
+  const pct = percentParts(expected);
+  if (pct) return `${(n * 100).toLocaleString(undefined, { minimumFractionDigits: pct.places, maximumFractionDigits: pct.places })}%`;
+  const frac = t.split('.')[1] ?? '';
+  if (frac.length <= 4) return groupedFigure(actual);
+  const written = (expected ?? '').split('.')[1]?.replace(/\D.*$/, '').length ?? 0;
+  const places = Math.min(frac.length, Math.max(2, written + 2));
+  return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: places });
+}
+
 // One sentence, leading with the thing the person came to find out. It names numbers only: a trusted-answer
 // check has no SQL side, and this sentence is the same shape for both kinds so neither borrows the other's
 // vocabulary (Astra's journey A: "SQL result NULL" under a SQL header on a check with no SQL at all).
+/** A check that errored says one plain line: the first sentence of what the model said, without markup, "Technical Details" or activity ids (hero 26 N2). */
+export function plainCheckError(message?: string | null): string {
+  const clean = (message ?? '').replace(/<\/?[A-Za-z]{2,8}>/g, '').split(/Technical Details|RootActivityId/i)[0].replace(/\s+/g, ' ').trim();
+  return clean || 'The model could not answer this check.';
+}
+
 export function differenceSentence(
   expected?: string, actual?: string, difference?: number | null, sourceLabel = 'the answer you trust',
 ): string {
+  // A grouped check has no single figure: its answer is the places it compared, and the counts say how they came out.
+  if (difference == null && !expected && !actual) return `The model was compared with ${sourceLabel} place by place.`;
   if (difference == null) {
     return `The model answered ${actual || 'nothing'}, and ${sourceLabel} says ${expected || 'nothing'}. `
       + 'One of these is not a number, so we cannot say by how much they differ.';
   }
   if (difference === 0) return `The model matches ${sourceLabel}.`;
-  return `The model is ${amount(difference)} ${difference < 0 ? 'lower' : 'higher'} than ${sourceLabel}.`;
+  // A percent is told in points, so 0.00025 higher reads as 0.03 points higher beside 35.8%.
+  const gap = percentParts(expected) ? points(difference * 100) : amount(difference);
+  return `The model is ${gap} ${difference < 0 ? 'lower' : 'higher'} than ${sourceLabel}.`;
+}
+
+/** The lead line of a check that compared places (a grouped check). It says how the comparison came out, in the same words the row's chip uses. */
+export function groupedLeadSentence(differ: number, match: number, sourceLabel: string): string {
+  const total = differ + match;
+  if (total === 0) return `The model was compared with ${sourceLabel} place by place.`;
+  if (differ === 0) return `The model matches ${sourceLabel} in ${match === 1 ? 'the 1 place' : `all ${match.toLocaleString()} places`} it compared.`;
+  return `The model differs from ${sourceLabel} in ${differ.toLocaleString()} of ${total.toLocaleString()} ${total === 1 ? 'place' : 'places'}.`;
 }
 
 const sentenceList = (items: string[]) => items.length === 1 ? items[0]
@@ -395,14 +609,11 @@ export function unknownCellText(outcome?: UnknownOutcomeLike | null): string | n
   return 'Could not check. Open this row for why.';
 }
 
-// A grand-total-only comparison is not a weaker check, it is a check that can never pass: rows sitting on
-// the hidden blank row cancel out in the total. The engine's ReconcileContract files groupBy as
-// "required for a verdict" for exactly this reason, so the drawer says the cost before the last click.
+// A grand-total-only comparison can pass: the person asked for the total, and a total that ties is a pass (UAT 1.5.104). The one
+// line says what it does not do, so adding a field to compare each group is an offer, never a warning.
 export function limitedEvidenceNote(groupCount: number): string | null {
   if (groupCount > 0) return null;
-  return 'This compares only the overall total, which proves very little. '
-    + 'A comparison with no groups can show a matching total but can never pass as verified. '
-    + 'Add at least one field to compare across.';
+  return 'This compares the overall total only. Add a field to compare each group as well.';
 }
 
 export const TABLE_COUNT_FOOTER =
@@ -446,4 +657,29 @@ export function runProgressText(progress: RunProgress | null): string {
 export function runProgressPercent(progress: RunProgress | null): number | null {
   if (!progress || !(progress.total > 0)) return null;
   return Math.round((progress.done / progress.total) * 100);
+}
+
+/** A problem row's gap in a few words: the engine's own difference and its count of places, never a share worked out here.
+ *  When the grand total is inside its allowance (or the places pull opposite ways and the total hides it), the row names the
+ *  places and the largest single gap in the check's own units: "2 places differ, up to 500", never a total that hides it. */
+export function gapShort(difference?: number | null, mismatches?: number, rows?: { delta?: number | null; verdict: string; grandTotal?: boolean }[], expected?: string | null): string {
+  const gaps = (rows ?? []).filter((r) => !r.grandTotal && r.verdict === 'Fail' && typeof r.delta === 'number' && r.delta !== 0).map((r) => Math.abs(r.delta as number));
+  const widest = gaps.length > 0 ? Math.max(...gaps) : null;
+  const grandPasses = (rows ?? []).some((r) => r.grandTotal && r.verdict === 'Pass');
+  const total = difference == null ? 0 : Math.abs(difference);
+  if (widest != null && mismatches != null && mismatches > 0 && (grandPasses || widest > total))
+    return `${mismatches.toLocaleString()} ${mismatches === 1 ? 'place differs' : 'places differ'}, up to ${amount(widest)}`;
+  const parts: string[] = [];
+  // A percent check states its gap in points, as the sentence and the card do (UAT round 2, N11).
+  if (difference != null && difference !== 0) parts.push(`${percentParts(expected) ? points(difference * 100) : amount(difference)} ${difference < 0 ? 'lower' : 'higher'}`);
+  if (mismatches != null && mismatches > 1) parts.push(`${mismatches.toLocaleString()} places`);
+  else if (parts.length === 0 && mismatches === 1) parts.push('1 place differs');
+  return parts.length > 0 ? parts.join(' · ') : 'Differs';
+}
+
+/** The one quiet line on a check's card that says where its SQL goes, or null when nothing is known yet. The server is shown as written. */
+export function runsAgainstLine(server?: string | null, database?: string | null): string | null {
+  const host = (server ?? '').trim(), db = (database ?? '').trim();
+  if (!host) return null;
+  return db ? `Runs against ${host}, database ${db}.` : `Runs against ${host}.`;
 }

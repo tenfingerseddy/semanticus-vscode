@@ -79,7 +79,7 @@ namespace Semanticus.Engine
             // come back with no parts, so its history row said "a question that was not run" and could not be
             // asked again. The parts as given are the question; the settled ones replace them when there are any.
             answer.Parts ??= AsAsked(ask);
-            RecordDataQuestion(s, ask, answer, origin);
+            answer.QuestionId = RecordDataQuestion(s, ask, answer, origin);
             PublishAskAnswer(ask, answer, origin);
             return answer;
         }
@@ -150,6 +150,14 @@ namespace Semanticus.Engine
                     return new DataAnswer { Outcome = DataAnswer.NeedsYou, Note = SwitchedOffNote, Unsure = new[] { SwitchedOffNote } };
                 connected = await AlignWithConnectedAsync(cat, live).ConfigureAwait(false);
 
+                // "How many customers bought twice" is a count of customers by their order count: the one query shape cannot say it,
+                // and the nearest part (Order Count as one total) answers another question. The engine reads it itself (P21).
+                var counted = FrequencyReading.TryRead(ask.Question, cat);
+                if (counted != null) return await AnswerFrequencyAsync(counted, ask, cat, cap, live, s).ConfigureAwait(false);
+                // "How many customers did we sell in 2023": a count of the thing itself, never the nearest total (UAT 17 Oct, round 3).
+                var plain = CountReading.TryRead(ask.Question, cat);
+                if (plain != null) return await AnswerCountAsync(plain, ask, cat, cap, live, s).ConfigureAwait(false);
+
                 var values = await QueryValuesAsync(live, s, cat).ConfigureAwait(false);
                 var candidates = ValueMatcher.Match(ask.Question, cat, values);
                 var (jev, note) = await AskJevQueryAsync(ask.Question, cat, candidates, s).ConfigureAwait(false);
@@ -160,6 +168,8 @@ namespace Semanticus.Engine
                 // A bound word before a value read as that one value ("since 2023" read as Year is 2023) is the range it names.
                 QueryGuards.FixBounds(reading, ask.Question);
                 QueryGuards.FixYearIn(reading, ask.Question);
+                // One year mention is one date level: "in 2024" is the calendar year, never Fiscal Year and Year together.
+                QueryGuards.OneYearLevel(reading, ask.Question, cat);
                 var noYear = QueryGuards.NoDataForYear(reading, values);
                 if (noYear != null) { checks.Add(new DataCheck { Name = "filters", Passed = false, Line = noYear }); return Finish(answer, DataAnswer.Refused, checks); }
                 foreach (var (candidate, op) in reading.Filters) AddFilter(reading.Spec, candidate.Column, op, candidate.Values);
@@ -260,6 +270,23 @@ namespace Semanticus.Engine
             {
                 // G4 and G5 first: facts of the model and of the reading, so no call is spent on what the engine can already say.
                 var guard = QueryGuards.Fiscal(ask.Question, spec, cat, reading) ?? QueryGuards.RatioShare(ask.Question, stated);
+                // A question that counts a thing is answered by a count of that thing, never by a sum of its order lines (P21 again).
+                if (guard == null && QueryGuards.CountOfThing(ask.Question, spec, cat) is { } notCount)
+                {
+                    guard = notCount.Line;
+                    if (notCount.Counter != null)
+                        answer.Others = answer.Others.Concat(new[]
+                        {
+                            new DataOther
+                            {
+                                Line = $"Counting the {notCount.Plural} with {notCount.Counter.Name}.",
+                                Instead = notCount.Counter.Name,
+                                Reading = notCount.Counter.Name,
+                                // The same split and narrowing, with the counting measure in place of the one shown.
+                                Parts = CountingParts(answer.Parts, notCount.Counter.Name),
+                            },
+                        }).ToArray();
+                }
                 var (gap, cleared) = guard != null ? (guard, (string)null)
                     : await CheckReadingAsync(ask.Question, cat, stated, s).ConfigureAwait(false);
                 if (gap == null && cleared != null) answer.Note = answer.Note == null ? cleared : answer.Note + " " + cleared;
@@ -267,6 +294,7 @@ namespace Semanticus.Engine
                 {
                     JevQueryReader.Assume(reading, "check", gap, JevQueryReader.RankCaveat);
                     answer.Assumption = JevQueryReader.Compose(reading);
+                    answer.Flagged = gap;
                 }
             }
 
@@ -407,15 +435,32 @@ namespace Semanticus.Engine
 
         /// <summary>Keep the question on the model it was asked of. A model that changed while it was answered keeps
         /// nothing, because the file would belong to the other model. Never fails the ask.</summary>
-        private void RecordDataQuestion(Session s, DataAsk ask, DataAnswer answer, string origin)
+        private string RecordDataQuestion(Session s, DataAsk ask, DataAnswer answer, string origin)
         {
             try
             {
                 var context = _sessions.CurrentContext;
-                if (context.Session == null || context.Session.Id != s.Id) return;
-                DataQuestionStore.Append(DataQuestionFile(context), new DataQuestionRecord
+                if (context.Session == null || context.Session.Id != s.Id) return null;
+                var file = DataQuestionFile(context);
+                var id = "dq-" + Guid.NewGuid().ToString("N").Substring(0, 12);
+                // A folded row opened again is the same row: its answer is brought up to date and the history gains nothing.
+                // A pinned row asked again with a part changed is a new row: the pinned question stays as it was (UAT 17 Oct, F37).
+                var keptAsIs = !string.IsNullOrWhiteSpace(ask.RecordAs) && file != null && DataQuestionStore.Read(file, 0).FirstOrDefault(r => r.Id == ask.RecordAs) is { Pinned: true } kept
+                    && DataQuestionStore.SquashDax(kept.Dax ?? "") != DataQuestionStore.SquashDax(answer.Dax ?? "");
+                if (!keptAsIs && !string.IsNullOrWhiteSpace(ask.RecordAs) && DataQuestionStore.Update(file, ask.RecordAs, r =>
                 {
-                    Id = "dq-" + Guid.NewGuid().ToString("N").Substring(0, 12),
+                    r.AskedAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+                    r.Reading = answer.Reading; r.ReadBy = answer.ReadBy; r.Outcome = answer.Outcome; r.Parts = answer.Parts;
+                    r.Dax = answer.Dax; r.RowCount = answer.RowCount; r.Dropped = answer.Assumption; r.InNotebook = true;
+                    // The number of the run before is not this run's: the page notes the new one when it has it. A failed run says so.
+                    r.Headline = null; r.ColdMs = null; r.WarmMs = null; r.TookMs = null;
+                })) return ask.RecordAs;
+                DataQuestionStore.Append(file, new DataQuestionRecord
+                {
+                    Id = id,
+                    Kind = "words",
+                    InNotebook = true,
+                    Dropped = answer.Assumption,
                     AskedAt = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                     Question = string.IsNullOrWhiteSpace(ask.Question) ? null : DataQuestionStore.Clip(ask.Question.Trim()),
                     Reading = answer.Reading,
@@ -426,22 +471,33 @@ namespace Semanticus.Engine
                     RowCount = answer.RowCount,
                     Origin = origin == "agent" ? "agent" : "human",
                 });
+                return id;
             }
-            catch { /* a history that cannot be written must not fail the answer */ }
+            catch { /* a history that cannot be written must not fail the answer */ return null; }
         }
 
-        /// <summary>Where this model's questions are kept, or null when it has nowhere of its own. A model with a place on
-        /// disk keeps them in its sidecar. A model opened live has only a temporary copy on disk, so its questions are
-        /// kept in the workspace under a name made from the endpoint and the database, one file per model. An unsaved
-        /// model keeps none: sharing the workspace's one file showed one model another model's questions.</summary>
+        /// <summary>Where this model's questions are kept, or null when it has nowhere of its own. A published model, in every form it takes
+        /// (open live, or the file Semanticus saved it to: LocalEngine.ModelHome.cs names it), keeps them under the person's own home
+        /// (SEMANTICUS_HOME), one file per model made from the endpoint and the database, never in a folder a commit could pick up. So Connect
+        /// your assistant, a reload, Ctrl+S or File > Open Folder never makes a kept or pinned row disappear (UAT 18 Oct). Rows an older build
+        /// left in the workspace are carried over once. A file of its own keeps them in its sidecar. An unsaved model keeps none: sharing one
+        /// file showed one model another model's questions.</summary>
         private string DataQuestionFile(SessionContext context)
         {
             var session = context.Session;
             if (session == null) return null;
+            var place = PlaceFor(context);
+            if (!string.IsNullOrEmpty(place?.Endpoint))
+            {
+                var inWorkspace = _workspaceDir == null ? null : DataQuestionStore.FileForLiveModel(Path.Combine(_workspaceDir, LayoutStore.DirName), place.Endpoint, place.Database);
+                string home;
+                try { home = DataQuestionStore.FileForLiveModel(ConnectionRegistry.Root(), place.Endpoint, place.Database); }
+                catch (InvalidOperationException) { return FolderDir == null ? null : inWorkspace; }   // no per-user folder at all: an open folder is the only place left
+                DataQuestionStore.CarryOver(inWorkspace, home);
+                return home;
+            }
             if (!ExperienceStore.IsEphemeralAnchor(session.SourcePath)) return DataQuestionStore.FileIn(SidecarDir(context));
-            var origin = session.LiveOrigin;
-            if (origin == null || string.IsNullOrEmpty(origin.Endpoint) || _workspaceDir == null) return null;
-            return DataQuestionStore.FileForLiveModel(Path.Combine(_workspaceDir, LayoutStore.DirName), origin.Endpoint, origin.Database);
+            return null;
         }
 
         /// <summary>Filters that leave nothing to count: the same value kept and left out, or bounds that do not meet.
@@ -482,6 +538,72 @@ namespace Semanticus.Engine
 
         /// <summary>A filter value as a number to compare: a day as its serial number.</summary>
         private static double Number(object v) => v is DateTime d ? d.ToOADate() : Convert.ToDouble(v, CultureInfo.InvariantCulture);
+
+        /// <summary>A count of an entity by its order count ("customers who bought twice"), built from the engine's own reading: the
+        /// assumption is said ("exactly 2 orders") and the other test is one press away.</summary>
+        private async Task<DataAnswer> AnswerFrequencyAsync(FrequencyReading.Read r, DataAsk ask, QueryCatalog cat, int cap, LiveConnection live, Session s)
+        {
+            var answer = new DataAnswer { ReadBy = "jev" };
+            var checks = new List<DataCheck>();
+            var dax = FrequencyReading.Dax(r);
+            answer.Dax = dax;
+            answer.Reading = r.Plural + " with " + r.Phrase;
+            answer.Statement = $"This counts the {r.Plural.ToLowerInvariant()} with {r.Phrase}, taking the orders from {r.CounterName}.";
+            answer.Assumption = $"Counting {r.Plural.ToLowerInvariant()} with {r.Phrase}.";
+            var other = r.Op == FrequencyReading.Equal ? FrequencyReading.AtLeast : r.Op == FrequencyReading.AtLeast ? FrequencyReading.Equal : FrequencyReading.AtLeast;
+            var otherSay = FrequencyReading.Say(other, r.N);
+            answer.Others = new[]
+            {
+                new DataOther
+                {
+                    Line = $"Counting {r.Plural.ToLowerInvariant()} with {r.Phrase}. You may have meant {otherSay}{r.YearWords}.",
+                    Instead = otherSay,
+                    Reading = r.Plural + " with " + otherSay + r.YearWords,
+                    Parts = new DataAsk { Question = FrequencyReading.QuestionFor(r, other) },
+                },
+            };
+            return await RunOneNumberAsync(answer, dax, r.Plural, ask, cap, live, s, checks).ConfigureAwait(false);
+        }
+
+        /// <summary>A plain count of a thing ("how many customers did we sell in 2023"), built from the engine's own reading and said in words.</summary>
+        private async Task<DataAnswer> AnswerCountAsync(CountReading.Read r, DataAsk ask, QueryCatalog cat, int cap, LiveConnection live, Session s)
+        {
+            var answer = new DataAnswer { ReadBy = "jev" };
+            var dax = CountReading.Dax(r);
+            answer.Dax = dax;
+            answer.Reading = r.Plural + (r.Active && r.Entity != null ? " with an order" : "") + r.YearWords;
+            answer.Statement = CountReading.Say(r);
+            return await RunOneNumberAsync(answer, dax, r.Plural, ask, cap, live, s, new List<DataCheck>()).ConfigureAwait(false);
+        }
+
+        /// <summary>Check, run and show a query that gives one number, named <paramref name="name"/>.</summary>
+        private async Task<DataAnswer> RunOneNumberAsync(DataAnswer answer, string dax, string name, DataAsk ask, int cap, LiveConnection live, Session s, List<DataCheck> checks)
+        {
+            var validation = await s.ReadAsync(m => DaxValidator.Validate(m, dax)).ConfigureAwait(false);
+            var problems = validation.Diagnostics.Where(d => d.Severity == "error" || (d.Message ?? "").IndexOf("@", StringComparison.Ordinal) < 0).ToList();
+            if (!validation.Valid || problems.Any(d => d.Severity == "error"))
+            {
+                checks.Add(new DataCheck { Name = "dax", Passed = false, Line = "The query did not check out: " + (problems.FirstOrDefault()?.Message ?? "unknown problem") });
+                return Finish(answer, DataAnswer.Refused, checks);
+            }
+            checks.Add(new DataCheck { Name = "dax", Passed = true, Line = "The query checks out against the model." });
+            if (!ask.Run) return Finish(answer, DataAnswer.Built, checks);
+            QuerySentForTest?.Invoke(dax);
+            var result = await ExecuteLiveGuardedAsync(live, dax, cap, 120).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(result.Error))
+            {
+                answer.Error = result.Error;
+                checks.RemoveAll(c => string.Equals(c.Name, "dax", StringComparison.Ordinal) && c.Passed);
+                checks.Add(new DataCheck { Name = "rows", Passed = false, Line = QueryDidNotRunLine });
+                return Finish(answer, DataAnswer.Failed, checks);
+            }
+            answer.Columns = new[] { new ColumnDef { Name = name, Type = result.Columns?.FirstOrDefault()?.Type } };
+            answer.Rows = result.Rows ?? Array.Empty<object[]>();
+            answer.RowCount = result.RowCount;
+            answer.ElapsedMs = result.ElapsedMs;
+            checks.Add(new DataCheck { Name = "rows", Passed = true, Line = "1 row." });
+            return Finish(answer, DataAnswer.Answered, checks);
+        }
 
         private static DataAnswer Finish(DataAnswer a, string outcome, List<DataCheck> checks)
         {
@@ -678,6 +800,50 @@ namespace Semanticus.Engine
                 reading.Unsure.RemoveRange(before, reading.Unsure.Count - before);
                 JevQueryReader.Assume(reading, "time", QueryPeriods.NotApplied(said.Words), JevQueryReader.RankCaveat);
             }
+            else if (reading.PeriodResolved && reading.Unsure.Count == 0) NoDoubleShift(reading, said, cat);
+        }
+
+        /// <summary>The engine read the words' period ("last year" as 2025). A measure whose own meaning already moves time
+        /// ([Total net amount PY]) would move it a second time and show 2024's figure as 2025's, so the measure it wraps is shown
+        /// instead, said in a note; with no clear base the answer needs you and no figure is shown.</summary>
+        private static void NoDoubleShift(JevQueryReader.Reading reading, QueryPeriods.Said said, QueryCatalog cat)
+        {
+            var spec = reading.Spec;
+            var words = said.Words;
+            foreach (var m in spec.Measures.ToList())
+            {
+                if (!MeasureTime.Moves(m, cat)) continue;
+                var baseMeasure = MeasureTime.Base(m, cat);
+                if (baseMeasure == null) { reading.Unsure.Add(MeasureTime.Cannot(m, words)); return; }
+                for (var i = 0; i < spec.Measures.Count; i++) if (ReferenceEquals(spec.Measures[i], m)) spec.Measures[i] = baseMeasure;
+                if (ReferenceEquals(spec.TopBy, m)) spec.TopBy = baseMeasure;
+                if (ReferenceEquals(spec.SortMeasure, m)) spec.SortMeasure = baseMeasure;
+                // Two shifted measures with one base would show the same number twice.
+                var seen = new HashSet<QueryMeasure>();
+                spec.Measures.RemoveAll(x => !seen.Add(x));
+                reading.Notes.Add(MeasureTime.Swapped(m, baseMeasure, words));
+                // "Using <m>." was said of the figure before the swap; it would sit above a different number.
+                reading.Assumptions.RemoveAll(x => x.Key == "measure" && x.Line == $"Using {m.Name}.");
+            }
+            // The offers were built from Jev's other picks. One that moves the date would run the period a second time one press
+            // away: it is swapped for its base, or dropped when it has none or the base is already shown.
+            foreach (var o in reading.Others.ToList())
+            {
+                var drop = false;
+                foreach (var om in new[] { o.FromMeasure, o.ToMeasure })
+                {
+                    if (om == null || !MeasureTime.Moves(om, cat)) continue;
+                    var b = MeasureTime.Base(om, cat);
+                    if (b == null) { drop = true; break; }
+                    if (ReferenceEquals(om, o.FromMeasure)) o.FromMeasure = b;
+                    if (ReferenceEquals(om, o.ToMeasure)) o.ToMeasure = b;
+                    o.Line = o.Line?.Replace(om.Name, b.Name);
+                    o.Instead = o.Instead?.Replace(om.Name, b.Name);
+                }
+                // An offer that now shows what is already shown offers nothing.
+                if (drop || (o.FromMeasure != null && ReferenceEquals(o.FromMeasure, o.ToMeasure)))
+                    reading.Others.Remove(o);
+            }
         }
 
         private async Task ApplyTimeWordsAsync(JevQueryReader.Reading reading, string words, QueryPeriods.Columns cols, QueryCatalog cat, LiveConnection live,
@@ -693,6 +859,7 @@ namespace Semanticus.Engine
                 var ranged = live != null && QueryPeriods.RangeReady(reading, said, cols)
                     && await ResolvePeriodAsync(reading, said, cols, cat, live, new List<QueryColumn>()).ConfigureAwait(false);
                 if (!ranged && reading.Unsure.Count == 0) reading.Unsure.Add(QueryPeriods.CannotApply(said.Words));
+                reading.PeriodResolved = ranged;
             }
             else if (said != null)
             {
@@ -701,6 +868,7 @@ namespace Semanticus.Engine
                 if (!done && live != null && QueryPeriods.RangeReady(reading, said, cols))
                     done = await ResolvePeriodAsync(reading, said, cols, cat, live, new List<QueryColumn>()).ConfigureAwait(false);
                 if (!done) QueryPeriods.Split(reading, said, cols, cat, years);
+                reading.PeriodResolved = done;
             }
             if (reading.Unsure.Count == 0) QueryPeriods.MonthsOfYears(reading, words, cols, cat, years);
         }
@@ -754,6 +922,12 @@ namespace Semanticus.Engine
             if (v is DateTime d) { day = d; return true; }
             return v is string s && DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.None, out day);
         }
+
+        private static DataAsk CountingParts(DataAsk shown, string measure) => new DataAsk
+        {
+            MaxRows = shown.MaxRows, Run = shown.Run, GroupBy = shown.GroupBy, Measures = new[] { measure }, Filters = shown.Filters,
+            Top = shown.Top, TopBy = shown.Top.HasValue ? measure : null, Lowest = shown.Lowest, SortBy = shown.SortBy, Descending = shown.Descending,
+        };
 
         private static DataAsk PartsOf(QuerySpec s, int maxRows, bool run) => new DataAsk
         {
@@ -1001,7 +1175,7 @@ namespace Semanticus.Engine
             DecisionOutcome asked;
             try
             {
-                asked = await Decisions.AskAsync(point.Name, r.Snapshot, r.Questions,
+                asked = await Splitter.AskAsync(Decisions, point.Name, r.Snapshot, r.Questions,
                     isPro: Entitlement.FeatureGrants.IsProTier(_entitlement),
                     enabled: DecisionPointEnabled(point.Name),
                     fence: fence,

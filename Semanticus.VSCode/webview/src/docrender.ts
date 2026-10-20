@@ -330,7 +330,7 @@ export function diagramSvg(graph: ModelGraph, opts?: { aspect?: number }): { svg
       + (t.keyColumns?.length ? `<text x="12" y="64" class="dg-muted">key: <tspan class="dg-fg">${esc(trunc(t.keyColumns.join(', '), Math.floor((c.w - 40) / 6.2)))}</tspan></text>` : '')
       + `</g>`;
   }).join('');
-  const svg = `<svg class="dg" viewBox="${minX} ${minY} ${W} ${H}" width="${W}" style="max-width:100%;height:auto" role="img" aria-label="How the tables connect" data-lines="${lines.length}">${edge}${node}</svg>`;
+  const svg = `<svg class="dg" viewBox="${minX} ${minY} ${W} ${H}" width="${W}" style="--dgw:${W};width:100%;max-width:${W}px;min-width:calc(var(--dgw)*0.77px);height:auto;margin:0 auto" role="img" aria-label="How the tables connect" data-lines="${lines.length}">${edge}${node}</svg>`;
   return { svg, isolated, lines: lines.length };
 }
 
@@ -661,7 +661,7 @@ pre code{background:none;padding:0}
 .nar-body blockquote{margin:var(--s2) 0;padding-left:var(--s3);border-left:2px solid var(--sem-border);color:var(--sem-muted)}
 .nar-body .doc-mdh{font-size:14px;line-height:20px;margin-top:var(--s3)}
 .callout{border-left:2px solid var(--sem-warn);padding-left:var(--s3);margin:var(--s3) 0;color:var(--sem-fg)}
-.diagram{overflow:auto;display:flex;justify-content:center;padding:var(--s4);background-color:var(--sem-bg);background-image:radial-gradient(color-mix(in srgb,var(--sem-fg) 14%,transparent) 1px,transparent 1px);background-size:20px 20px;border:1px solid var(--sem-rule);border-radius:3px}
+.diagram{overflow:auto;display:flex;justify-content:flex-start;padding:var(--s4);background-color:var(--sem-bg);background-image:radial-gradient(color-mix(in srgb,var(--sem-fg) 14%,transparent) 1px,transparent 1px);background-size:20px 20px;border:1px solid var(--sem-rule);border-radius:3px}
 .dg text{font:11px/16px var(--doc-font)}.dg .dg-name{font-weight:600;fill:var(--sem-fg-strong)}.dg .dg-muted{fill:var(--sem-muted)}.dg .dg-fg{fill:var(--sem-fg)}
 .dg .dg-num{font-family:var(--doc-mono);font-variant-numeric:tabular-nums}.dg .dg-card{fill:var(--sem-surface);stroke:var(--sem-border)}.dg .dg-rule{stroke:var(--sem-rule)}
 .legend{display:flex;flex-wrap:wrap;gap:var(--s4);font-size:12px;line-height:16px;color:var(--sem-muted);margin-top:var(--s3)}
@@ -669,14 +669,14 @@ pre code{background:none;padding:0}
 .not-linked{margin-top:var(--s3)}
 .foot{display:flex;gap:var(--s2);align-items:center;color:var(--sem-muted);font-size:12px;border-top:1px solid var(--sem-rule);padding-top:var(--s4)}
 .doc-hidden{display:none !important}
-@media (max-width:760px){.side{display:none}main{grid-column:1/-1;padding-left:0}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.wrap{padding:0 var(--s4)}.thead .counts{margin-left:0}.diagram{justify-content:flex-start}.diagram .dg{flex:none;max-width:none!important}}
+@media (max-width:760px){.side{display:none}main{grid-column:1/-1;padding-left:0}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.wrap{padding:0 var(--s4)}.thead .counts{margin-left:0}.diagram .dg{flex:none}}
 @page{size:A4;margin:14mm}
 @media print{
   :root{color-scheme:light}
   .wrap{display:block;padding:0}main{padding:0}.side,.no-print{display:none!important}
   .sec{margin-bottom:var(--s8)}#tables,#measures{break-before:page}
   .card,.tbl tr,.measure,.diagram{break-inside:avoid}
-  .diagram{background-image:none}
+  .diagram{background-image:none}.diagram .dg{min-width:0}
   h2,h4{break-after:avoid}
   a{text-decoration:none}
 }`;

@@ -37,6 +37,8 @@ namespace Semanticus.Engine
         public const string Assistant = "assistant";
         public const string Semanticus = "semanticus";
         public const string Workflow = "workflow";
+        /// <summary>A record the model carries from before this person opened it, written in a session this machine never saw. Nobody can say it was "you".</summary>
+        public const string Earlier = "earlier";
 
         /// <summary>From the cause first, then the origin. A plan batch or a composer change group is Semanticus; a
         /// guided workflow step's writes are the workflow; a task is whoever is working it, so it falls to the origin.</summary>

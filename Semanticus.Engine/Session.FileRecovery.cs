@@ -17,7 +17,41 @@ namespace Semanticus.Engine
         private bool _ownsRecovery;
         private bool _recoveryStarted;
         private int _recoveryStopped;
-        private bool RecoveryEligible => !string.IsNullOrEmpty(SourcePath) && LiveOrigin == null && SnapshotOf == null;
+        // A new blank model has no file to name its kept copy after, so the copy is named after the model, fixed when the session starts. Making a
+        // model of that name again offers it back, and a save to a file settles it (Kane, 17 Oct: the work was stranded in an engine nobody came back to).
+        private string _untitledKey;
+        // A model opened live keeps its copy under its own name, written only when the engine leaves (FlushLiveRecovery): the
+        // autosave a file model has would offer a stale copy of work that was already published.
+        private string _liveKey;
+        private bool _liveArmed;
+        private string RecoverySource => _liveKey ?? (!string.IsNullOrEmpty(SourcePath) ? SourcePath : _untitledKey);
+        private bool RecoveryEligible => !string.IsNullOrEmpty(RecoverySource) && (LiveOrigin == null || _liveKey != null) && SnapshotOf == null;
+
+        /// <summary>Called once the session knows which live model it is: reads any copy a leaving engine kept, so the next open offers it.</summary>
+        internal void AttachLiveRecovery()
+        {
+            if (LiveOrigin == null || SnapshotOf != null || string.IsNullOrWhiteSpace(LiveOrigin.Endpoint)) return;
+            _liveKey = RestorePointStore.LiveSource(LiveOrigin.Endpoint, LiveOrigin.Database);
+            _recoverySource = _liveKey;
+            try { _fileRecovery = RestorePointStore.ReadUnsaved(_liveKey); }
+            catch (Exception ex) { RecoveryFailed(ex); }
+        }
+
+        /// <summary>True when this is a live model with unsaved edits, so leaving has a kept copy to write. Read off the dispatcher on purpose: the
+        /// leaving engine must be able to ask while the dispatcher is busy. A read that fails answers true, so a doubt keeps the work.</summary>
+        internal bool HasLiveWorkToKeep
+        {
+            get { try { return _liveKey != null && HasUnsavedEdits; } catch { return true; } }
+        }
+
+        /// <summary>The engine is leaving with unsaved edits on a live model: keep them first. True when a copy was written. Runs on the dispatcher.</summary>
+        internal bool FlushLiveRecovery()
+        {
+            if (_liveKey == null || !HasUnsavedEdits) return false;
+            _liveArmed = true;
+            WriteFileRecovery();
+            return _ownsRecovery;
+        }
 
         internal FileRecoveryInfo FileRecovery => RecoveryEligible && _fileRecovery != null
             ? new FileRecoveryInfo { Source = _fileRecovery.Source, CapturedUtc = _fileRecovery.CapturedUtc } : null;
@@ -25,10 +59,16 @@ namespace Semanticus.Engine
         internal void StartFileRecovery()
         {
             if (_recoveryStarted) return;
-            _recoverySource = SourcePath;
+            if (string.IsNullOrEmpty(SourcePath) && LiveOrigin == null && SnapshotOf == null)
+            {
+                string name = null;
+                try { name = TomDatabase?.Name; } catch { }
+                if (!string.IsNullOrWhiteSpace(name)) _untitledKey = RestorePointStore.UntitledSource(name);
+            }
+            _recoverySource = RecoverySource;
             if (!RecoveryEligible) return;
             _recoveryStarted = true;
-            try { _fileRecovery = RestorePointStore.ReadUnsaved(SourcePath); }
+            try { _fileRecovery = RestorePointStore.ReadUnsaved(RecoverySource); }
             catch (Exception ex) { RecoveryFailed(ex); }
             try
             {
@@ -62,16 +102,17 @@ namespace Semanticus.Engine
         private void WriteFileRecovery()
         {
             if (!RecoveryEligible || _discardRecovery) return;
+            if (_liveKey != null && !_liveArmed) return;
             // While an offer is open it stays untouched and the new edits go beside it: neither set is lost.
             var beside = _fileRecovery != null;
             if (HasUnsavedEdits)
             {
-                RestorePointStore.WriteUnsaved(SourcePath, RecoveryJson(), beside);
+                RestorePointStore.WriteUnsaved(RecoverySource, RecoveryJson(), beside);
                 _ownsRecovery = true;
             }
             else if (_ownsRecovery)
             {
-                RestorePointStore.DeleteUnsaved(SourcePath, latestOnly: beside);
+                RestorePointStore.DeleteUnsaved(RecoverySource, latestOnly: beside);
                 _ownsRecovery = false;
             }
         }
@@ -111,7 +152,7 @@ namespace Semanticus.Engine
         {
             // A save runs this twice (once when the file is marked clean, once after the path is rebased). On the same path
             // the second run must not settle the older copy the first one just offered.
-            if (onlyIfPathMoved && SourcePath == _recoverySource) return;
+            if (onlyIfPathMoved && (string.IsNullOrEmpty(SourcePath) || SourcePath == _recoverySource)) return;
             _fileRecovery = null;
             _ownsRecovery = false;
             try
@@ -119,16 +160,29 @@ namespace Semanticus.Engine
                 // A save settles the set that was offered. A parked older copy of the same file is offered next.
                 // On Save As the first run (before the path moved) already settled the old file's set and promoted its older copy.
                 // This run leaves that old file alone: nobody saw the promoted copy, and the old file offers it when it opens again.
-                var same = SourcePath == _recoverySource;
+                // A model that had no file yet (its copy is named after the model) has moved to its first file: the model's copy is settled too.
+                var same = string.IsNullOrEmpty(SourcePath) || SourcePath == _recoverySource;
                 if (same)
                 {
                     RestorePointStore.DeleteUnsaved(_recoverySource, keepOlder: true);
                     _fileRecovery = RestorePointStore.PromoteOlder(_recoverySource);
                 }
-                else RestorePointStore.DeleteUnsaved(SourcePath);
+                else
+                {
+                    RestorePointStore.DeleteUnsaved(SourcePath);
+                    if (_untitledKey != null && _recoverySource == _untitledKey) RestorePointStore.DeleteUnsaved(_recoverySource);
+                }
             }
             catch (Exception ex) { RecoveryFailed(ex); }
-            _recoverySource = SourcePath;
+            // A live model's kept copy is named for the model, not for the temp snapshot the session follows, so the settling above never
+            // reaches it: a landed publish left it behind and the next open offered an edit that was already out (r2 fix 3).
+            if (_liveKey != null && !onlyIfPathMoved)
+            {
+                try { RestorePointStore.DeleteUnsaved(_liveKey); }
+                catch (Exception ex) { RecoveryFailed(ex); }
+                _recoverySource = _liveKey;
+            }
+            else if (!string.IsNullOrEmpty(SourcePath)) { _recoverySource = SourcePath; _untitledKey = null; }
         }
 
         internal void DiscardReplacedFileRecovery()
@@ -157,10 +211,10 @@ namespace Semanticus.Engine
                     if (!RecoveryEligible) return false;
                     if (_fileRecovery == null && !HasUnsavedEdits) return false;
                     var hadOffer = _fileRecovery != null;
-                    RestorePointStore.DeleteUnsaved(SourcePath, keepOlder: hadOffer);
+                    RestorePointStore.DeleteUnsaved(RecoverySource, keepOlder: hadOffer);
                     if (!hadOffer) _discardRecovery = true;
                     // Dismissing the newer set shows the older kept copy next.
-                    _fileRecovery = hadOffer ? RestorePointStore.PromoteOlder(SourcePath) : null;
+                    _fileRecovery = hadOffer ? RestorePointStore.PromoteOlder(RecoverySource) : null;
                     _ownsRecovery = false;
                     return true;
                 }).ConfigureAwait(false);
@@ -178,12 +232,12 @@ namespace Semanticus.Engine
                     _ownsRecovery = true;
                     // The older kept copy is offered next. The restored work goes beside it first, so it is on disk
                     // before the copy it came from is replaced.
-                    _fileRecovery = RestorePointStore.PeekOlder(SourcePath);
+                    _fileRecovery = RestorePointStore.PeekOlder(RecoverySource);
                     if (_fileRecovery != null)
                     {
                         _discardRecovery = false;
                         WriteFileRecovery();
-                        _fileRecovery = RestorePointStore.PromoteOlder(SourcePath);
+                        _fileRecovery = RestorePointStore.PromoteOlder(RecoverySource);
                     }
                 }
                 catch { RollBackTo(depth); throw; }

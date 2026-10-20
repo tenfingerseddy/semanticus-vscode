@@ -3,6 +3,9 @@
 // not take the wheel from Claude. A real click still counts: it picks something new, or it comes after the quiet window.
 export const REFRESH_WINDOW_MS = 1000;
 
+/** A rename in the grid makes the tree redraw, and the redraw drops the selection. That is not the person clearing it: the grid keeps the renamed object. */
+export const gridStaysOnRedraw = (kind: 'person' | 'refresh', count: number): boolean => kind === 'refresh' && count === 0;
+
 export function createTreeSelectionGuard(now: () => number = Date.now, windowMs = REFRESH_WINDOW_MS) {
     let refreshAt = -Infinity;
     let last: string[] = [];

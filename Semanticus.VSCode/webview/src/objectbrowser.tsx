@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { tickedNodes } from './objectbrowser-pick';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { rpc, onDidChange, selectInProperties, focusSelectInProperties } from './bridge';
 import { RevealBtn, rowKeyProps } from './objectactions';
@@ -156,7 +157,8 @@ export function ObjectBrowser({ kinds = ['measure', 'column'], multiSelect = fal
     });
     lastClicked.current = idx;
   };
-  const selectedNodes = useMemo(() => nodeRows.map((r) => r.node).filter((n) => sel.has(n.ref) && !pickedRefs?.has(n.ref)), [nodeRows, sel, pickedRefs]);
+  // From every field, not the rows the search shows now: a tick survives a new search.
+  const selectedNodes = useMemo(() => tickedNodes(nodes, sel, pickedRefs), [nodes, sel, pickedRefs]);
 
   const drag = (node: BrowserNode) => (e: React.DragEvent) => {
     // If part of a multi-selection, drag the whole bag (newline-joined DAX refs); else just this node.

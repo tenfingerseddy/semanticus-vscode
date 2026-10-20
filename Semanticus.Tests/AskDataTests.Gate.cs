@@ -137,7 +137,7 @@ namespace Semanticus.Tests
             var a = await rig.Engine.AskDataAsync(new DataAsk { Question = "what share of net sales was the coast" });
             ScriptTaken(a);
             Assert.True(Answered(a), Seen(a));
-            Assert.Contains("share or a percent", a.Assumption ?? "");
+            Assert.Contains("share, a percent or an average", a.Assumption ?? "");
             Assert.Single(rig.Data.Runs);
         }
 
@@ -153,7 +153,7 @@ namespace Semanticus.Tests
 
             // A count of products is another kind than any total the reading shows: not cleared, and the line says so.
             using var count = await BuildAsync(script: Gate("other_number", 0.99, measure: "Net Sales"), ratio: true);
-            var b = await count.Engine.AskDataAsync(new DataAsk { Question = "number of products" });
+            var b = await count.Engine.AskDataAsync(new DataAsk { Question = "number of products by category" });
             ScriptTaken(b);
             Assert.True(Answered(b), Seen(b));
             Assert.Contains("different kind of number", b.Assumption ?? "");

@@ -103,17 +103,16 @@ export const ASK_TOOL_LABEL: Record<string, string> = {
   plan: 'Plan',
   diagram: 'Diagram',
   lineage: 'Lineage',
-  search: 'Find and replace',
   data: 'Data',
-  askdata: 'Ask your data',
+  query: 'Query',
   stats: 'Size',
   spec: 'Model Spec',
   advmodels: 'Advanced modelling',
   mcode: 'Power Query',
   docs: 'Docs',
+  copilottest: 'Copilot test',
   knowledge: 'Model notes',
   instructions: 'AI instructions',
-  daxlab: 'Queries',
   tests: 'Validation',
   bpa: 'Model quality (BPA)',
   readiness: 'AI readiness',
@@ -166,19 +165,19 @@ export const ASK_CREATE_DOOR: Record<string, { tool: string; target: string } | 
  */
 export const ASK_CREATE_COMMAND: Record<string, { tool: string; command: string; button: string; line: string }> = {
   measure: {
-    tool: 'daxlab', command: 'semanticus.newMeasure', button: 'New measure',
+    tool: 'query', command: 'semanticus.newMeasure', button: 'New measure',
     line: 'New measure: pick the table, then write the formula.',
   },
   'calculated column': {
-    tool: 'daxlab', command: 'semanticus.newCalcColumn', button: 'New calculated column',
+    tool: 'query', command: 'semanticus.newCalcColumn', button: 'New calculated column',
     line: 'New calculated column: pick the table, then write the formula.',
   },
   'calculated table': {
-    tool: 'daxlab', command: 'semanticus.newCalcTable', button: 'New calculated table',
+    tool: 'query', command: 'semanticus.newCalcTable', button: 'New calculated table',
     line: 'New calculated table: it opens with a starter formula for you to replace.',
   },
   function: {
-    tool: 'daxlab', command: 'semanticus.newFunction', button: 'New function',
+    tool: 'query', command: 'semanticus.newFunction', button: 'New function',
     line: 'New function: it opens with a starter formula for you to replace.',
   },
   'calculation item': {
@@ -239,14 +238,14 @@ export function askAction(result: AskRouteResult | null, asked = ''): AskAction 
   return openTool(tool, label, asked);
 }
 
-/** The words the person typed, carried into Ask your data so the page opens on the question rather than empty
- *  (verify-askdata-r4, still open at r5). Only Ask your data takes them: no other page has a words box to put
+/** The words the person typed, carried into the Query page so it opens on the question rather than empty
+ *  (verify-askdata-r4, still open at r5). Only the Query page takes them: no other page has a words box to put
  *  them in, and a target it does not understand would be a hand-off that quietly does nothing. */
 export const ASK_WORDS_TARGET = 'words:';
 
-/** The words Open Ask your data carries: what was typed, on one line, because the question box is one line and a line
- *  break typed with Shift+Enter would otherwise run two words together. A line that only NAMES the page ("go to ask
- *  your data", "I need ask your data") asked for the page and not a question on it, so it carries nothing and the page
+/** The words Open Query carries: what was typed, on one line, because the question box is one line and a line
+ *  break typed with Shift+Enter would otherwise run two words together. A line that only NAMES the page ("go to
+ *  query", "I need query") asked for the page and not a question on it, so it carries nothing and the page
  *  opens empty (verify-askdata-r6 L4). */
 export function carriedWords(asked: string): string {
   const words = asked.replace(/\s+/gu, ' ').trim();
@@ -256,11 +255,11 @@ export function carriedWords(asked: string): string {
 
 /** The page's name with nothing around it but asking for the page: "open", "go to", "use", "I would like to", "please",
  *  "for me". Only these words, so a line with anything else in it keeps its words. */
-const ONLY_THE_PAGE = /^(?:(?:please|just|now|can|could|would|will|you|i|we|d|need|want|like|to|go|take|bring|me|us|open|use|show|see|get|the|page|tab)\s+)*ask your data(?:\s+(?:page|tab|please|now|for|me|us|thanks|thank|you))*$/u;
+const ONLY_THE_PAGE = /^(?:(?:please|just|now|can|could|would|will|you|i|we|d|need|want|like|to|go|take|bring|me|us|open|use|show|see|get|the|page|tab)\s+)*(?:ask your data|query)(?:\s+(?:page|tab|please|now|for|me|us|thanks|thank|you))*$/u;
 
 function openTool(tool: string, label: string, asked: string): AskAction {
-  const words = tool === 'askdata' ? carriedWords(asked) : '';
-  return tool === 'askdata' && words
+  const words = tool === 'query' ? carriedWords(asked) : '';
+  return tool === 'query' && words
     ? { kind: 'open', tool, label, target: ASK_WORDS_TARGET + words }
     : { kind: 'open', tool, label };
 }
@@ -370,7 +369,7 @@ export function AskReply({ result, onGo, asked = '' }: {
  */
 export function fieldTaskPage(answer: AskRouteResult | null | undefined): string | null {
   if (!answer || answer.failed) return null;
-  if (!answer.reading) return answer.tool && answer.tool !== 'askdata' ? answer.tool : null;
+  if (!answer.reading) return answer.tool ?? null;
   if (answer.reading === 'task') return answer.tool ?? null;
   return answer.other?.kind === 'task' ? answer.other.tool ?? null : null;
 }

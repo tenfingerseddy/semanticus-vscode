@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { busMatrixPositions } from '../webview/src/diagramlayout.mjs';
 import { reflowCards, changedPositions, toggleExpansion, setExpansionFor, layoutBox, CARD_GAP, filterHeldHeight, recordsHeight, readableFirstView, FIRST_FIT_MIN_ZOOM } from '../webview/src/diagramfit.mjs';
 
 let passed = 0;
@@ -149,16 +150,55 @@ ok('a layout is computed with the real size of each card, open or closed', () =>
 
 // Journey m11 F17: the first frame of a wide diagram in a narrow Studio was a full fit at zoom 0.25.
 ok('the first frame keeps card text readable, starting at the top-left when the whole does not fit', () => {
-  assert.equal(FIRST_FIT_MIN_ZOOM, 0.85);
+  assert.equal(FIRST_FIT_MIN_ZOOM, 0.77);
   assert.equal(readableFirstView({ x: 0, y: 0, width: 600, height: 300 }, 760, 600, 1, 24), null, 'a readable full fit is kept');
   const wide = readableFirstView({ x: 100, y: 50, width: 2800, height: 400 }, 760, 600, 0.25, 24);
-  assert.equal(wide.zoom, 0.85);
-  assert.equal(wide.x, 24 - 100 * 0.85, 'too wide at 0.85: starts at the left edge, padded');
-  assert.equal(wide.y, (600 - 400 * 0.85) / 2 - 50 * 0.85, 'tall enough: centred up and down');
+  const Z = FIRST_FIT_MIN_ZOOM;
+  assert.equal(wide.zoom, Z);
+  assert.equal(wide.x, 24 - 100 * Z, 'too wide at the floor: starts at the left edge, padded');
+  assert.equal(wide.y, (600 - 400 * Z) / 2 - 50 * Z, 'tall enough: centred up and down');
   const both = readableFirstView({ x: -40, y: -20, width: 2800, height: 2000 }, 760, 600, 0.2, 24);
-  assert.deepEqual(both, { x: 24 + 40 * 0.85, y: 24 + 20 * 0.85, zoom: 0.85 }, 'too big both ways: the top-left corner');
+  assert.deepEqual(both, { x: 24 + 40 * Z, y: 24 + 20 * Z, zoom: Z }, 'too big both ways: the top-left corner');
   assert.equal(readableFirstView({ x: 0, y: 0, width: 10, height: 10 }, 0, 0, 0.1, 24), null, 'no canvas size yet: fall back to the plain fit');
 });
+// UAT round 2 (item 49): a model of seven tables (one fact, four lookups, two unlinked) opened with three tables off the screen,
+// and Fit drew the names at half size. The default layout must now fit that model whole at a readable zoom in a 1440 Studio.
+// Round 2 fix: names must be about 12 px or more at 1440 WITH the side bar open (canvas about 1090 x 720), so the floor is 0.77 and a
+// seven-table model must fit whole at that size: lookup tables in one row, the unlinked tables in a second row under the facts.
+const shapeBox = (pos, sizeOf) => {
+  const boxes = [...pos].map(([n, p]) => ({ ...p, ...sizeOf(n) }));
+  const x0 = Math.min(...boxes.map((b) => b.x)), y0 = Math.min(...boxes.map((b) => b.y));
+  return { width: Math.max(...boxes.map((b) => b.x + b.w)) - x0, height: Math.max(...boxes.map((b) => b.y + b.h)) - y0 };
+};
+const sevenFits = (name, tables, rels, sizeOf) => ok(name, () => {
+  const pos = busMatrixPositions(tables.map((n) => ({ name: n })), rels, sizeOf);
+  const { width, height } = shapeBox(pos, sizeOf);
+  const zw = (1090 - 2 * 24) / width, zh = (720 - 2 * 24) / height;
+  assert.ok(zw >= FIRST_FIT_MIN_ZOOM, `the whole diagram is ${width}px wide: it would draw at ${zw.toFixed(2)}, under the readable ${FIRST_FIT_MIN_ZOOM}`);
+  assert.ok(zh >= FIRST_FIT_MIN_ZOOM, `the whole diagram is ${height}px tall: it would draw at ${zh.toFixed(2)}, under the readable ${FIRST_FIT_MIN_ZOOM}`);
+});
+const link = (fact, one) => ({ fromTable: fact, toTable: one, fromCardinality: 'Many', toCardinality: 'One', isActive: true, name: fact + '-' + one });
+sevenFits('Northstar (one fact, four lookups, two unlinked) fits whole at a readable zoom beside an open side bar',
+  ['Sales', 'Customer', 'Date', 'Product', 'Store', 'Metric Selector', 'Time Intelligence'],
+  ['Customer', 'Date', 'Product', 'Store'].map((o) => link('Sales', o)), (n) => (n === 'Sales' ? { w: 190, h: 150 } : { w: 190, h: 92 }));
+// Contoso (two facts, five lookups) is 1428 px wide in one row: 0.73 at best beside the open side bar, under the floor. The floor wins: the first
+// frame holds the readable zoom, never lands on a half cut card, and the canvas pans for the last lookup table.
+ok('Contoso (two facts, five lookups) keeps the readable zoom and cuts no card in half beside an open side bar', () => {
+  const names = ['fact_sales', 'fact_returns', 'dim_promotion', 'dim_customer', 'dim_date', 'dim_product', 'dim_store'];
+  const dims = names.slice(2), rels = ['fact_sales', 'fact_returns'].flatMap((f) => dims.filter((d) => f === 'fact_sales' || d !== 'dim_promotion').map((d) => link(f, d)));
+  const sizeOf = (n) => (n.startsWith('fact') ? { w: 190, h: 150 } : { w: 190, h: 92 });
+  const pos = busMatrixPositions(names.map((n) => ({ name: n })), rels, sizeOf);
+  const bounds = { x: 0, y: 0, ...shapeBox(pos, sizeOf) };
+  const cards = [...pos].map(([n, p]) => ({ x: p.x, w: sizeOf(n).w }));
+  const v = readableFirstView(bounds, 1090, 720, (1090 - 48) / bounds.width, 24, undefined, cards);
+  assert.ok(v && v.zoom >= FIRST_FIT_MIN_ZOOM, 'the first frame holds at least the readable zoom');
+  for (const c of cards) {
+    const l = c.x * v.zoom + v.x, r = (c.x + c.w) * v.zoom + v.x;
+    assert.ok(r <= 1090 || l >= 1090, `a card is cut in half: ${l.toFixed(0)}..${r.toFixed(0)}`);
+  }
+});
+const diagramSource = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'webview/src/diagram.tsx'), 'utf8');
+assert.match(diagramSource, /onClick=\{\(\) => readableFit\(\{ padding: layout === 'matrix'/, 'Fit never goes below the readable zoom: the Fit button frames through readableFit');
 assert.match(readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '..', 'webview/src/diagram.tsx'), 'utf8'), /readableFirstView\(/,
   'the Diagram frames its first open through readableFirstView');
 

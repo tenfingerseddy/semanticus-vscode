@@ -405,12 +405,12 @@ namespace Semanticus.Tests
             await SettledPlanAsync(f);
 
             var sent = oracle.Seen.Where(r => r.PointName == Point).ToArray();
-            // One request per TABLE (m11/jev-batch): Customer's one number column and Sales' seven, not eight requests.
-            Assert.Equal(2, sent.Length);
+            // One request for the model (m16/jev-batch): Customer's one number column and Sales' seven, not eight requests.
+            Assert.Single(sent);
             var declared = DecisionRegistry.Require(Point).SnapshotFields;
             foreach (var r in sent)
             {
-                Assert.Equal(new[] { "columns", "model_tables", "table_columns", "table_facts", "table_name" }, r.Snapshot.Keys.OrderBy(x => x, StringComparer.Ordinal));
+                Assert.Equal(new[] { "columns", "model_tables", "table_columns", "table_facts" }, r.Snapshot.Keys.OrderBy(x => x, StringComparer.Ordinal));
                 Assert.All(r.Snapshot.Keys, k => Assert.Contains(k, declared));
                 var json = JsonSerializer.Serialize(r.Snapshot);
                 Assert.DoesNotContain("summarize", json, StringComparison.OrdinalIgnoreCase);
@@ -421,7 +421,10 @@ namespace Semanticus.Tests
                 Assert.Equal(entries.RootElement.GetArrayLength(), r.Questions.Count);
                 for (var i = 0; i < r.Questions.Count; i++)
                 {
-                    Assert.StartsWith("For the column `columns[" + i + "]`: " + ColumnSummarizeFamily.Instructions, r.Questions[i].Instructions, StringComparison.Ordinal);
+                    // The question names its entry by path AND by its own name and table (m16/jev-size: Jev does not count into a list).
+                    var e = entries.RootElement[i];
+                    Assert.Equal("For the column `columns[" + i + "]`, named \"" + e.GetProperty("name").GetString() + "\" in the table \"" + e.GetProperty("table").GetString() + "\": "
+                                 + ColumnSummarizeFamily.Instructions, r.Questions[i].Instructions);
                     Assert.StartsWith("summarize_by:column:", r.Questions[i].Name, StringComparison.Ordinal);
                 }
             }

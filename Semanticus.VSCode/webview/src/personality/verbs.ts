@@ -28,6 +28,16 @@ export const PLAIN: Record<VerbGroup, string> = {
 export const PLAIN_WORKING = 'Working';
 export const DEFAULT_GROUP: VerbGroup = 'Readiness';
 
+/** What the status line says once work has shown no sign of progress for STUCK_MS: the plain fact of what it waits on (Kane, 16 Oct). */
+export const WAITING: Record<VerbGroup, string> = {
+  Modelling: 'Waiting for the model to finish the edit', DAX: 'Waiting for the query to answer', Relationships: 'Waiting for the relationship check',
+  Readiness: 'Waiting for the check to finish', Publishing: 'Waiting for the service to answer', Jev: 'Waiting for Jev to finish this step',
+};
+export const WAITING_DEFAULT = 'Waiting for the answer';
+
+/** How long work may run without a sign of progress before the status line stops joking and says what it waits on (hero 24 D8; a few seconds, Kane 16 Oct). */
+export const STUCK_MS = 6_000;
+
 /** How long each verb stays: calm, never a flicker. */
 export const VERB_HOLD_MS = 2300;
 
@@ -69,7 +79,7 @@ export function groupForTool(tool: string | null | undefined): VerbGroup | null 
 
 /** The verb group for a Studio surface the person is running (tabbusy.mjs PRESERVED_SURFACES), or an engine progress key. */
 export function groupForSurface(surface: string): VerbGroup {
-  if (surface === 'daxlab') return 'DAX';
+  if (surface === 'query' || surface === 'daxlab') return 'DAX';
   if (surface === 'lineage') return 'Relationships';
   if (surface === 'plan') return 'Readiness';
   return groupForTool(surface) ?? 'Modelling';

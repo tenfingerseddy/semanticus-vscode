@@ -57,7 +57,7 @@ namespace Semanticus.Engine
             // LayoutStore.DirFor already RETURNS the `.semanticus` sidecar dir (PBIP hop included) — only the
             // raw-workspace fallback needs the segment appended (the McpSmoke test-agent caught the doubling).
             return !ExperienceStore.IsEphemeralAnchor(anchor) ? LayoutStore.DirFor(anchor)
-                 : _workspaceDir == null ? null : Path.Combine(_workspaceDir, LayoutStore.DirName);
+                 : NoFileSidecar(context.Session);
         }
 
         private (string userDir, string stockDir) WorkflowDirs() => WorkflowDirs(_sessions.CurrentContext);

@@ -87,6 +87,10 @@ export type NotesDeps = {
 };
 
 const time = (iso: string | undefined | null) => { const t = Date.parse(iso ?? ''); return Number.isFinite(t) ? t : 0; };
+/** True when the engine's suggestion of the same id now says something else or lists other steps (added, taken away or changed). */
+const stepsDiffer = (next: StudioSuggestion, held: StudioSuggestion) =>
+  next.say !== held.say || next.steps.length !== held.steps.length
+  || next.steps.some((s, i) => s.label !== held.steps[i]?.label || s.prompt !== held.steps[i]?.prompt);
 
 export function createNotesStore(deps: NotesDeps) {
   const driver = deps.driver;
@@ -142,6 +146,8 @@ export function createNotesStore(deps: NotesDeps) {
   /** The work is over: a read note leaves the strip, and notes still waiting go to What I did, unread. A playing note finishes first. */
   function clearIfOver(): boolean {
     if (!workOver || phase === 'playing' || (!current && queue.length === 0)) return false;
+    // A tour step waits for Next, so its words stay until the person moves on; quiet work never clears them (v-fix-tour-polish, 18 Oct).
+    if (current?.by === 'tour' && queue.length === 0) return false;
     for (const n of [...(current && phase === 'waiting' ? [current] : []), ...queue]) unread.add(n.id);
     queue = []; current = null; phase = null; playing = null;
     return true;
@@ -314,6 +320,18 @@ export function createNotesStore(deps: NotesDeps) {
       }
       if (added) { log.sort((a, b) => time(a.at) - time(b.at)); trimLog(); }
       if (view.suggestion && !suggestion && view.suggestion.id) suggestion = { suggestion: view.suggestion, added: [], failed: null };
+      else if (suggestion && view.suggestion === null) suggestion = null;   // the engine took its last step away (every one was about a publish that has landed)
+      else if (suggestion && view.suggestion && view.suggestion.id === suggestion.suggestion.id && stepsDiffer(view.suggestion, suggestion.suggestion)) {
+        // The engine changed the steps: it took the publish step away once the words are on the service, or put it back after an
+        // Undo publish. The new list wins; a press is kept for every step that is still there, matched by its label and prompt.
+        const old = suggestion.suggestion.steps;
+        const pressed = suggestion.added;
+        const added = view.suggestion.steps
+          .map((s, n) => ({ n, i: old.findIndex((x) => x.label === s.label && x.prompt === s.prompt) }))
+          .filter(({ i }) => i >= 0 && pressed.includes(i))
+          .map(({ n }) => n);
+        suggestion = { suggestion: view.suggestion, added, failed: null };
+      }
       emit();
     },
 

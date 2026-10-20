@@ -389,6 +389,7 @@ namespace Semanticus.Engine
                 add.AddRange(entry.args);
                 if (cur != null) h.Run(claude, new[] { "mcp", "remove", "--scope", "user", "semanticus" });
                 var (code, output) = h.Run(claude, add);
+                if (code != 0 && cur != null) RestoreClaudeEntry(h, claude, cur);   // remove worked, add did not: put the old entry back
                 if (code != 0)
                     return Fail("claude-code", null, "Claude Code did not accept the connection" + (string.IsNullOrWhiteSpace(output) ? "." : ": " + FirstLine(output)));
                 return Done(r, "claude mcp add --scope user", backup, true);
@@ -402,6 +403,24 @@ namespace Semanticus.Engine
             var bak = BackupOnce(target);
             WriteAtomic(target, edit.Bytes);
             return Done(r, file, bak, true);
+        }
+
+        /// <summary>Put the entry the person had back after a failed update, so a refused add never leaves them with none.</summary>
+        private static void RestoreClaudeEntry(ConnectHost h, string claude, JsonNode old)
+        {
+            try
+            {
+                var command = old["command"]?.GetValue<string>();
+                if (string.IsNullOrEmpty(command)) return;
+                // The name goes before -e: claude's -e is variadic and would swallow it (F-291).
+                var back = new List<string> { "mcp", "add", "--scope", "user", "semanticus" };
+                if (old["env"] is JsonObject env)
+                    foreach (var kv in env) if (kv.Value != null) { back.Add("-e"); back.Add(kv.Key + "=" + kv.Value.ToString()); }
+                back.Add("--"); back.Add(command);
+                if (old["args"] is JsonArray args) back.AddRange(args.Select(a => a?.ToString() ?? ""));
+                h.Run(claude, back);
+            }
+            catch (Exception) { /* a failed restore cannot make the first failure worse */ }
         }
 
         private static string FirstLine(string s) => s.Split('\n')[0].Trim();

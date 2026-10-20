@@ -925,7 +925,7 @@ namespace Semanticus.Engine
                         var current = _sessions.Current;
                         return (current == null ? null : current.Id, current == null ? -1L : current.Revision);
                     });
-                    var asked = await Decisions.AskAsync(point.Name, snapshot, questions,
+                    var asked = await Splitter.AskAsync(Decisions, point.Name, snapshot, questions,
                         isPro: Entitlement.FeatureGrants.IsProTier(_entitlement),
                         enabled: DecisionPointEnabled(point.Name),
                         fence: fence,
@@ -1020,7 +1020,7 @@ namespace Semanticus.Engine
             DecisionOutcome asked;
             try
             {
-                asked = await Decisions.AskAsync(point.Name, outcome.Request.Snapshot, outcome.Request.Questions,
+                asked = await Splitter.AskAsync(Decisions, point.Name, outcome.Request.Snapshot, outcome.Request.Questions,
                     isPro: Entitlement.FeatureGrants.IsProTier(_entitlement),
                     enabled: DecisionPointEnabled(point.Name),
                     fence: fence,

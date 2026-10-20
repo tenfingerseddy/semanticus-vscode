@@ -42,3 +42,17 @@ export function surfaceCount(): number {
 export function resetSurfaces(): void {
   stack.length = 0;
 }
+
+// A list that is open inside a surface owns the first Escape: that press closes the list and nothing else (round 2 N14). The page cannot
+// be told when a native list closes, so nothing is tracked: the question is asked of the focused control at the moment of the press.
+// A native <select> answers with :open (Chromium 133 and later), a combobox says aria-expanded. Where the list's own window eats the key,
+// the page never sees it and the surface is untouched; the next Escape then finds no open list and closes the surface.
+interface FocusedLike { tagName?: string; matches?: (selector: string) => boolean; getAttribute?: (name: string) => string | null }
+
+/** True when the focused control has a list open, so this Escape is the list's and the surface stays. */
+export function escapeClosesList(focused: FocusedLike | null | undefined): boolean {
+  if (!focused) return false;
+  if (focused.getAttribute?.('aria-expanded') === 'true') return true;
+  if (focused.tagName !== 'SELECT') return false;
+  try { return !!focused.matches?.(':open'); } catch { return false; }
+}

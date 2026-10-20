@@ -40,7 +40,7 @@ const webRoot = resolve(__dir, '..', '..');          // Semanticus.VSCode/ (so /
 // Keep this in the same reading order as App.tsx: intent groups first, then the three standalone
 // surfaces. `all` is the product-wide visual gate, so an omitted/renamed tab would be a silent coverage hole.
 const STUDIO_TABS = [
-  'Plan', 'Diagram', 'Lineage', 'Find and replace', 'Data', 'Size by table',
+  'Plan', 'Diagram', 'Lineage', 'Data', 'Size by table',
   'Model Spec', 'Advanced Modelling', 'Power Query', 'Docs', 'AI instructions',
   'DAX Lab', 'Validation', 'Model quality', 'AI readiness', 'Reports',
   'Pending changes', 'History', 'Published', 'Workflows', 'Permissions',

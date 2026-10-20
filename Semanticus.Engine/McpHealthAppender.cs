@@ -60,10 +60,12 @@ namespace Semanticus.Engine
 
         /// <summary>The object a call is about, for the Studio's automatic note: an object ref in the arguments (objRef, ref, objectRef) or a table name.
         /// Null when the call names none or names it in a form the Studio cannot select.</summary>
+        internal const string CheckFocusPrefix = "check:";
+
         internal static string FocusOf(IEnumerable<KeyValuePair<string, JsonElement>> arguments)
         {
             if (arguments == null) return null;
-            string table = null;
+            string table = null, system = null, rule = null;
             foreach (var kv in arguments)
             {
                 if (kv.Value.ValueKind != JsonValueKind.String) continue;
@@ -71,7 +73,11 @@ namespace Semanticus.Engine
                 if (string.IsNullOrEmpty(text)) continue;
                 if ((kv.Key == "objRef" || kv.Key == "ref" || kv.Key == "objectRef") && text.IndexOf(':') >= 1) return text;
                 if (kv.Key == "table") table = text;
+                if (kv.Key == "system") system = text;
+                if (kv.Key == "ruleId") rule = text;
             }
+            // waive_finding / unwaive_finding on a Validation check: the engine's Follow reads "check:" to narrate it as a check, on Validation.
+            if (table == null && rule != null && string.Equals(system, CheckWaivers.System, StringComparison.OrdinalIgnoreCase)) return CheckFocusPrefix + rule;
             return table == null ? null : "table:" + table;
         }
 

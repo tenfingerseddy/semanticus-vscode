@@ -50,6 +50,8 @@ const STUBS = {
   './plan-head': { PlanHead: ({ slot, drive, run }) => React.createElement('header', { 'data-testid': 'plan-head' }, slot, drive, run), DriveSwitch: () => null, LiveSlot: () => null,
     usePlanGrade: () => ({ grade: null, refresh: async () => null }) },
   './studio/ask-assistant': { askAssistant: async () => ({ ok: true, text: '' }) },
+  './studio/next-line': { nextStore: { setScope: () => {} } },
+  './studio/driver-store': { useDriver: () => ({ assistantConnected: true }) },
   './connection': { useConnection: () => ({ session: { sessionId: 'test' }, context: null }) },
   './pro': {
     useTier: () => stubTier,

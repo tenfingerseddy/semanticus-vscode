@@ -287,19 +287,34 @@ namespace Semanticus.Tests
             var (_, second) = await BuildAsync(engine, allowFirst ? Answer.NotNow : Answer.Allow);
             var mark = oracle.Snapshots.Count;
             var asks = oracle.Asks;
+            var requests = oracle.Requests.Count;
             await RunPlanAsync(engine, oracle);
-            var onSecond = (Asks: oracle.Asks - asks, Sample: Sampled(oracle, mark));
+            var onSecond = (Asks: oracle.Asks - asks, Sample: Sampled(oracle, mark), Gate: await GateOpenAsync(engine, sessions), Points: PointsSince(oracle, requests));
 
             await engine.OpenAsync(first);
-            mark = oracle.Snapshots.Count; asks = oracle.Asks;
+            mark = oracle.Snapshots.Count; asks = oracle.Asks; requests = oracle.Requests.Count;
             await RunPlanAsync(engine, oracle);
-            var onFirst = (Asks: oracle.Asks - asks, Sample: Sampled(oracle, mark));
-            Say($"D1 second start (allow first {allowFirst}): second model asks {onSecond.Asks} sample {onSecond.Sample}; first model reopened asks {onFirst.Asks} sample {onFirst.Sample}");
+            var onFirst = (Asks: oracle.Asks - asks, Sample: Sampled(oracle, mark), Gate: await GateOpenAsync(engine, sessions), Points: PointsSince(oracle, requests));
+            Say($"D1 second start (allow first {allowFirst}): second model asks {onSecond.Asks} sample {onSecond.Sample} gate {onSecond.Gate}; first model reopened asks {onFirst.Asks} sample {onFirst.Sample} gate {onFirst.Gate}");
 
             var (allowed, declined) = allowFirst ? (onFirst, onSecond) : (onSecond, onFirst);
             Assert.True(declined.Asks > 0, "the model the person said Not now for was never asked about, so this proves nothing");
             Assert.True(declined.Sample == 0, declined.Sample + " requests carried sample facts on the model whose start the person said Not now to");
-            Assert.True(allowed.Asks == 0 || allowed.Sample > 0, "the model the person allowed was asked about without its sample: the gate shut everything");
+            Assert.False(declined.Gate, "the model the person said Not now to has the sample open to Jev");
+            Assert.True(allowed.Gate, "the model the person allowed has the sample shut to Jev: the gate shut everything");
+            // A model still open from its own build has its columns' summarize and category decided by the start (the Plan does not ask Jev again about those), and
+            // the questions left (formats, the AI schema, the ranking) read no measured fact. So its Plan sends a request with the sample only when it asks a point that reads one.
+            Assert.True(allowed.Sample > 0 || !allowed.Points.Any(p => p == DecisionRegistry.ColumnSummarize || p == DecisionRegistry.ColumnCategory),
+                "the model the person allowed was asked a question that reads the sample, without its sample: " + string.Join(", ", allowed.Points));
+        }
+
+        private static string[] PointsSince(StartPlanDecideTests.PolicyOracle o, int from) => o.Requests.Skip(from).Select(r => r.Point).Distinct().ToArray();
+
+        /// <summary>Whether the sample is open to Jev for the open model: the stored grant covers it and the facts Jev reads are the sample's.</summary>
+        private static async Task<bool> GateOpenAsync(LocalEngine engine, SessionManager sessions)
+        {
+            var planId = engine.LoadSourceFacts(sessions.Current)?.PlanId;
+            return planId != null && await engine.SampleDisclosedAsync(planId) && engine.TryGetJevAskFacts()?.Data == Semanticus.Engine.Facts.ModelFactsData.SourceSample;
         }
 
         // ================================================================== D2: every person accept path, built on either door

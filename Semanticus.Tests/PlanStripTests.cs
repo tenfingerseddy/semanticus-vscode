@@ -97,6 +97,21 @@ namespace Semanticus.Tests
             Assert.Equal(1, strip.Tracks.Single(t => t.Doer == PlanDoers.Assistant).Done);
         }
 
+        // Hero 26 N9: Plan done held 71% and then ticked down to 69% when a run ended, because the run's own edits raised the "Save the model" row. Saving is not a
+        // task of the plan, so it is in neither number, whether it is open or recorded as done.
+        [Fact]
+        public void The_save_row_is_never_a_task_of_the_plan_figure()
+        {
+            ModelPlanItem Row(string id, string word) => new ModelPlanItem { Id = id, Doer = PlanDoers.Semanticus, StateWord = word };
+            var tasks = new[] { Row("t1", PlanStateWords.Done), Row("t2", PlanStateWords.Done), Row("t3", PlanStateWords.Ready) };
+            var before = PlanStripBuilder.Build(tasks, null, new PlanStripInputs { Now = DateTimeOffset.UtcNow });
+            var withSave = PlanStripBuilder.Build(tasks.Concat(new[] { Row(LocalEngine.UnsavedItemId, PlanStateWords.Ready) }).ToArray(), null, new PlanStripInputs { Now = DateTimeOffset.UtcNow });
+            Assert.Equal((2, 3), (before.TasksDone, before.TasksAll));
+            Assert.Equal((before.TasksDone, before.TasksAll), (withSave.TasksDone, withSave.TasksAll));
+            var saved = PlanStripBuilder.Build(tasks, null, new PlanStripInputs { Now = DateTimeOffset.UtcNow, DoneIds = new[] { LocalEngine.UnsavedItemId } });
+            Assert.Equal((before.TasksDone, before.TasksAll), (saved.TasksDone, saved.TasksAll));
+        }
+
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Latest_is_the_newest_ledger_entry()

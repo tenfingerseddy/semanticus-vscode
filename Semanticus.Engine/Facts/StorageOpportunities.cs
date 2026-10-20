@@ -56,6 +56,8 @@ namespace Semanticus.Engine.Facts
     {
         public const long MB = 1048576;
         public const long Material = 1 * MB;   // a column is "materially large" once it costs at least about 1 MB
+        public const double SharePct = 25;      // a column at this share of the model is always named (the biggest cost)
+        public const long ShareFloor = 64 * 1024;   // ... unless it is trivially small
 
         private static readonly HashSet<string> NumericTypes = new HashSet<string>(StringComparer.Ordinal) { "int64", "decimal", "double", "currency" };
 
@@ -128,6 +130,25 @@ namespace Semanticus.Engine.Facts
                     o.Effect = observationEffect ?? "No estimate. Grouping-index controls are not yet available; review with Ask AI.";
                     output.Add(o);
                 }
+            }
+
+            // The biggest cost is always named (UAT P16): one column at a clear share of the model is its own finding, first in the list, even when it is
+            // under the byte floor above (a small model where every column is under 1 MB) and even when the dictionary or hash rule names it too.
+            // Those say why it is big; this says how much of the model it is.
+            var top = (report.TopColumns ?? Array.Empty<VpaqColumn>()).OrderByDescending(c => c.TotalSize).FirstOrDefault();
+            if (top != null && top.PctOfModel >= SharePct && top.TotalSize >= ShareFloor)
+            {
+                output.Insert(0, new StorageOpportunity
+                {
+                    Ref = ColRef(top.Table, top.Column), Name = top.Table + "[" + top.Column + "]", Table = top.Table, Column = top.Column,
+                    Encoding = top.Encoding, Data = top.DataSize, Dict = top.DictionarySize, Hash = top.HashIndexSize, Total = top.TotalSize, PctModel = top.PctOfModel,
+                    PctTable = PctOfTable(top.TotalSize, TSize(top.Table)), Bytes = top.TotalSize, Severity = 1, Group = "Worth reviewing",
+                    Kind = "share", RuleId = "STORAGE-SHARE",
+                    // The headline IS the finding: the list shows it before anyone opens a row.
+                    RuleName = $"{top.Column} is {JsRound(top.PctOfModel)}% {share}",
+                    Message = $"{observationPrefix}It takes {Sz(top.TotalSize)}. Ask your assistant to shrink it, or check that the model needs all of it.",
+                    Effect = observationEffect ?? "No estimate before refresh and rescan",
+                });
             }
 
             // These rules join query-engine rows to EDITING-session metadata by textual ref. Only sameInstance proves

@@ -57,26 +57,25 @@ namespace Semanticus.Tests
             await rig.F.BuildModelAsync();
             await rig.F.ConsentAsync();
             rig.Engine.JevPicksChartForTest = barMet;
-            rig.Jev = new ScriptedOracle(script ?? (_ => ("matrix", 0.95)));
+            rig.Jev = new ScriptedOracle(script ?? (_ => ("dumbbell", 0.95)));
             rig.Engine.UseDecisionsForTest(new DecisionService(rig.Jev, new DecisionBudget()));
             return rig;
         }
 
-        /// <summary>"Net Sales by Region and Month": one category, one date, so the rules leave matrix, table and line.</summary>
-        private static ChartPickAsk RegionByMonth(string rulesPick = "matrix") => new ChartPickAsk
+        /// <summary>"Net Sales and last year's by Region": one split, two numbers in one unit, so the rules leave dumbbell, variance, slope and table.</summary>
+        private static ChartPickAsk RegionByMonth(string rulesPick = "dumbbell") => new ChartPickAsk
         {
-            Words = "share of net sales by region each month",
+            Words = "net sales against last year by region",
             Shape = new ChartPickShape
             {
-                Dims = new[]
-                {
-                    new ChartPickDim { Name = "Region", IsDate = false, Distinct = 12 },
-                    new ChartPickDim { Name = "Month", IsDate = true, Distinct = 24 },
-                },
-                Measures = 1,
-                Rows = 288,
+                Dims = new[] { new ChartPickDim { Name = "Region", IsDate = false, Distinct = 12 } },
+                Measures = 2,
+                MeasureNames = new[] { "Net Sales", "Net Sales PY" },
+                Rows = 12,
+                SameUnit = true,
+                Negatives = false,
             },
-            Fits = new[] { "matrix", "line", "area", "table" },
+            Fits = new[] { "dumbbell", "variance", "slope", "table" },
             RulesPick = rulesPick,
         };
 
@@ -114,10 +113,10 @@ namespace Semanticus.Tests
         {
             using var rig = await BuildAsync();
             var pick = await rig.Engine.PickChartKindAsync(RegionByMonth());
-            Assert.Equal("matrix", pick.Kind);
+            Assert.Equal("dumbbell", pick.Kind);
             Assert.Equal(ChartPick.ByRules, pick.By);
-            Assert.Equal("Jev's chart pick is off until it clears its bar.", pick.Note);
-            Assert.Equal(JevChartPick.ReasonFor("matrix"), pick.Reason);
+            Assert.Equal("Jev's visual pick is off until it clears its bar.", pick.Note);
+            Assert.Equal(JevChartPick.ReasonFor("dumbbell"), pick.Reason);
             Assert.Empty(rig.Jev.Seen);
             Assert.Equal(0, rig.Engine.Decisions.RequestsStarted);
 
@@ -129,11 +128,11 @@ namespace Semanticus.Tests
         [Fact]
         public async Task When_live_a_pick_in_fits_is_jevs_with_the_engines_own_reason()
         {
-            using var rig = await BuildAsync(barMet: true, script: _ => ("line", 0.93));
+            using var rig = await BuildAsync(barMet: true, script: _ => ("variance", 0.93));
             var pick = await rig.Engine.PickChartKindAsync(RegionByMonth());
-            Assert.Equal("line", pick.Kind);
+            Assert.Equal("variance", pick.Kind);
             Assert.Equal(ChartPick.ByJev, pick.By);
-            Assert.Equal("Numbers over time read best as a line from left to right.", pick.Reason);
+            Assert.Equal(JevChartPick.ReasonFor("variance"), pick.Reason);
             Assert.Equal(0.93, pick.Confidence);
             Assert.Null(pick.Note);
 
@@ -141,15 +140,15 @@ namespace Semanticus.Tests
             Assert.Equal(DecisionRegistry.QueriesChartKind, r.PointName);
             var offered = r.Questions.Single().Options.Select(o => o.Id).ToArray();
             Assert.Equal("rules", offered.Last());
-            Assert.Equal(new[] { "area", "line", "matrix", "table" }, offered.Take(4).OrderBy(x => x, StringComparer.Ordinal).ToArray());
+            Assert.Equal(new[] { "dumbbell", "slope", "table", "variance" }, offered.Take(4).OrderBy(x => x, StringComparer.Ordinal).ToArray());
         }
 
         [Fact]
         public async Task A_pick_outside_fits_is_refused_and_falls_back_to_the_rules()
         {
-            using var rig = await BuildAsync(barMet: true, script: _ => ("bar", 0.99));
+            using var rig = await BuildAsync(barMet: true, script: _ => ("bars", 0.99));
             var pick = await rig.Engine.PickChartKindAsync(RegionByMonth());
-            Assert.Equal("matrix", pick.Kind);
+            Assert.Equal("dumbbell", pick.Kind);
             Assert.Equal(ChartPick.ByRules, pick.By);
             Assert.False(string.IsNullOrEmpty(pick.Note));
             Assert.Single(rig.Jev.Seen);
@@ -157,12 +156,12 @@ namespace Semanticus.Tests
             // And the reader alone refuses it too, whatever reached it: an answer to a wider offer than this result's fits.
             var point = DecisionRegistry.Require(DecisionRegistry.QueriesChartKind);
             var snapshot = JevChartPick.Snapshot("x", RegionByMonth().Shape);
-            var wide = new DecisionRequest(point.Name, point.SchemaVersion, snapshot, JevChartPick.Questions(snapshot, new[] { "bar", "matrix" }));
-            var answers = await new ScriptedOracle(_ => ("bar", 0.99)).AskAsync(wide, CancellationToken.None);
+            var wide = new DecisionRequest(point.Name, point.SchemaVersion, snapshot, JevChartPick.Questions(snapshot, new[] { "bars", "dumbbell" }));
+            var answers = await new ScriptedOracle(_ => ("bars", 0.99)).AskAsync(wide, CancellationToken.None);
             Assert.True(answers.Decided);
-            var read = JevChartPick.Read(answers, point.ConfidenceBar, new[] { "matrix", "line", "table" }, "matrix");
+            var read = JevChartPick.Read(answers, point.ConfidenceBar, new[] { "dumbbell", "variance", "table" }, "dumbbell");
             Assert.Equal(ChartPick.ByRules, read.By);
-            Assert.Equal("matrix", read.Kind);
+            Assert.Equal("dumbbell", read.Kind);
             Assert.Contains("ruled out", read.Note);
         }
 
@@ -172,7 +171,7 @@ namespace Semanticus.Tests
         {
             using var rig = await BuildAsync(barMet: true, script: _ => ("rules", 0.97));
             var pick = await rig.Engine.PickChartKindAsync(RegionByMonth());
-            Assert.Equal("matrix", pick.Kind);
+            Assert.Equal("dumbbell", pick.Kind);
             Assert.Equal(ChartPick.ByRules, pick.By);
             Assert.Equal("Jev said the rules' pick is fine.", pick.Note);
         }
@@ -181,9 +180,9 @@ namespace Semanticus.Tests
         [Fact]
         public async Task A_low_confidence_answer_keeps_the_rules_pick()
         {
-            using var rig = await BuildAsync(barMet: true, script: _ => ("line", 0.6));
+            using var rig = await BuildAsync(barMet: true, script: _ => ("variance", 0.6));
             var pick = await rig.Engine.PickChartKindAsync(RegionByMonth());
-            Assert.Equal("matrix", pick.Kind);
+            Assert.Equal("dumbbell", pick.Kind);
             Assert.Equal(ChartPick.ByRules, pick.By);
             Assert.Contains("not sure enough", pick.Note);
         }
@@ -204,7 +203,7 @@ namespace Semanticus.Tests
             await rig.Engine.SetDecisionPointEnabledAsync(DecisionRegistry.QueriesChartKind, true, "human");
             rig.Engine.UseDecisionsForTest(new DecisionService(NullDecisionOracle.Instance, new DecisionBudget()));
             var none = await rig.Engine.PickChartKindAsync(RegionByMonth());
-            Assert.Equal(("matrix", ChartPick.ByRules), (none.Kind, none.By));
+            Assert.Equal(("dumbbell", ChartPick.ByRules), (none.Kind, none.By));
             Assert.StartsWith("Jev was not asked", none.Note);
         }
 
@@ -217,14 +216,14 @@ namespace Semanticus.Tests
             Assert.Equal(new[] { "question_words", "result_shape" }, r.Snapshot.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray());
             var json = DecisionDigest.CanonicalSnapshotJson(r.Snapshot);
             Assert.Equal(
-                "{\"question_words\":\"share of net sales by region each month\",\"result_shape\":{\"dims\":[{\"distinct\":12,\"is_date\":false,\"name\":\"Region\"},{\"distinct\":24,\"is_date\":true,\"name\":\"Month\"}],\"measures\":1,\"rows\":288}}",
+                "{\"question_words\":\"net sales against last year by region\",\"result_shape\":{\"dims\":[{\"distinct\":12,\"is_date\":false,\"name\":\"Region\"}],\"has_negatives\":false,\"measure_names\":[\"Net Sales\",\"Net Sales PY\"],\"measures\":2,\"rows\":12,\"same_unit\":true}}",
                 json);
 
             // The wire type itself has nowhere to put a row or a value.
             var props = typeof(ChartPickAsk).GetProperties().Select(p => p.Name)
                 .Concat(typeof(ChartPickShape).GetProperties().Select(p => p.Name))
                 .Concat(typeof(ChartPickDim).GetProperties().Select(p => p.Name)).OrderBy(x => x, StringComparer.Ordinal).ToArray();
-            Assert.Equal(new[] { "Dims", "Distinct", "Fits", "IsDate", "Measures", "Name", "Rows", "RulesPick", "Shape", "Words" }, props);
+            Assert.Equal(new[] { "Dims", "Distinct", "Fits", "IsDate", "MeasureNames", "Measures", "Name", "Negatives", "Rows", "RulesPick", "SameUnit", "Shape", "Words" }, props);
 
             // A result built from parts has no words, and none are sent.
             var noWords = RegionByMonth();
@@ -240,7 +239,7 @@ namespace Semanticus.Tests
             var ex = await Assert.ThrowsAsync<EntitlementException>(() => rig.Engine.PickChartKindAsync(RegionByMonth()));
             Assert.Contains("Ask your data is a Semanticus Pro feature", ex.Message);
             using var shape = JsonDocument.Parse("{\"dims\":[],\"measures\":1,\"rows\":1}");
-            await Assert.ThrowsAsync<EntitlementException>(() => McpTools.PickChartKind(rig.Engine, shape.RootElement.Clone(), new[] { "card", "table" }, "card"));
+            await Assert.ThrowsAsync<EntitlementException>(() => McpTools.PickChartKind(rig.Engine, shape.RootElement.Clone(), new[] { "total", "table" }, "total"));
             Assert.Empty(rig.Jev.Seen);
             Assert.Equal(0, rig.Engine.Decisions.RequestsStarted);
         }
@@ -249,11 +248,11 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Both_doors_reach_the_same_method_and_answer_the_same()
         {
-            using var rig = await BuildAsync(barMet: true, script: _ => ("line", 0.93));
+            using var rig = await BuildAsync(barMet: true, script: _ => ("variance", 0.93));
             var viaRpc = await new EngineRpcTarget(rig.Engine).pickChartKind(RegionByMonth());
-            using var shape = JsonDocument.Parse("{\"dims\":[{\"name\":\"Region\",\"isDate\":false,\"distinct\":12},{\"name\":\"Month\",\"isDate\":true,\"distinct\":24}],\"measures\":1,\"rows\":288}");
-            var viaMcp = await McpTools.PickChartKind(rig.Engine, shape.RootElement.Clone(), new[] { "matrix", "line", "area", "table" }, "matrix",
-                "share of net sales by region each month");
+            using var shape = JsonDocument.Parse("{\"dims\":[{\"name\":\"Region\",\"isDate\":false,\"distinct\":12}],\"measures\":2,\"rows\":12,\"measureNames\":[\"Net Sales\",\"Net Sales PY\"],\"sameUnit\":true,\"negatives\":false}");
+            var viaMcp = await McpTools.PickChartKind(rig.Engine, shape.RootElement.Clone(), new[] { "dumbbell", "variance", "slope", "table" }, "dumbbell",
+                "net sales against last year by region");
             Assert.Equal((viaRpc.Kind, viaRpc.By, viaRpc.Reason), (viaMcp.Kind, viaMcp.By, viaMcp.Reason));
             Assert.Equal(ChartPick.ByJev, viaMcp.By);
             Assert.Equal(2, rig.Jev.Seen.Count);
@@ -269,7 +268,7 @@ namespace Semanticus.Tests
         public async Task A_rules_pick_that_is_not_in_fits_is_a_caller_error()
         {
             using var rig = await BuildAsync();
-            var ask = RegionByMonth("bar");
+            var ask = RegionByMonth("bars");
             await Assert.ThrowsAsync<ArgumentException>(() => rig.Engine.PickChartKindAsync(ask));
         }
     }

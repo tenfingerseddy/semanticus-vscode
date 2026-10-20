@@ -80,9 +80,9 @@ namespace Semanticus.Engine.Entitlement
             // and the parts builder and the question history go with it, so all of it is Pro and a free session is
             // refused before anything is read, matched or sent.
             new Group(ProFeature.AskData, "Ask your data",
-                new[] { "ask_data", "list_data_questions", "pick_chart_kind" },
-                new[] { "askData", "listDataQuestions", "pickChartKind" },
-                new[] { "AskDataAsync", "ListDataQuestionsAsync", "PickChartKindAsync" }),
+                new[] { "ask_data", "list_data_questions", "pick_chart_kind", "pick_check_visuals" },
+                new[] { "askData", "listDataQuestions", "pickChartKind", "pickCheckVisuals" },
+                new[] { "AskDataAsync", "ListDataQuestionsAsync", "PickChartKindAsync", "PickCheckVisualsAsync" }),
             new Group(ProFeature.Workflows, "Workflows",
                 new[]   // 38 operations (abort_workflow is free): 30, the composer's four draft ops (lane L4, Kane 24 Sep: draft ops stay Pro), and describe_workflow_steps (Kane's UAT, 25 Sep)
                 {
@@ -136,7 +136,7 @@ namespace Semanticus.Engine.Entitlement
         public static readonly IReadOnlyCollection<string> FreeOperations = new HashSet<string>(StringComparer.Ordinal)
         {
             "abort_workflow",   // Stop is free: a run that was active when a trial or Pro ended must still be stoppable (Kane, 12 Oct 2026)
-            "accept_primer_suggestion", "add_interview_question", "add_plan_item", "ai_readiness_scan",
+            "accept_primer_suggestion", "add_interview_question", "add_interview_questions", "get_copilot_view", "get_student_questions", "interview_rounds", "run_interview_batch", "add_plan_item", "ai_readiness_scan",
             "analyze_cloud_reports", "analyze_reports", "apply_dax_script", "apply_fix",
             "apply_model_diff", "apply_plan", "apply_safe_fixes", "apply_tmdl", "fix_them", "reading_card",
             "benchmark_cold_warm", "benchmark_dax", "blame_value", "bpa_scan", "cancel_query", "capture_query_plan", "check_reports",
@@ -170,6 +170,10 @@ namespace Semanticus.Engine.Entitlement
             "get_next_actions",
             // The Studio wire (1.4, Claude drives): the assistant says what it is doing and what it would do next. Free on every tier.
             "show_in_studio", "suggest_next", "get_next_step", "set_next_step",
+            // The Query notebook (1.6): pins, close and the full history of queries. Free: a query run as written is a row too, and nothing asks Jev.
+            "query_notebook",
+            // The window-only settings and the trial start get an agent door (1.5.1, F-292 and F-293). Free: a free session is who starts a trial.
+            "get_personality_settings", "set_personality_settings", "start_trial",
             // The target (the Fix milestone). Free for a further reason of its own: a target is a sentence
             // the person wrote about their own model, so charging for it would be charging them to write
             // down what they want.
@@ -268,7 +272,7 @@ namespace Semanticus.Engine.Entitlement
         {
             "resolveFileRecovery",
             "abortWorkflow",
-            "acceptPrimerSuggestion", "addInterviewQuestion", "addPlanItem", "aiReadinessScan",
+            "acceptPrimerSuggestion", "addInterviewQuestion", "addInterviewQuestions", "getCopilotView", "getStudentQuestions", "interviewRounds", "runInterviewBatch", "addPlanItem", "aiReadinessScan",
             "aiReadinessScanLive", "analyzeCloudReports", "analyzeReports", "applyDaxScript",
             "applyDiff", "applyFix", "applyPlan", "applySafeFixes", "fixThem", "readingCard",
             "applyTmdlScript", "benchmarkColdWarm", "benchmarkDax", "blameValue",
@@ -284,7 +288,7 @@ namespace Semanticus.Engine.Entitlement
             "dryRunOp", "duplicateObject", "createLinguisticSchema", "evaluateAndLog",
             "explainValue", "exportVerifiedEdits", "exportVpax", "forgetConnection",
             "getAgentPolicy", "getAiInstructions", "getCustomRules", "getDax",
-            "getDependencies", "getDependents", "getEntitlement", "getTrialTally", "getFixPrompt",
+            "getDependencies", "getDependents", "getEntitlement", "getTrialTally", "getHostSettings", "setHostSettings", "startTrial", "getFixPrompt",
             "getGrounding", "getLayout", "getLineage", "getModelFacts", "getModelFingerprint",
             "getModelGraph", "getModelObjects", "getObject", "getObjectProperties",
             "getOpCatalog", "getOrientation", "getPipelineStages", "getPlan",
@@ -299,6 +303,9 @@ namespace Semanticus.Engine.Entitlement
             "getNextActions",
             // The Studio wire (1.4). The driver report, setStudioDriver, is on HumanGovernanceRpcTarget and so not on this list.
             "showInStudio", "suggestNext", "getStudioNotes", "noteAgentCall", "getNextStep", "setNextStep",
+            // The Query notebook (1.6): both doors read and tidy the rows (queryNotebook). The page writes its own rows on the governance target.
+            // recordAgentQueryRun keeps the assistant's own run_dax as a row (hero 26 N1): the person's own assistant does it, so it is free like run_dax.
+            "queryNotebook", "recordAgentQueryRun",
             "getStageItems", "getVerifiedMode", "getWorkflowRun", "gitStatus",
             "harnessReport", "impactAssessment", "impactOf", "labelConnection",
             "lintDax", "listAccountProfiles", "listAssistants", "listColumns", "listConnectionHistory",
@@ -382,7 +389,7 @@ namespace Semanticus.Engine.Entitlement
         /// method is unclassified until it is named here or in a Group, and the test says so.</summary>
         public static readonly IReadOnlyCollection<string> FreeEngineMethods = new HashSet<string>(StringComparer.Ordinal)
         {
-            "AbortWorkflowAsync", "AcceptPrimerSuggestionAsync", "AddInterviewQuestionAsync", "AddPlanItemAsync", "AiReadinessScanAsync",
+            "AbortWorkflowAsync", "AcceptPrimerSuggestionAsync", "AddInterviewQuestionAsync", "AddInterviewQuestionsAsync", "GetCopilotViewAsync", "GetStudentQuestionsAsync", "InterviewRoundsAsync", "RunInterviewBatchAsync", "AddPlanItemAsync", "AiReadinessScanAsync",
             "AiReadinessScanLiveAsync", "ReadingCardAsync", "FixThemAsync", "AnalyzeCloudReportsAsync", "AnalyzeReportsAsync", "ApplyDaxScriptAsync",
             "ApplyDiffAsync", "ApplyFixAsync", "ApplyPlanAsync", "ApplySafeFixesAsync",
             "ApplyTmdlScriptAsync", "ApproveAgentActionAsync", "BenchmarkColdWarmAsync", "BenchmarkDaxAsync",
@@ -418,9 +425,11 @@ namespace Semanticus.Engine.Entitlement
             "GetNextActionsAsync",
             // The Studio wire (1.4): free on every tier. SetStudioDriverAsync is the Studio's own report, person-only like the Plan controls above.
             "ShowInStudioAsync", "SuggestNextAsync", "GetStudioNotesAsync", "NoteAgentCallAsync", "SetStudioDriverAsync",
+            // The Query notebook (1.6): free on every tier.
+            "QueryNotebookAsync", "RecordQueryRunAsync", "NoteQueryRowAsync",
             "GetNextStepAsync", "SetNextStepAsync",
             "GetCustomRulesAsync", "GetDaxAsync", "GetDependenciesAsync", "GetDependentsAsync",
-            "GetEntitlementAsync", "GetTrialTallyAsync", "GetFixPromptAsync", "GetGroundingAsync", "GetLayoutAsync",
+            "GetEntitlementAsync", "GetTrialTallyAsync", "GetHostSettingsAsync", "SetHostSettingsAsync", "ReportHostSettingsAsync", "StartTrialAsync", "GetFixPromptAsync", "GetGroundingAsync", "GetLayoutAsync",
             "GetLineageAsync", "GetModelFactsAsync", "GetModelFingerprintAsync", "GetModelGraphAsync", "GetModelObjectsAsync",
             "GetObjectAsync", "GetObjectPropertiesAsync", "GetOpCatalogAsync", "GetOrientationAsync",
             "GetPipelineStagesAsync", "GetPlanAsync", "GetStageItemsAsync", "GetVerifiedModeAsync",

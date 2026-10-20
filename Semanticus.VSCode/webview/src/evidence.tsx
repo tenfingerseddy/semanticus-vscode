@@ -549,7 +549,7 @@ function ExplainedNumberEvidence({ record, digest, rich }: { record: VerifiedEdi
             <div key={i} className="flex items-baseline gap-2 text-(length:--sem-text-label)">
               <span className="truncate" style={{ color: 'var(--sem-fg)' }}>{str(pick(r, 'member', 'Member'))}</span>
               <span className="ml-auto tnum" style={{ color: 'var(--sem-fg)' }}>{str(pick(r, 'value', 'Value'))}</span>
-              <span className="tnum w-10 text-right" style={{ color: 'var(--sem-muted)' }}>{num(pick(r, 'pct', 'Pct')) != null ? num(pick(r, 'pct', 'Pct')) + '%' : ''}</span>
+              <span className="tnum w-10 text-right" style={{ color: 'var(--sem-muted)' }}>{num(pick(r, 'pct', 'Pct')) != null ? (num(pick(r, 'pct', 'Pct')) as number).toFixed(1) + '%' : ''}</span>
             </div>
           ))}
         </div>

@@ -17,6 +17,7 @@ const styles = read('webview/src/styles.css');
 // The scale's values moved into the visual-language tokens (One Visual Language, 23 September 2026).
 const tokens = read('webview/src/tokens.css');
 const daxlab = read('webview/src/daxlab.tsx');
+const query = read('webview/src/query.tsx');
 const deploy = read('webview/src/deploy.tsx');
 const compare = read('webview/src/compare.tsx');
 const diffview = read('webview/src/diffview.tsx');
@@ -68,7 +69,7 @@ function buttonTag(src, needle, what) {
 // (`}) {`), and cutting there silently hands back a body with no JSX in it.
 const NEXT_DECL = /\n(?:export\s+)?(?:function|const|let|class|type|interface|enum)\s/g;
 function fnBody(src, name, what) {
-  const m = new RegExp('\\nfunction ' + name + '[<(]').exec(src);
+  const m = new RegExp('\\n(?:export )?function ' + name + '[<(]').exec(src);
   if (!m) throw new Error(`could not find ${what} (function ${name})`);
   NEXT_DECL.lastIndex = m.index + 1;
   const next = NEXT_DECL.exec(src);
@@ -122,30 +123,29 @@ function onTheScale(tag, what, required = 'sem-btn') {
   if (inline) throw new Error(`${what} re-states the control scale inline with ${inline}`);
 }
 
-// ---- DAX Lab toolbar --------------------------------------------------------------------------
-check('DAX Lab Save measure check', () => onTheScale(buttonTag(daxlab, '>Save measure check', 'DAX Lab Save measure check'), 'DAX Lab Save measure check'));
-check('DAX Lab Stop', () => onTheScale(buttonTag(daxlab, '>Stop</button>', 'DAX Lab Stop'), 'DAX Lab Stop'));
-check('DAX Lab Run', () => {
-  const tag = buttonTag(daxlab, '>Run</button>', 'DAX Lab Run');
-  onTheScale(tag, 'DAX Lab Run');
-  has(tag, /sem-btn-primary/, 'DAX Lab Run is the one filled action in that toolbar');
+// ---- Query bar --------------------------------------------------------------------------------
+check('Query Stop', () => onTheScale(buttonTag(query, '>Stop</button>', 'Query Stop'), 'Query Stop'));
+check('Query Run', () => {
+  const tag = buttonTag(query, '>Run</button>', 'Query Run');
+  onTheScale(tag, 'Query Run');
+  has(tag, /sem-btn-primary/, 'Query Run is the one filled action in the bar');
 });
-// The Visual / Query pair is a segmented control, so it uses the shared segment, at the height that rule
-// gives, and carries its selected state on aria-pressed like every other segment in Studio.
-check('DAX Lab mode segment', () => {
-  const seg = fnBody(daxlab, 'Seg', 'the DAX Lab mode segment');
-  has(seg, /className="sem-seg[" ]/, 'the DAX Lab mode pair must use the shared .sem-seg wrapper');
-  has(seg, /className="sem-seg-item"/, 'the DAX Lab mode buttons must use .sem-seg-item');
-  has(seg, /aria-pressed=/, 'the DAX Lab mode segment must carry its selected state on aria-pressed');
+// The Fields / DAX pair in the row's DAX view is a segmented control, so it uses the shared segment, at the height that rule gives, and carries its
+// selected state on aria-pressed like every other segment in Studio.
+check('Query mode segment', () => {
+  const from = query.indexOf('aria-label="How to write the query"');
+  if (from < 0) throw new Error('could not find the Query mode segment');
+  const seg = query.slice(query.lastIndexOf('<span', from), query.indexOf('</span>', from));
+  has(seg, /className="sem-seg[" ]/, 'the Query mode pair must use the shared .sem-seg wrapper');
+  has(seg, /className="sem-seg-item"/, 'the Query mode buttons must use .sem-seg-item');
+  has(seg, /aria-pressed=/, 'the Query mode segment must carry its selected state on aria-pressed');
   for (const tag of seg.match(/<button[\s\S]*?>/g) ?? []) {
     const local = localSizing(tag);
-    if (local.length) throw new Error(`the DAX Lab mode segment re-states the scale with ${local.join(' ')}`);
+    if (local.length) throw new Error(`the Query mode segment re-states the scale with ${local.join(' ')}`);
     const inline = inlineSizing(tag);
-    if (inline) throw new Error(`the DAX Lab mode segment re-states the scale inline with ${inline}`);
+    if (inline) throw new Error(`the Query mode segment re-states the scale inline with ${inline}`);
   }
 });
-// The lab's own button primitive feeds the Performance / Server steps / Verify rows under that toolbar; it
-// sized itself, so those rows drifted from the toolbar above them.
 check('DAX Lab button primitive', () => onTheScale(buttonTag(fnBody(daxlab, 'Button', 'the DAX Lab button primitive'), '<button', 'the DAX Lab button primitive'), 'the DAX Lab button primitive'));
 
 // ---- Publish: the tab row and the controls under it ---------------------------------------------

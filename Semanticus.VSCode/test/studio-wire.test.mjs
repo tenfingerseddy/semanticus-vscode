@@ -38,8 +38,8 @@ const places = map.places;
 const CONTRACT_IDS = [
   'plan', 'plan/start', 'plan/history', 'plan/changes',
   'explore/data', 'explore/ask', 'explore/diagram', 'explore/lineage', 'explore/size',
-  'edit/find', 'edit/queries', 'edit/properties', 'edit/instructions', 'edit/advanced', 'edit/power-query',
-  'review/model-quality', 'review/ai-readiness', 'review/validation', 'review/docs',
+  'edit/queries', 'edit/properties', 'edit/instructions', 'edit/advanced', 'edit/power-query',
+  'review/model-quality', 'review/ai-readiness', 'review/copilot-test', 'review/validation', 'review/docs',
   'publish/changes', 'publish/new-model', 'publish/data-agent', 'workflows', 'connections', 'help',
 ];
 assert.deepEqual(places.map((p) => p.id), CONTRACT_IDS, 'the place ids are the contract\'s (adding or renaming one needs a line in the lane report)');
@@ -143,9 +143,9 @@ for (const p of places) {
   assert.equal(A.answerIsFor({ ...a1, at: new Date(Date.now() - 61000).toISOString() }, 's1'), false, 'the rows are the model\'s data: an old answer is not offered to a page that opens later');
   assert.equal(A.answerIsFor(null, 's1'), false);
   off();
-  const ask = readFileSync(join(webview, 'src', 'askdata.tsx'), 'utf8');
+  const ask = readFileSync(join(webview, 'src', 'query.tsx'), 'utf8') + readFileSync(join(webview, 'src', 'daxlab.tsx'), 'utf8');
   assert.match(ask, /Asked by your assistant/);
-  assert.match(ask, /data-testid="askdata-by-assistant"/);
+  assert.match(ask, /data-testid="query-by-assistant"/);
   assert.match(ask, /useAssistantAnswer\(\)/);
 }
 
@@ -389,6 +389,10 @@ const show = (n) => ({ type: 'studioShow', payload: { id: `sn-${n}`, say: `Note 
     assert.ok(C.TOOL_NOTE_KINDS.includes(kind), kind + ' is shown on the page');
   assert.match(page, /for \(const kind of TOOL_NOTE_KINDS\) useClaudeReflection\(kind, takeToolEvent\)/, 'Validation listens for every one of them');
   assert.match(page, /data-assistant-note=/, 'and shows the sentence');
+  // Validation C (1.6): Jev's visual pick is a quick look for the assistant, not a Validation tool with a sentence of its own.
+  assert.ok(!C.TOOL_NOTE_KINDS.includes('pick_check_visuals'), 'pick_check_visuals shows no sentence on the page');
+  // Validation A (1.6): the page no longer prints how many visuals Jev chose; each visual's own line still says who chose it.
+  assert.match(page, /by=\{chosen\.by\}/, 'the line under a visual says whether Jev or the rules chose it');
 }
 
 console.log('studio wire tests passed');

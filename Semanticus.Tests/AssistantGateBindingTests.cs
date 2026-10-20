@@ -250,6 +250,7 @@ namespace Semanticus.Tests
                 await RefusedAsync(() => gate.SaveAsync(target, "TMDL", true, "agent"));
                 Assert.Equal("not the model", File.ReadAllText(Path.Combine(target, "theirs.txt")));
                 Assert.Single(Directory.GetFileSystemEntries(target));
+                Directory.Delete(target, true);   // a copy goes only to a new or empty folder (b3e60c8a): the person clears the place they named, before the question that is approved
                 // the question as it stands now is the one approved
                 await ClearQuestionsAsync(engine);
                 await RefusedAsync(() => gate.SaveAsync(target, "TMDL", true, "agent"));

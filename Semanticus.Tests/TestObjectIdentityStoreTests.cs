@@ -252,7 +252,8 @@ namespace Semanticus.Tests
 
             var modelB = await engine.ListTestDefinitionsAsync();
             Assert.Empty(modelB.Definitions);
-            Assert.Contains("another model", modelB.Note);
+            // Another model's checks leave no note: a count of what is hidden from the person is noise (b686f546, TestsFixesTests).
+            Assert.Null(modelB.Note);
             Assert.Equal(0, (await engine.RunTestSuiteAsync(false, "human")).DefinitionCount);
             Assert.False(await engine.DeleteTestDefinitionAsync(stored.Id, "human"));
 

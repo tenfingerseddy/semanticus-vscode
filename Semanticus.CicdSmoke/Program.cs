@@ -786,10 +786,10 @@ namespace Semanticus.CicdSmoke
                     // A folder with a definition/ tree but MISSING the required definition.pbism is refused pre-flight
                     // (it would otherwise POST an incomplete payload → CorruptedPayload after the destructive override).
                     var noPbism = Path.Combine(Path.GetTempPath(), "semanticus_nopbism_" + Guid.NewGuid().ToString("N").Substring(0, 8), "M.SemanticModel");
-                    Directory.CreateDirectory(Path.Combine(noPbism, "definition"));
-                    File.WriteAllText(Path.Combine(noPbism, "definition", "model.tmdl"), "model M");
                     await engine.OpenAsync(bim);
-                    await engine.SaveAsync(noPbism, "TMDL", false, "human");   // re-anchor SourcePath to this folder
+                    await engine.SaveAsync(noPbism, "TMDL", false, "human");   // re-anchor SourcePath to this folder (a copy goes to a new folder, b3e60c8a)
+                    Directory.CreateDirectory(Path.Combine(noPbism, "definition"));   // then the definition/ tree, still with no definition.pbism
+                    File.WriteAllText(Path.Combine(noPbism, "definition", "model.tmdl"), "model M");
                     // SaveAsync flattened tmdl into noPbism root + still no definition.pbism → not a complete .SemanticModel.
                     var pubNoPbism = await engine.CicdPublishAsync("ws", "item", false, "azcli", null, "human");
                     Check("cicd publish: a folder missing definition.pbism is refused (incomplete .SemanticModel)",

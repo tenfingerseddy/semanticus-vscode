@@ -236,11 +236,11 @@ namespace Semanticus.Decisions
         /// bar (Query/JevChartPick.cs, JevPicks). Asked by pick_chart_kind.</summary>
         public const string QueriesChartKind = "queries.chart_kind";
 
-        /// <summary>Every chart kind Queries can draw, as the chart rules name them, plus the neutral "rules". The
-        /// options asked are the kinds the rules leave for one result, in a seeded order, then "rules".</summary>
+        /// <summary>Every visual the Query page can draw (the shared visual set), plus the neutral "rules". The
+        /// options asked are the visuals the rules leave for one result, in a seeded order, then "rules".</summary>
         public static readonly IReadOnlyList<string> ChartKinds = new List<string>
         {
-            "matrix", "line", "bar", "area", "table", "card", "scatter", "rules",
+            "total", "bars", "line", "variance", "dumbbell", "bullet", "slope", "multiples", "sparktable", "table", "rules",
         }.AsReadOnly();
 
         /// <summary>Round 5 of m11/plan-harm (Kane, 30 Sep 2026: "i would think Jev could choose what to exclude"): the cleanup row.
@@ -251,6 +251,19 @@ namespace Semanticus.Decisions
 
         /// <summary>The two options of the cleanup point, fixed. The ids are the wire words.</summary>
         public static readonly IReadOnlyList<string> CleanupChoices = new List<string> { "suggest", "leave_out" }.AsReadOnly();
+
+        /// <summary>1.5.1 (the Copilot test, Kane 15 Oct 2026): group the misses of one test round into a few causes. For each practice miss, why the student
+        /// got it wrong and which kind of change would fix it, chosen from a fixed list of cause and fix pairs. The engine's own rules give the same
+        /// answer when Jev is off, slow or not sure; every sentence the person reads is the engine's (CopilotCauseRules). It never writes anything.</summary>
+        public const string CopilotMisses = "copilot.misses";
+
+        /// <summary>The pairs of cause and fix Jev picks from, as "cause:fix". Fixed: the ids are the engine's own (CopilotCause).</summary>
+        public static readonly IReadOnlyList<string> CopilotCausePairs = new List<string>
+        {
+            "unknown_word:other_name", "unknown_word:instruction", "calendar_vs_fiscal:instruction", "calendar_vs_fiscal:description",
+            "sibling_measure:description", "sibling_measure:instruction", "missing_description:description", "no_data:instruction",
+            "no_data:ai_schema", "dax_slip:none", "other:instruction", "other:none",
+        }.AsReadOnly();
 
         /// <summary>The value ladder the plan is ranked on, lowest rung first. Ordered by meaning, because a
         /// score question's option order is part of the request digest and part of what is being asked.</summary>
@@ -263,6 +276,19 @@ namespace Semanticus.Decisions
         public static readonly IReadOnlyList<string> NextStepKinds = new List<string>
         {
             "save", "workflow", "run-plan", "run-checks", "check-then-publish", "publish-test", "publish-production", "keep-healthy",
+        }.AsReadOnly();
+
+        /// <summary>1.6, the Validation page (Kane, 15 Oct): which visual each check opens with. One call per run covers every
+        /// check, one question each, named "visual:&lt;check id&gt;" (the question NAMES carry the check, so they cannot be listed
+        /// here). Jev picks one of the visuals the page's rules say can show that check's shape, or says the rules' pick is fine.
+        /// It sends check names, measure names, status words and counts, never a value or a row. Asked by pick_check_visuals.
+        /// OFF until its replay clears its bar (Checks/JevCheckVisuals.cs).</summary>
+        public const string CheckVisualKind = "checks.visual_kind";
+
+        /// <summary>Every visual the page can draw, as the webview's shared visual set names them, plus the neutral "rules".</summary>
+        public static readonly IReadOnlyList<string> CheckVisualKinds = new List<string>
+        {
+            "total", "bars", "line", "variance", "dumbbell", "bullet", "slope", "multiples", "waterfall", "sparktable", "heat", "table", "rules",
         }.AsReadOnly();
 
         public static readonly IReadOnlyList<string> PlanValueRungs = new List<string>
@@ -661,13 +687,13 @@ namespace Semanticus.Decisions
             new DecisionPoint(
                 name: QueriesChartKind,
                 caller: "pick_chart_kind",
-                purpose: "Choose which chart shows the answer to a data question best. It sends the words of the question, "
-                       + "when there are any, and the shape of the answer: the name of each column it is split by, whether "
-                       + "that column is a date and how many different values it has, how many numbers it shows and how "
-                       + "many rows came back. It never sends a row or a value. It picks only among the charts the chart "
-                       + "rules say can show that shape, or keeps the rules' pick. The reason shown is Semanticus's own. "
-                       + "It never changes the model.",
-                schemaVersion: 1,
+                purpose: "Choose which visual shows the answer to a data question best on the Query page. It sends the words of the "
+                       + "question, when there are any, and the shape of the answer: the name of each column it is split by, whether "
+                       + "that column is a date and how many different values it has, the name of each number it shows, how many "
+                       + "rows came back, whether the numbers share a unit and whether any is negative. It never sends a row or a "
+                       + "value. It picks only among the visuals the visual rules say can show that shape, or keeps the rules' pick. "
+                       + "One request answers one result. The reason shown is Semanticus's own. It never changes the model.",
+                schemaVersion: 2,
                 snapshotFields: new[]
                 {
                     "question_words",
@@ -676,11 +702,11 @@ namespace Semanticus.Decisions
                 questions: new[]
                 {
                     new DecisionQuestionShape("chart_kind", DecisionQuestionKind.Choice,
-                        "the charts the chart rules leave for this result, in a seeded order, plus the rules' pick is fine",
+                        "the visuals the visual rules leave for this result, in a seeded order, plus the rules' pick is fine",
                         ChartKinds),
                 },
                 confidenceBar: 0.85,
-                lowConfidenceBehaviour: "the chart rules' pick is shown, labelled as the rules' pick",
+                lowConfidenceBehaviour: "the visual rules' pick is shown, labelled as the rules' pick",
                 proOnly: true),
 
             new DecisionPoint(
@@ -741,6 +767,63 @@ namespace Semanticus.Decisions
                 },
                 confidenceBar: 0.85,
                 lowConfidenceBehaviour: "the rules' first eligible step is shown, labelled with the rule's own source",
+                proOnly: true),
+
+            new DecisionPoint(
+                name: CopilotMisses,
+                caller: "run_interview_batch",
+                purpose: "Group the misses of one Copilot test round into a few causes, so your assistant reads causes and not every miss. "
+                       + "For each practice miss it sends the words of the question, the kind of miss, and the names of the measures and "
+                       + "columns the student used, the names the right answer used and the names the filters differed on. It never "
+                       + "sends a value, a number, a formula or the held-back questions. Jev picks one cause and one kind of fix from a "
+                       + "fixed list; every sentence you read is Semanticus's own. It never writes anything.",
+                schemaVersion: 1,
+                snapshotFields: new[]
+                {
+                    "question_words",
+                    "miss_kinds",
+                    "student_fields",
+                    "right_fields",
+                    "filter_differences",
+                },
+                questions: new[]
+                {
+                    // Asked for every practice miss of a round in ONE call, so the question NAMES carry the miss ("miss:12") and cannot be
+                    // listed here. Every one is the same choice.
+                    new DecisionQuestionShape("miss_cause", DecisionQuestionKind.Choice,
+                        "for each practice miss of the round: why the student got it wrong, and which one change would fix it",
+                        CopilotCausePairs),
+                },
+                confidenceBar: 0.7,
+                lowConfidenceBehaviour: "the miss is grouped by the engine's plain rule instead",
+                proOnly: true),
+
+            new DecisionPoint(
+                name: CheckVisualKind,
+                caller: "pick_check_visuals",
+                purpose: "Choose which visual each check on the Validation page opens with, so the page shows a picture first and "
+                       + "the table under it. All the checks are asked in one call each time the checks run. It sends each "
+                       + "check's name, the name of the measure or table it is about, the kind of check in a word, a status "
+                       + "word (pass, differs, off or could not check) and counts: how many comparisons it made, how many runs "
+                       + "are recorded, whether an earlier run exists and whether the result is split. It never sends a value "
+                       + "or a row. It picks only among the visuals the page's rules say can show that check, or keeps the "
+                       + "rules' pick. The reason shown is Semanticus's own. It never changes the model.",
+                schemaVersion: 1,
+                snapshotFields: new[]
+                {
+                    "check_words",
+                    "check_shapes",
+                },
+                questions: new[]
+                {
+                    // Asked for every check in ONE call, so the question NAMES carry the check ("visual:<check id>") and
+                    // cannot be listed here. Every one is the same choice among the visuals that check can use, plus "rules".
+                    new DecisionQuestionShape("check_visual", DecisionQuestionKind.Choice,
+                        "for each check: the visuals the page's rules leave for it, in a seeded order, plus the rules' pick is fine",
+                        CheckVisualKinds),
+                },
+                confidenceBar: 0.85,
+                lowConfidenceBehaviour: "the page's rules' pick is shown, labelled as the rules' pick",
                 proOnly: true),
         };
 
@@ -815,6 +898,17 @@ namespace Semanticus.Decisions
         /// Version 6 (1.5, the Next line, 11 October 2026): next.step joined with five fields of counts, yes-or-no facts and step
         /// ids (no names, no values). Version 5 shipped in 1.3 and 1.4, so a permission given under it does not cover them: a Pro
         /// person who agreed sees the card once more.
+        ///
+        /// 1.5.1 (the Copilot test, 15 October 2026): copilot.misses joined with five fields of question words, kinds of miss and the names of
+        /// measures and columns (no values, no formulas), and the version STAYED 6 on purpose. The point ships off and sends nothing, and
+        /// DecisionConsent.Covers checks each point's own fields, so a record from 1.5.0 still covers every other point and copilot.misses
+        /// is simply not covered (the engine's plain rules answer). Making every Pro person agree again for a point that is off would be
+        /// friction with no harm to prevent. WHEN copilot.misses IS SWITCHED ON, bump this number in the same change, so the person is asked
+        /// once for what it will send.
+        /// checks.visual_kind (1.6, the Validation page, 15 October 2026) joined version 6 and did NOT bump it. Consent is per point
+        /// (<see cref="DecisionConsent.Covers"/> checks the point's own fields), so a person who agreed under version 6 is not shown
+        /// the card again; the new point reads as not covered until they agree, and it is off in this build until its replay clears
+        /// its bar. Its two fields are check names, measure names, a status word and counts: nothing the card does not already name.
         public const int ConsentSchemaVersion = 6;
 
         /// <summary>Every declared field across every point, as "point:field", sorted. This is the exact list a

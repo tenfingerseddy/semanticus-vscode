@@ -386,9 +386,9 @@ namespace Semanticus.Engine
         /// <summary>What the link says, in the words the page uses for that place.</summary>
         public string Label { get; set; }
 
-        /// <summary>The names to look for when the place is Find and replace: the fields a "names that Copilot reads as the same word" row
-        /// is about (plan statement check 2, item 6). The page opens with them filled in, and an assistant reads the same list from
-        /// get_model_plan. Null for every other row.</summary>
+        /// <summary>The fields a "names that Copilot reads as the same word" row is about (plan statement check 2, item 6). An assistant
+        /// reads the list from get_model_plan and can hand it to search_model or propose_replace. No page opens with it: Find and
+        /// replace left the Studio in 1.5.1. Null for every other row.</summary>
         public string[] Find { get; set; }
     }
 

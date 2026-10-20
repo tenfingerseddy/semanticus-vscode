@@ -96,7 +96,7 @@ namespace Semanticus.Engine.Entitlement
             ProFeature.Ask =>
                 "Every page is still one click away on the area strip, and your own assistant can still open any of them.",
             ProFeature.AskData =>
-                "Queries still runs any DAX you write, and your own assistant can still write and run DAX for you.",
+                "Query still runs any DAX you write, and your own assistant can still write and run DAX for you.",
             ProFeature.Batch =>
                 "Use the matching single-item tool on Free.",
             _ => throw new ArgumentOutOfRangeException(nameof(f)),

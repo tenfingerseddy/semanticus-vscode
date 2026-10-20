@@ -141,9 +141,14 @@ namespace Semanticus.Engine.Evidence
             }
             else if (!string.IsNullOrWhiteSpace(doc.Producer))
             {
-                var p = "Produced by " + doc.Producer.Trim();
-                if (!string.IsNullOrWhiteSpace(doc.ProducerVersion)) p += " " + doc.ProducerVersion.Trim();
-                bits.Add(p);
+                // The checks page's own producer is a tool name and an assembly number, which mean nothing to a reader (hero 26 N8).
+                if (string.Equals(doc.Producer.Trim(), "run_tests", StringComparison.Ordinal)) bits.Add("Made by the checks on the Validation page");
+                else
+                {
+                    var p = "Produced by " + doc.Producer.Trim();
+                    if (!string.IsNullOrWhiteSpace(doc.ProducerVersion)) p += " " + doc.ProducerVersion.Trim();
+                    bits.Add(p);
+                }
             }
             var origin = OriginLabel(doc.Origin);
             if (origin != null) bits.Add(origin);

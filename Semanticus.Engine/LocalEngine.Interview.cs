@@ -30,7 +30,7 @@ namespace Semanticus.Engine
         {
             var anchor = _sessions.Current?.SourcePath;
             var sidecar = !ExperienceStore.IsEphemeralAnchor(anchor) ? LayoutStore.DirFor(anchor)
-                        : _workspaceDir == null ? null : Path.Combine(_workspaceDir, LayoutStore.DirName);
+                        : NoFileSidecar(_sessions.Current);
             return sidecar == null ? null : Path.Combine(sidecar, InterviewStore.DirName);
         }
 
@@ -128,7 +128,8 @@ namespace Semanticus.Engine
             if (s != null)
             {
                 if (s.LiveOrigin != null) return LiveIdentityFor(s.LiveOrigin);
-                if (!ExperienceStore.IsEphemeralAnchor(s.SourcePath)) return "disk:" + Sha8(CanonAnchor(s.SourcePath));
+                // A file Semanticus saved a published model to is that published model (LocalEngine.ModelHome.cs).
+                if (!ExperienceStore.IsEphemeralAnchor(s.SourcePath)) return ModelHome.RecordedFor(s.SourcePath)?.Identity ?? "disk:" + Sha8(CanonAnchor(s.SourcePath));
             }
             return live != null ? LiveIdentityFor(live) : null;   // an attached live connection is the only durable anchor left; else none
         }
@@ -604,6 +605,9 @@ namespace Semanticus.Engine
             if (!string.IsNullOrWhiteSpace(questionId))
             {
                 (file, scope, q) = LocateInterviewQuestion(questionId.Trim());
+                // The Copilot test holds back every fifth question so its score cannot be tuned to: an assistant may not read its result one question at a time.
+                if (q.HeldBack && IsAssistantOrigin(origin))
+                    throw new InvalidOperationException("This question is held back for the final Copilot test score, so its result is not shown. Run the round with run_interview_batch: the held-back score comes with it.");
                 // the question the person was asked about: its query and its trusted answer live in the store, not in the model or the call
                 RequireApprovedBasis(nameof(RunInterviewAsync), InterviewQuestionBasis(q), "question");
                 // GATE 1 (pane): never OFFER another model's (or an unattributed) question for the open model. Its DAX
@@ -896,6 +900,7 @@ namespace Semanticus.Engine
             var file = InterviewScopeFile("project");
             var (all, _) = InterviewStore.Materialize(file, "project");
             var (live, _o, _u) = PartitionByAttribution(all);   // #157: only the OPEN model's pack is replayed
+            live = live.Where(q => string.IsNullOrEmpty(q.Kind)).ToList();   // the Copilot test's bank is a test loop of its own (up to hundreds of questions), not a deploy-time replay
             if (live.Count == 0) return null;   // no pack for THIS model ⇒ the gate result keeps its exact pre-existing shape
 
             // Capture the session + live connection ONCE for the whole replay (P1-1/P1-3): grade only against the
@@ -957,6 +962,7 @@ namespace Semanticus.Engine
             var file = InterviewScopeFile("project");
             var (all, _) = InterviewStore.Materialize(file, "project");
             var (live, other, unattr) = PartitionByAttribution(all);   // #157: replay only the OPEN model's pack
+            live = live.Where(q => string.IsNullOrEmpty(q.Kind)).ToList();   // the Copilot test's bank is run by run_interview_batch, not replayed here
             if (live.Count == 0)
             {
                 var stray = other.Count + unattr.Count;

@@ -29,6 +29,7 @@ export interface ConnectionContextModel {
   live: boolean;
   sourceControlled?: boolean;
   repositoryRoot?: string;
+  implied?: boolean;           // publishing side: a live model's own source, not yet chosen or published to
 }
 export interface ModelConnectionContext {
   editing: ConnectionContextModel;
@@ -56,6 +57,8 @@ export interface SessionInfo {
   keepsUnsavedWork?: boolean;
   fileRecovery?: import('./file-recovery').FileRecovery;
   diskDiverged?: boolean;
+  /** Where a copy of this live model was kept, while that copy holds every change so far (engine SessionInfo.KeptCopyPath). Absent from an older engine. */
+  keptCopyPath?: string | null;
   tables?: number;
   measures?: number;
   liveBound?: boolean;         // opened FROM a live model (deploy can push edits back to it)
@@ -107,6 +110,12 @@ export function useConnection(): ConnCtx {
   const c = useContext(Ctx);
   if (!c) throw new Error('useConnection must be used within <ConnectionProvider>');
   return c;
+}
+
+/** The open model's identity and revision, or nothing outside a provider (a page that can render without a connection). */
+export function useSessionIdentity(): { id?: string | null; revision?: number | null } {
+  const c = useContext(Ctx);
+  return { id: c?.session?.sessionId, revision: c?.session?.revision };
 }
 
 export function ConnectionProvider({ children }: { children: ReactNode }) {

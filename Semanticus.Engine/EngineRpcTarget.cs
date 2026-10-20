@@ -140,6 +140,11 @@ namespace Semanticus.Engine
         public Task<InterviewRunResult> runInterview(string questionId = null, string inlineJson = null, bool abstained = false, string attemptDax = null, string origin = "human") => _engine.RunInterviewAsync(questionId, inlineJson, abstained, attemptDax, _origin);
         public Task<SetResult> deleteInterviewQuestion(string id, string origin = "human") => _engine.DeleteInterviewQuestionAsync(id, _origin);
         public Task<InterviewSeedResult> listInterviewSeeds(string source = null, string measure = null) => _engine.ListInterviewSeedsAsync(source, measure);
+        public Task<CopilotViewResult> getCopilotView() => _engine.GetCopilotViewAsync();
+        public Task<CopilotAddResult> addInterviewQuestions(CopilotQuestionIn[] items, string origin = "human") => _engine.AddInterviewQuestionsAsync(items, _origin);
+        public Task<CopilotStudentQuestions> getStudentQuestions() => _engine.GetStudentQuestionsAsync();
+        public Task<CopilotBatchResult> runInterviewBatch(string roundId, string bankKey, string student, CopilotAnswerIn[] answers, CopilotRoundChange[] changes = null, string origin = "human") => _engine.RunInterviewBatchAsync(roundId, bankKey, student, answers, changes, _origin);
+        public Task<CopilotRoundsView> interviewRounds(string round = null) => _engine.InterviewRoundsAsync(round);
         // pickedInDialog is honoured only on a person's connection: it says the person chose this exact file in a save dialog,
         // which is the one way a never-saved model replaces an existing .bim. An agent connection's value is ignored.
         public Task<SaveResult> save(string path = null, string format = null, bool overwrite = false, bool pickedInDialog = false) => _engine.SaveAsync(path, format, overwrite, _origin, _origin == "human" && pickedInDialog);
@@ -153,6 +158,10 @@ namespace Semanticus.Engine
         public Task<ModelSqlEndpointList> listModelSqlEndpoints() => _engine.ListModelSqlEndpointsAsync();
         public Task<Entitlement.EntitlementInfo> getEntitlement() => _engine.GetEntitlementAsync();
         public Task<Entitlement.TrialTally> getTrialTally() => _engine.GetTrialTallyAsync();
+        // Window-only settings and the trial start (F-292, F-293): both doors. The window's own report is on HumanGovernanceRpcTarget.
+        public Task<HostSettingsView> getHostSettings() => _engine.GetHostSettingsAsync();
+        public Task<HostSettingsView> setHostSettings(string personality = null, bool? sounds = null, int? soundVolume = null, string origin = "human") => _engine.SetHostSettingsAsync(personality, sounds, soundVolume, _origin);
+        public Task<TrialStartResult> startTrial(string email, bool personSaidYes = false, string origin = "human") => _engine.StartTrialAsync(email, personSaidYes, _origin);
         /// <summary>Which build this engine is (F-241). A window asks before it adopts a running engine, so an
         /// in-place reinstall at the same version and path is not joined to the build it replaced. Plumbing for
         /// the attach, not a capability: it reads no model and changes nothing, so either role may ask.</summary>
@@ -544,7 +553,13 @@ namespace Semanticus.Engine
         public Task<Composer.DescribedWorkflow> describeWorkflowSteps(string words) => _engine.DescribeWorkflowStepsAsync(words);
         public Task<Query.DataAnswer> askData(Query.DataAsk ask, string origin = "human") => _engine.AskDataAsync(ask, _origin);
         public Task<Query.DataQuestionHistory> listDataQuestions(int limit = 50) => _engine.ListDataQuestionsAsync(limit);
+        // The Query notebook (1.6): the same rows the assistant's query_notebook reads. The page writes its own rows through HumanGovernanceRpcTarget (recordQueryRun, noteQueryRow).
+        public Task<Query.QueryNotebookView> queryNotebook(string action = "list", string id = null) => _engine.QueryNotebookAsync(action, id);
+        /// <summary>The assistant's own run_dax, kept as a row of its own. The origin is always the assistant's: it can never write or replace a person's row
+        /// (a person's page keeps its runs through HumanGovernanceRpcTarget.recordQueryRun), and noteQueryRow stays person-only.</summary>
+        public Task<string> recordAgentQueryRun(string dax, int rowCount, double elapsedMs, string headline = null) => _engine.RecordQueryRunAsync(dax, rowCount, elapsedMs, headline, "agent", null);
         public Task<Query.ChartPick> pickChartKind(Query.ChartPickAsk ask) => _engine.PickChartKindAsync(ask);
+        public Task<CheckVisualPicks> pickCheckVisuals(CheckVisualAsk ask) => _engine.PickCheckVisualsAsync(ask);
         public Task<Composer.DraftView> editDraft(string draftId, string action, string step = null, string blank = null, string question = null, string text = null, string origin = "human") =>
             _engine.EditDraftAsync(draftId, action, step, blank, question, text, _origin);
         public Task<Composer.DraftView> runDraft(string draftId, string origin = "human") => _engine.RunDraftAsync(draftId, _origin);

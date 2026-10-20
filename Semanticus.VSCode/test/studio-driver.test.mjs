@@ -208,6 +208,7 @@ function loadHost() {
     let studioDriveMode = 'claudeDrives', studioDriverState = 'idle', studioLastPersonInput = null, studioLastAssistantCall = null;
     let studioPanel = panel;
     let studioDriveModeLoaded = true;
+    let lastReportedDriver = '';
     const STUDIO_DRIVE_MODE_KEY = 'semanticus.studio.driveMode';
     const conn = { sendRequest(...args) { calls.push(args); return Promise.resolve(); } };
     const out = { appendLine() {} };
@@ -264,7 +265,7 @@ test('D5: a new engine connection starts from the engine defaults, so the host r
   const idx = source.indexOf('        conn = connected;');
   assert.ok(idx > 0, 'the connect step is where it was');
   const after = source.slice(idx, idx + 900);
-  assert.match(after, /reportStudioDriver\(\)/, 'the driver state is sent right after the connection is adopted');
+  assert.match(after, /reportStudioDriver\((true)?\)/, 'the driver state is sent right after the connection is adopted');
 });
 
 // H3 (hero15, D5 again): a new model gives the Studio a new session, and App remounts everything under the session-keyed
@@ -284,6 +285,7 @@ function loadLayer(store, bridge, posts) {
     '../plan-chrome': { usePlanChrome: () => ({ calm: false, notes: [] }) },
     './driver-bar': { DriverBar: () => null }, './note-strip': { NoteStrip: () => null }, './cursor': { StudioCursor: () => null }, './drive-edge': { DriveEdge: () => null },
     './answer-store': { setAssistantAnswer: () => {} },
+    './copilot-follow': load('copilot-follow.ts'),
   };
   const module = { exports: {} };
   new Function('require', 'module', 'exports', outputText)((id) => (id in stubs ? stubs[id] : require(id)), module, module.exports);
@@ -393,24 +395,22 @@ test('the sign: the assistant\'s own tile pulses while it works, sits still when
   assert.ok(drawBar(React, s.getSnapshot(), { working: true }).includes('I drive. Claude Code works but does not move your screen.'));
 });
 
-test('the driver bar buttons name who drives: Claude for Claude Code and Claude Desktop, Codex for Codex, Your assistant when unknown', () => {
+test('the driver bar names the driver once: Your assistant, whichever assistant it is (hero 26 N8)', () => {
   const React = require('react');
   const s = driving(); s.setConnected(true);
   const buttons = () => drawBar(React, s.getSnapshot(), { working: true });
   s.noteAssistantCall(at(1000), claudeCode);
-  assert.ok(buttons().includes('>Claude drives<'), 'Claude Code: Claude drives');
+  assert.ok(buttons().includes('>Your assistant drives<') && !buttons().includes('>Claude drives<'), 'Claude Code: one name on the switch');
   s.setAssistant({ key: 'claude', name: 'Claude', initials: 'CL' });
-  assert.ok(buttons().includes('>Claude drives<') && buttons().includes('Claude is working.'), 'Claude Desktop: Claude drives, and the words say Claude, not Claude Code');
+  assert.ok(buttons().includes('>Your assistant drives<') && buttons().includes('Claude is working.'), 'Claude Desktop: the switch says Your assistant, the words still name the app');
   s.setAssistant({ key: 'codex', name: 'Codex', initials: 'CX' });
-  assert.ok(buttons().includes('>Codex drives<') && !buttons().includes('Claude'), 'Codex: Codex drives');
+  assert.ok(buttons().includes('>Your assistant drives<') && buttons().includes('Codex is working.'), 'Codex: the same switch');
   s.setAssistant({ key: 'unknown', name: 'Your assistant', initials: null });
   assert.ok(buttons().includes('>Your assistant drives<'));
   s.notePersonInput(2000);
   assert.ok(buttons().includes('Let your assistant drive'));
   s.setAssistant({ key: 'codex', name: 'Codex', initials: 'CX' });
-  assert.ok(buttons().includes('Let Codex drive'));
-  s.setAssistant({ key: 'claude', name: 'Claude', initials: 'CL' });
-  assert.ok(buttons().includes('Let Claude drive'));
+  assert.ok(buttons().includes('Let your assistant drive'));
 });
 
 test('the sign: an assistant with no name gets three dots, and its own plain name is shown as sent', () => {
@@ -465,12 +465,53 @@ test('the Studio reads who is attached from the entitlement answer, on mount and
   } finally { globalThis.document = saved; }
 });
 
-// plan-status (hero20 D3): the Plan header treats the assistant as busy through Claude's thinking gaps, not only 8 seconds.
-test('the assistant is active on the Plan for a minute after its latest call, and not when only a connection file exists', () => {
+// plan-status (hero20 D3, narrowed by UAT 18 Oct N21): the Plan header treats the assistant as busy through Claude's thinking gaps, but only for a short
+// quiet time. Forty seconds after its last call the turn is over: "Working on your model" and "On it" must not outlive the work.
+test('the assistant is active on the Plan for a short quiet time after its latest call, and not when only a connection file exists', () => {
   const s = createDriverStore('claudeDrives');
   assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 5000), false);
   s.noteAssistantCall(new Date(1000).toISOString(), { key: 'claude', name: 'Claude Code', initials: 'CC' });
   assert.equal(assistantIsWorking(s.getSnapshot(), 1000 + QUIET_GAP_MS + 1), false, 'the sign still rests after the short gap');
-  assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 1000 + 40_000), true, 'a 40 s thinking gap is still the assistant at work');
+  assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 1000 + 20_000), true, 'a 20 s thinking gap is still the assistant at work');
+  assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 1000 + 36_000), true, 'a 35 s gap between calls (116 descriptions being composed) is still the assistant at work');
+  assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 1000 + 50_000), false, '50 s after the last call the turn is over (UAT 18 Oct N21)');
   assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 1000 + storeModule.ASSISTANT_ACTIVE_MS), false, 'then the save step shows');
+  assert.ok(storeModule.ASSISTANT_ACTIVE_MS <= 45_000);
+});
+
+test('a drive that never ended (a note still queued) does not keep the Plan saying Working on your model after the quiet time (UAT 18 Oct N21)', () => {
+  const s = createDriverStore('claudeDrives');
+  s.noteAssistantCall(new Date(1000).toISOString(), { key: 'claude', name: 'Claude Code', initials: 'CC' });
+  s.noteShow();                                          // a note is waiting: the state is claudeDriving
+  assert.equal(s.getSnapshot().state, 'claudeDriving');
+  assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 1000 + 10_000), true);
+  assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 1000 + 90_000), false, 'ninety seconds with no call is not work');
+});
+
+test('hero 25 H9: forty-three keys in the ask box tell the engine once, and an assistant call still tells it every time', () => {
+  const h = loadHost();
+  for (let i = 0; i < 43; i++) h.person();
+  assert.equal(h.calls.filter((c) => c[0] === 'setStudioDriver').length, 1, 'one report for the first key, none for the rest');
+  h.assistant(new Date().toISOString()); h.assistant(new Date().toISOString());
+  assert.equal(h.calls.filter((c) => c[0] === 'setStudioDriver').length, 3, 'each assistant call reports again, so an engine that restarted hears');
+});
+
+test('a click during a Copilot test round holds the wheel for the rest of the round; a quiet gap there is the student working (UAT 18 Oct)', () => {
+  const s = driving();
+  const at = (ms) => new Date(ms).toISOString();
+  const roundStart = 100000;
+  s.noteAssistantCall(at(roundStart), undefined, roundStart);       // the round's first call
+  s.notePersonInput(roundStart + 12000);                           // the person looks at the Plan while the student works
+  s.noteAssistantCall(at(roundStart + 31000), undefined, roundStart);   // the grading call, 19 s after the click
+  assert.equal(s.getSnapshot().state, 'personHasWheel', 'the grading call of the same round must not take the wheel back');
+  // The same gap with no round is a new prompt, as before.
+  const t = driving();
+  t.notePersonInput(roundStart + 12000);
+  t.noteAssistantCall(at(roundStart + 31000));
+  assert.equal(t.getSnapshot().state, 'claudeDriving');
+  // A click made BEFORE the round began does not hold it: the round's first call is the person's own request.
+  const u = driving();
+  u.notePersonInput(roundStart - 5000);
+  u.noteAssistantCall(at(roundStart + 9000), undefined, roundStart + 9000);
+  assert.equal(u.getSnapshot().state, 'claudeDriving');
 });

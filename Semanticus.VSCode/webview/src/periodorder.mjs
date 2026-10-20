@@ -13,6 +13,13 @@ const pad = (n, w) => String(n).padStart(w, '0');
 // A year written with two digits reads as 20yy (Mar-24 is March 2024, the way Excel and Power BI format it).
 const year4 = (y) => (y.length === 2 ? `20${y}` : y);
 
+/** A month named in full is drawn as its three letters on an axis ("September" is "Sep"): long names touched at September and December
+ *  (UAT 17 Oct, round 3). Any other label, a month with its year included, is left as it is. */
+export function axisLabelText(value) {
+  const s = String(value ?? '');
+  return /^(?:january|february|march|april|june|july|august|september|october|november|december)$/i.test(s) ? s.slice(0, 3) : s;
+}
+
 /** A sortable key for ONE label, or null when it is not a calendar label this reads. `named` says the column's own name
  *  already calls it a date, which is what lets a bare month name, a quarter or a year order. `calendarMonths: false`
  *  withholds the bare month name, because a fiscal year starts in a month the company chose and the label does not say. */

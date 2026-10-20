@@ -51,11 +51,11 @@ const M = load(join(webview, 'src', 'plan-history-model.ts'));
 const now = HISTORY_FIXED_NOW;
 
 // ===================================================================================================
-// 1. The who filter: exactly five choices, and what each asks the engine for.
+// 1. The who filter: exactly four choices, and what each asks the engine for.
 // ===================================================================================================
-assert.deepEqual(M.WHO_FILTERS.map((f) => f.label), ['Everyone', 'You', 'Your assistant', 'Semanticus', 'Workflows'],
-  'the who filter is Everyone, You, Your assistant, Semanticus, Workflows and nothing else');
-assert.deepEqual(M.WHO_FILTERS.map((f) => M.whoParam(f.id)), [null, 'you', 'assistant', 'semanticus', 'workflow'],
+assert.deepEqual(M.WHO_FILTERS.map((f) => f.label), ['Everyone', 'You', 'Your assistant', 'Semanticus'],
+  'the who filter is Everyone, You, Your assistant, Semanticus and nothing else (Workflows retired: no way in)');
+assert.deepEqual(M.WHO_FILTERS.map((f) => M.whoParam(f.id)), [null, 'you', 'assistant', 'semanticus'],
   'each choice asks getPlanHistory for the matching `by`, and Everyone asks for no filter');
 {
   const engine = makeHistoryEngine();
@@ -194,6 +194,9 @@ assert.equal(words.batch, null, 'a neutral record carries no word: it was not ch
   const promo = merged.find((r) => r.revision === 58);
   assert.equal(M.footLine(promo, M.recordFor(promo, engine.listVerifiedEdits()), engine.listVerifiedEdits()),
     'Session change 58 · verified record 41 · record intact');
+  // A read-only analysis is kept outside the model's chain (no hash): no record number, no chain to call intact.
+  const analysis = { seq: 1, when: '2026-10-17T10:00:00Z', sessionId: 's', revision: 0, origin: 'human', op: 'explain_value', verdict: 'explained', bodyHash: '', prevHash: '', hash: '' };
+  assert.equal(M.footLine({ revision: 0 }, analysis, engine.listVerifiedEdits()), '', 'an analysis record claims no chain position');
   const found = M.rowForRevision(merged, SESSION_NOW, 52);
   assert.equal(found.row.id, 'ed-00000007', 'Show this edit finds the edit by its revision in this session');
   assert.equal(found.parent.title, 'Describe 4 Customer columns');

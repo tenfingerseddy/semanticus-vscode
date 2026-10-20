@@ -6,7 +6,7 @@ import { measuredBench } from '../webview/src/benchtiming.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
-const daxlab = read('webview/src/daxlab.tsx');
+const daxlab = read('webview/src/daxlab.tsx') + read('webview/src/query.tsx');
 const grid = read('webview/src/grid.tsx');
 const wire = read('webview/src/wire.ts');
 const authoring = read('webview/src/tests-authoring.tsx');
@@ -24,20 +24,20 @@ assert.match(daxlab, />Stop</, 'a running query must have a Stop control');
 assert.match(daxlab, /stopQuery/, 'Stop must call a stop function, not a dead Running button');
 assert.match(daxlab, /cancelDax/, 'Stop must ask the engine to stop the running query');
 assert.match(daxlab, /The query was stopped\./, 'stopping must say so in plain words');
-assert.match(daxlab, /disabled=\{idle\}/, 'Reset must not replace the editor while a query is running');
+assert.match(daxlab, /disabled=\{q\.idle\}/, 'Reset must not replace the editor while a query is running');
 assert.match(daxlab, /rowAnnouncement\(res\.rowCount, res\.truncated\)/, 'the result pane must announce a capped set');
 // Queries redesign (27 Sep, the space rule): the query is shown ONCE. The result names it on hover, never as a
 // second copy of the query text above the rows.
-assert.match(daxlab, /title=\{queryIdentity\(res\.query \|\| resQuery\)/, 'the result pane must name the query that produced the result');
+assert.match(daxlab, /title=\{queryIdentity\(res\.query \|\| q\.resQuery\)/, 'the result pane must name the query that produced the result');
 assert.doesNotMatch(daxlab, /Result of:/, 'the query must not be printed a second time above its own result');
 assert.match(daxlab, /timingAnnouncement/, 'zero-ms timings must go through the honest label');
-assert.match(daxlab, /Save measure check/, 'a calculation must offer a direct saved-check handoff');
-assert.match(daxlab, /title="Check against SQL" detail="Compare this number with SQL you trust\."/, 'the handoff menu keeps its two short choices (the filters still travel: the next assertions)');
+assert.match(daxlab, /Save as a check/, 'a calculation must offer a direct saved-check handoff');
+assert.match(daxlab, /<b>Check against SQL<\/b><span className="sem-text-meta">Compare this number with SQL you trust\./, 'the Save card keeps its short choices (the filters still travel: the next assertions)');
 
 // UX11: a check saved from a filtered visual must carry what the person was actually looking at. Dropping the
 // filters turned a calculation narrowed to one year into a check over the whole model, which reads as correct.
 assert.match(daxlab, /groupBy, filterDax: filters \|\| undefined/, 'the SQL handoff must carry the visual filters, not only the grouping fields');
-assert.match(daxlab, /filterDax: filters \|\| undefined, expressionDax: editedExpression \|\| undefined/, 'the trusted-answer handoff must carry the filters and any edited formula');
+assert.match(daxlab, /filterDax: filters \|\| undefined, expressionDax: \(own && editedExpression\) \|\| undefined/, 'the trusted-answer handoff must carry the filters and any edited formula');
 assert.match(daxlab, /export function labExpressionEdit/, 'an edited formula must be distinguishable from the measure as saved');
 assert.match(daxlab, /savedExpression && squash\(text\) === squash\(savedExpression\)/, 'text equal to the measure as saved is not an edit');
 // The menu footnote about the recorded connection is gone (Q3). The saved list and the evidence still say "Authored against X, ran against Y" (the assertions below), which is where a person reads it.
@@ -55,7 +55,7 @@ assert.match(authoring, /Semanticus never rewrites your query/, 'and the drawer 
 assert.match(authoring, /Authored against \{authored \|\| current\}/, 'the drawer must name the connection the check is authored against');
 
 // Authoring is a record, never a pin: the saved list and the evidence both say so.
-assert.match(tests, /authored against \$\{def\.authoredAgainstLabel\}/, 'the saved list must name the authoring connection');
+assert.match(tests, /Written against \{def\.authoredAgainstLabel\}/, 'the saved check names the authoring connection, behind Details (round 2 N30)');
 assert.match(tests, /Authored against \$\{authored\}, ran against \$\{ran\}/, 'evidence must say when the check ran somewhere else');
 assert.match(tests, /asks \$\{asks\}/, 'the saved list must say whether the check asks the measure or an edited formula');
 assert.match(daxlab, /No storage scan was captured/, 'a cached or metadata-only profile must be explained in plain language');
@@ -76,20 +76,20 @@ assert.match(tests, /results below still show the older check/, 'definition chan
 assert.match(tests, /Not checked/, 'unavailable execution must be presented as not checked');
 // A Not checked row is neutral by contract: the missing-measure line never borrows the failure colour, and
 // it carries the two actions that actually resolve it.
-const missingRow = tests.match(/if \(outcome\.missing\) \{[\s\S]*?\n  \}/);
+const missingRow = tests.match(/else if \(outcome\.missing\) \{[\s\S]*?\n  \}/);
 assert.ok(missingRow, 'the opened row must branch on a missing calculation');
 assert.match(missingRow[0], /var\(--sem-nv\)/, 'a missing calculation must speak in the not-checked tone');
 assert.doesNotMatch(missingRow[0], /var\(--sem-bad\)/, 'not checked must never use the failure colour');
-assert.match(missingRow[0], /label="Edit this check"/, 'the row must offer editing the check');
-assert.match(missingRow[0], /label="Delete this check"/, 'the row must offer deleting the check');
+assert.match(missingRow[0], /action\('Edit this check'/, 'the card must offer editing the check');
+assert.match(missingRow[0], /action\('Delete this check'/, 'the card must offer deleting the check');
 
 // The blank standoff is restated in the person's words and linked to the setting that decides it.
 assert.match(tests, /Every cell is blank in the model and NULL in the source\. This check does not treat those as equal\./, 'the blank standoff must be said without engine words');
-assert.match(tests, /label="Choose what a blank means"/, 'the blank standoff must link its own setting');
-assert.match(tests, /to check it\./, 'the blank standoff must say what choosing achieves');
-assert.match(tests, /comparisonSummary\(differCount, matchCount, rows\.length/, 'the comparisons must carry a count, not colour alone');
+assert.match(tests, /action\('Choose what a blank means'/, 'the blank standoff must link its own setting');
+// Validation C (1.6): the button is the action, so the old trailing "to check it." is gone with the row it sat in.
+assert.match(tests, /comparisonSummary\(differCount, matchCount, rowsKept\.length/, 'the comparisons must carry a count, not colour alone');
 // Minimalism pass (8 Oct): the one Run button reads "Run N ticked" while boxes are ticked, so the header needs no hint line about ticking.
-assert.match(tests, /Run \$\{tickedCount\.toLocaleString\(\)\} ticked/, 'ticking is explained by the Run button itself');
+assert.match(tests, /Choose checks…/, 'choosing checks is one item of the Run menu, so the header needs no hint line about ticking');
 
 // Tolerance boxes name their own unit, and the blank requirement stays neutral until Save is attempted.
 assert.match(authoring, /Relative %/, 'the relative tolerance box must name its unit');
@@ -126,9 +126,9 @@ assert.match(daxlab, /subject !== 'dax' \? `Tested across \$\{own\}` : 'Tested a
   'the contexts heading must describe where the contexts came from in this mode');
 assert.match(daxlab, /subject === 'wells' && filterLinesDerived\.length > 0/,
   'the "Filters from the visual" line belongs to Visual mode only');
-assert.match(daxlab, /const compareSubject: 'wells' \| 'question' \| 'dax' = qParts \? 'question' : mode === 'visual' \? 'wells' : 'dax';/,
+assert.match(daxlab, /const compareSubject: 'wells' \| 'question' \| 'dax' = qParts \? 'question' : mode === 'visual' && !wordsOnly \? 'wells' : 'dax';/,
   'Compare must be told which view it is rendering for');
-assert.match(daxlab, /CompareBody \{\.\.\.\{[^}]*subject: compareSubject/, 'Compare receives its subject');
+assert.match(daxlab, /CompareBody \{\.\.\.\{[^}]*subject: q\.compareSubject/, 'Compare receives its subject');
 
 // M20: the New check popover ignored Escape, carried no menu role, and opened away from its own button.
 assert.match(authoring, /function NewCheckMenu[\s\S]{0,1400}aria-haspopup="menu"/, 'New check opens a menu');
@@ -263,28 +263,17 @@ assert.match(tokensCss, /--sem-series-1:\s*var\(--sem-actor-semanticus\)/, 'the 
 assert.match(tokensCss, /--sem-series-2:\s*var\(--sem-actor-you\)/, 'the storage engine takes chart step 2');
 assert.match(tokensCss, /--sem-on-series:\s*var\(--sem-bg\)/, 'the ink on a chart step is the page colour');
 
-const timings = daxlab.slice(daxlab.indexOf('function ServerTimingsView'), daxlab.indexOf('function ColdWarmView'));
-assert.ok(timings.length > 0, 'the server timings view must be found');
-assert.match(timings, /background: 'var\(--sem-series-1\)'/, 'the FE segment must take the formula-engine colour');
-assert.match(timings, /background: 'var\(--sem-series-2\)'/, 'the SE segment must take the storage-engine colour');
-assert.match(timings, /color: 'var\(--sem-on-series\)'/, 'the FE segment label must take its own ink');
-assert.match(timings, /color: 'var\(--sem-on-series\)'/, 'the SE segment label must take its own ink');
-assert.match(timings, /color: 'var\(--sem-series-1\)' \}\}>\{t\.feMs\}/, 'the formula-engine figure must match its segment');
-assert.match(timings, /color: 'var\(--sem-series-2\)' \}\}>\{t\.seMs\}/, 'the storage-engine figure must match its segment');
-assert.match(timings, /color: 'var\(--sem-series-2\)' \}\}>\{t\.seCacheHits\}/, 'SE cache hits are storage-engine work');
-assert.match(timings, /color: 'var\(--sem-series-2\)' \}\}>\{s\.durationMs\}/, 'a storage scan is storage-engine work');
-assert.doesNotMatch(timings, /var\(--sem-good\)/, 'no engine figure may keep the shared pass-green');
-assert.doesNotMatch(timings, /var\(--sem-accent\)/, 'no engine figure may keep the brand accent');
+const queryCss = read('webview/src/query.css');
+assert.match(queryCss, /\.qv-split-fe \{ background: var\(--sem-series-1\); \}/, 'the FE segment must take the formula-engine colour');
+assert.match(queryCss, /\.qv-split-se \{ background: var\(--sem-series-2\); \}/, 'the SE segment must take the storage-engine colour');
+assert.match(queryCss, /\.qv-key-fe \{ background: var\(--sem-series-1\); \}/, 'the key swatch for the formula engine matches its segment');
+assert.match(queryCss, /\.qv-key-se \{ background: var\(--sem-series-2\); \}/, 'the key swatch for the storage engine matches its segment');
+assert.doesNotMatch(queryCss.slice(queryCss.indexOf('.qv-split-se'), queryCss.indexOf('.qv-insight')), /var\(--sem-good\)|var\(--sem-accent\)/, 'no engine mark may keep the shared pass-green or the brand accent');
 
-// A narrow segment hides its own label, so the two engines are also named underneath, in words. The D1 mockup
-// dropped the FE and SE letters altogether (verify-queries-redesign, lower items), so no label may use them.
-assert.match(timings, />Formula engine<\/EngineKey>/, 'the key must name the formula engine in plain words');
-assert.match(timings, />Storage engine<\/EngineKey>/, 'the key must name the storage engine in plain words');
-assert.doesNotMatch(timings, /`FE |`SE |\bSE (queries|cache|cpu)\b|'Subclass'|'xmSQL'/, 'no engine shorthand on screen: FE, SE, Subclass, xmSQL');
-
-// The storage-engine stat table is the same engine, so it carries the same colour as the bar segment.
-const coldwarm = daxlab.slice(daxlab.indexOf('function ColdWarmView'), daxlab.indexOf('function QueryPlanView'));
-assert.match(coldwarm, /var\(--sem-series-2\)/, 'the storage-engine table must be marked with the storage-engine colour');
+// A narrow segment hides its own label, so the two engines are also named underneath, in words, and no label uses the letters.
+assert.match(daxlab, /Reading data</, 'the key names the storage engine in plain words (no engine words, 18 Oct N12)');
+assert.match(daxlab, /Calculating</, 'the key names the formula engine in plain words');
+assert.doesNotMatch(read('webview/src/query.tsx') + read('webview/src/query-parts.tsx'), /`FE |`SE |\bSE (queries|cache|cpu)\b|'Subclass'|'xmSQL'|\(storage engine, SE\)/, 'no engine shorthand on screen: FE, SE, Subclass, xmSQL');
 
 console.log('engine colours passed');
 

@@ -60,5 +60,32 @@ namespace Semanticus.Tests
             Assert.False(mid.Items.Single(i => i.Id == "cleanup/model").AssistantAtWork, "a row nobody touched is not flagged");
             Assert.DoesNotContain("ask your assistant", working.StateNote ?? "", StringComparison.OrdinalIgnoreCase);
         }
+
+        // UAT 18 Oct N22: Claude declined "Remove 5 unused columns" with a reason, renamed Customer Region on the way, and the plan made the same task again for the
+        // renamed column. A declined task holds its claims, and a held claim follows the object when it is renamed, so the row never lists it as new.
+        [Fact]
+        public void A_declined_task_keeps_holding_a_column_that_was_renamed_since()
+        {
+            var task = new PlanTask
+            {
+                Id = "pt-declined", State = PlanTaskStates.Open, Doer = PlanDoers.You, DeclineReason = "Kept on purpose.",
+                OriginLink = new PlanOriginLink { Kind = PlanOriginKinds.Item, Ref = "cleanup/model" },
+                Claims = new[] { "column:Customer/Region", "column:Store/City" },
+                Objects = new[] { "column:Customer/Region", "column:Store/City" },
+                Grounds = new[] { new PlanObjectGround { Ref = "column:Customer/Region", Tag = "t1" }, new PlanObjectGround { Ref = "column:Store/City", Tag = "t2" } },
+            };
+            var state = new PlanMemoryState { Tasks = { task } };
+            var now = new System.Collections.Generic.Dictionary<string, PlanGroundNow>(StringComparer.Ordinal)
+            {
+                ["column:Customer/Region"] = new PlanGroundNow("column:Customer/Customer Region"),
+                ["column:Store/City"] = new PlanGroundNow("column:Store/City"),
+            };
+
+            Assert.True(LocalEngine.FollowRenamesIn(state, now));
+
+            Assert.Contains("column:Customer/Customer Region", task.Claims);
+            Assert.DoesNotContain("column:Customer/Region", task.Claims);
+            Assert.Contains("column:Customer/Customer Region", PlanTasks.HeldClaimsOf(state.Tasks));
+        }
     }
 }

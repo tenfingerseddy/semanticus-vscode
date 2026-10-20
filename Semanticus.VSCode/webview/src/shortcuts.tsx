@@ -27,11 +27,10 @@ export const IS_MAC = /mac/i.test(navigator.platform ?? '');
 export const KEY_TABS: { key: string; tab: string; label: string }[] = [
   { key: 'd', tab: 'diagram', label: 'Diagram' },
   { key: 'm', tab: 'mcode', label: 'Power Query' },
-  { key: 'l', tab: 'daxlab', label: 'Queries' },
+  { key: 'l', tab: 'query', label: 'Query' },
   { key: 'r', tab: 'readiness', label: 'AI readiness' },
   { key: 'b', tab: 'bpa', label: 'Model quality' },
   { key: 'h', tab: 'history', label: 'Plan: History' },
-  { key: 'w', tab: 'workflows', label: 'Workflows' },
   { key: 'k', tab: 'knowledge', label: 'AI instructions: Notes' },
 ];
 
@@ -45,7 +44,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: 'Studio',
     items: [
       // One row each for the chords the Model tree shares with Studio (r1 min4, S1 and S2); the note says where else they work.
-      { win: mod('Ctrl+F'), action: 'Find and replace across the model', note: 'Find in Model when the Model tree has focus' },
+      { win: mod('Ctrl+F'), action: 'Find in Model', note: 'names, descriptions and DAX, when the Model tree has focus' },
       { win: mod('Ctrl+S'), action: 'Save the model to disk', note: 'in Studio and in the Model tree' },
       { win: mod('Ctrl+Z') + ' / Ctrl+Alt+Z', action: 'Undo a model change', note: 'Ctrl+Alt+Z works while you type' },
       { win: 'Ctrl+Alt+Shift+Z', action: 'Redo a model change' },
@@ -57,7 +56,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: 'Switch tabs',
     items: [
-      { win: 'Ctrl+Shift+1…6', action: 'Jump to an area: Plan · Explore · Edit · Review · Publish · Workflows', note: 'returns to the page you last used in that area' },
+      { win: 'Ctrl+Shift+1…5', action: 'Jump to an area: Plan · Explore · Edit · Review · Publish', note: 'returns to the page you last used in that area' },
       { win: 'Ctrl+Alt+← / →', action: 'Previous / next Studio tab' },
       ...KEY_TABS.map((t) => ({ win: `Ctrl+Alt+${t.key.toUpperCase()}`, action: `Go to ${t.label}` })),
     ],

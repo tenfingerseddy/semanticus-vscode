@@ -2,7 +2,7 @@
 
 **Build, test and ship Power BI and Fabric semantic models in VS Code. Work alongside your own assistant on one live model.**
 
-[Download 1.5.0](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest) ·
+[Download 1.6.0](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest) ·
 [Website](https://semanticus.com.au) · [User guide](https://semanticus.com.au/docs) ·
 [Release notes](CHANGELOG.md)
 
@@ -10,11 +10,11 @@ Semanticus brings model editing, DAX and M, model quality, lineage, tests and pu
 Open a local project or connect to a model, make a change, check what it affects and review the difference before
 publishing. You can do the work yourself, ask your assistant to help, or move between the two.
 
-Studio opens on the **Plan**, where you start, and has five more areas: **Explore**, **Edit**, **Review**,
-**Publish** and **Workflows**.
+Studio opens on the **Plan**, where you start, and has four more areas: **Explore**, **Edit**, **Review** and
+**Publish**.
 You pick the area by the question you start with, then the page inside it.
 
-![Semanticus Studio model diagram](https://semanticus.com.au/assets/shots/diagram.png)
+![The Plan in Semanticus Studio, with work from Semanticus, Jev and your assistant](https://semanticus.com.au/assets/shots/plan.png)
 
 ## You and your assistant, working together
 
@@ -38,7 +38,7 @@ without leaving the workbench.
 ## Skills for your assistant
 
 Seven optional guides help your assistant use Semanticus: getting started, DAX optimisation, AI readiness,
-model interviews, Change Plans, reusable workflows and model knowledge.
+model interviews, Change Plans and model knowledge.
 
 Run **Semanticus: Install or Update Assistant Skills** to install or update guides for Claude Code or Codex.
 Copilot can load the bundled skills directly on VS Code versions supporting extension-provided skills.
@@ -51,16 +51,15 @@ Skills use your existing MCP connection. **Semanticus: Connect AI Assistant** wr
 `.mcp.json`; the setup guide explains the equivalent configuration for other clients. Core orientation also
 comes from MCP, so an assistant can work without installing skills.
 
-## The six areas
+## The five areas
 
 | Area | What you do there |
 |---|---|
-| **Plan** | Where you start. Every piece of work on the model is a row that says who does it: Semanticus, you or your assistant. Type a task, give work to your assistant, run the ready fixes as one change you can undo, and open History to see every edit, who made it and undo back to any point. Workflow runs are rows here too. |
-| **Explore** | Data, Ask your data (Pro: type a question about your numbers and get the answer as a table; when the question can be read two ways, it says which one it shows and names the other), Diagram, Lineage and Size. |
-| **Edit** | Find and replace, Queries (write a DAX query, run it and compare answers across contexts), AI instructions with Model notes, Advanced modelling and Power Query. Tables, measures, columns, relationships, calculation groups, roles and perspectives are edited here, in DAX and M. |
+| **Plan** | Where you start. Every piece of work on the model is a row that says who does it: Semanticus, you or your assistant. Type a task, give work to your assistant, run the ready fixes as one change you can undo, and open History to see every edit, who made it and undo back to any point. |
+| **Explore** | Data, Query (ask a question in plain words, which is Pro, or build it from fields, or write DAX; the answer comes first and says how it was read, with the DAX beside it, the visual that shows it best, its speed, an explanation of any number, and the questions asked before), Diagram, Lineage and Size. |
+| **Edit** | AI instructions with Model notes, Advanced modelling and Power Query. Tables, measures, columns, relationships, calculation groups, roles and perspectives are edited here, in DAX and M. |
 | **Review** | Model quality (BPA), AI readiness, Validation with its Reports, and Docs. |
 | **Publish** | Published: compare against a live destination, publish after you confirm, and roll back to a published version. |
-| **Workflows** | Your workflows, and Author for the one you open. Start from a starter that comes with Semanticus, or describe what you want in words. Team rules, when a team sets them, say which workflows must be used. |
 
 Connections and Settings sit in the same header. Connections names four roles: Editing, Tests and queries,
 Publish to and Reference model.
@@ -68,9 +67,13 @@ Publish to and Reference model.
 Open BIM files, TMDL folders and PBIP semantic-model projects. Connect to remote XMLA models in Power BI,
 Fabric or Azure Analysis Services. On Windows x64, you can also discover a running Power BI Desktop model.
 
-![A workflow with questions and recorded checks](https://semanticus.com.au/assets/shots/workflows.png)
+![The Query notebook: a question in plain words, its number and one picture](https://semanticus.com.au/assets/shots/query.png)
 
-## Install 1.5.0
+![Validation: a number checked against SQL, with an accepted difference](https://semanticus.com.au/assets/shots/validation.png)
+
+![The model diagram in the bus matrix layout](https://semanticus.com.au/assets/shots/diagram-matrix.png)
+
+## Install 1.6.0
 
 Install Semanticus from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=semanticus-vscode.semanticus-vscode): in VS Code, open **Extensions**,
 search for Semanticus and choose **Install**. VS Code picks the right build for your computer, and every build
@@ -85,23 +88,22 @@ for the computer where VS Code runs. In VS Code, open **Extensions**, choose **V
 
 1. Open the **Semanticus** view in VS Code.
 2. Run **Semanticus: Open Model** and choose a local model or supported connection.
-3. Open Studio. It opens on the Plan; the other areas are Explore, Edit, Review, Publish and Workflows.
+3. Open Studio. It opens on the Plan; the other areas are Explore, Edit, Review and Publish.
 4. Run **Semanticus: Connect AI Assistant** if you want your assistant to work in the same session.
 5. Save local work. For a live destination, review what will be published before you confirm Publish.
 
 The [getting started guide](https://semanticus.com.au/docs/getting-started) covers connections and your first edits.
 
-## What changed in 1.5.0
+## What changed in 1.6.0
 
-The Plan is calmer. One header line holds the grade figures (AI ready, Best practice and Plan done), the live slot
-and Run the plan, and the list is grouped by who does the work. You can run a single task with its own Undo. The
-Lineage Graph opens in about half a second on a big model, where it took 20 to 40 seconds. You can try Pro free for
-30 days. Connect another assistant adds Claude Desktop, Codex, Cursor and Claude Code from one menu. Semanticus is
-green, you are blue and your assistant is purple, and the charts share one palette. A Next line suggests the next step
-on the other pages, and The Link shows what is working. Publish sends role changes, and your yes in chat lets your
-assistant publish through a red check. The first grade on open is faster. The Diagram keeps the bus matrix and adds a
-dot grid under Arrange. Test runs are faster, and one allow is enough for a build. Read [the changelog](CHANGELOG.md)
-for the full list.
+Ask your model a question in plain words and keep the answer. Explore > Query is a notebook: one row for each question,
+with its number first and how it was read in one line. Open its DAX, Table, Speed, Compare, Save and Explain when you
+want them. Validation checks your numbers against SQL or a number you trust, shows the true number on both sides, and
+lets you Waive a difference with a note that stays visible. The Copilot test shows how Copilot answers your model and
+what to fix. Explain this number splits a number by the column that explains it. Publish sends a rename with the
+measures, relationships and roles that use it in one press, and the page tells the truth before and after. Your
+assistant saves to the model's own file, and closing VS Code no longer waits for work you already saved. Read
+[the changelog](CHANGELOG.md) for the full list.
 
 ## Free and Pro
 
@@ -113,7 +115,7 @@ Pending changes, Queries, Record verified edits, every fix, the assistant permis
 Publish, and the advanced publishing tools including source control, Fabric Git, automated delivery and
 the Data Agent.
 
-Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, Workflows, Ask your data, bulk edits that change many objects in one step, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a workflow you describe on the Workflows page, a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off. Nothing is sent to Jev until you agree for that model. Then what goes is table, column and measure names, their types, formats, folders and descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula itself), and the words you type: questions in the ask box, in Ask your data and in the question box on Queries, and the words that describe a task or a workflow. Words you type go as you typed them. A row or a value from your tables never goes, and neither do your connection or anything from another model. Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
+Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, the plain-words box on Query, bulk edits that change many objects in one step, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off. Nothing is sent to Jev until you agree for that model. Then what goes is table, column and measure names, their types, formats, folders and descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula itself), and the words you type: questions in the ask box and in the plain-words box on Query, and the words that describe a task. Words you type go as you typed them. A row or a value from your tables never goes, and neither do your connection or anything from another model. Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
 order, with a jump on each one to the page where you can do it by hand.
 You can try Pro free for 30 days.
 [Compare the current plans](https://semanticus.com.au/pro).

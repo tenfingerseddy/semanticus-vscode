@@ -30,8 +30,10 @@ namespace Semanticus.Engine
     /// run_sql tool to gate separately yet). run_dmv returns
     /// metadata/statistics, not source rows — Read. ADJUDICATED not-gated (bounded
     /// diagnostic context of calculation ops, same class as the accepted scalar-aggregation limitation — any measure
-    /// can serialize data through QueryCalc): verify_dax_equivalence Mismatch context (&lt;=50 members) and
-    /// explain_value decomposeBy contributor labels.
+    /// can serialize data through QueryCalc): verify_dax_equivalence Mismatch context (&lt;=50 members).
+    /// explain_value is QueryData (its contributors are member names with values, rows by construction), refused only on
+    /// an explicit Deny and never asks, like get_model_facts. probe_measure stays QueryCalc: it returns one scalar per
+    /// context the caller names, the same accepted limit as run_dax.
     ///
     /// deploy_stage keeps its own, STAGE-aware gate (prod stage ⇒ agent hard-refusal + human confirm token) — the
     /// pipeline's stage metadata is a better prod signal than an unlabelled registry record, and re-gating non-prod
@@ -59,6 +61,7 @@ namespace Semanticus.Engine
             ["pivot_measure"] = AgentCapability.QueryData,      // SUMMARIZECOLUMNS rows by construction — always a data read
             ["evaluate_and_log"] = AgentCapability.QueryData,   // the EVALUATEANDLOG log channel samples arbitrary table rows regardless of the outer query shape
             ["reconcile_measure"] = AgentCapability.QueryData,  // Tests-tab reconciler runner — returns source-row aggregates by group (wired at the call site, consumeGrant:false)
+            ["explain_value"] = AgentCapability.QueryData,      // top contributors are member names with values: refused only on an explicit Deny, never asks (call site)
             ["get_model_facts"] = AgentCapability.QueryData,    // derived facts, never rows: refused only on an explicit Deny, never asks (call site)
             ["run_sql"] = AgentCapability.QueryData,            // planned standalone op — forward-declared (the reconciler runs SQL internally via FabricSqlQuery)
             ["get_source_schema"] = AgentCapability.Read,        // column names/types over TDS — metadata, not rows

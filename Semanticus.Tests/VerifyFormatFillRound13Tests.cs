@@ -133,7 +133,21 @@ namespace Semanticus.Tests
         {
             await f.Engine.GetModelPlanAsync();
             await f.Engine.JevSettledForTest();
-            return door == "mcp" ? await McpTools.GetModelPlan(f.Engine) : await new EngineRpcTarget(f.Engine).getModelPlan();
+            return door == "mcp" ? await McpPlanWithDetailAsync(f.Engine) : await new EngineRpcTarget(f.Engine).getModelPlan();
+        }
+
+        /// <summary>The agent door reads a plan over 40,000 characters short, each row's lines and objects left out (PlanReadShape).
+        /// A 13-row plan on even a small model passes that now, so the detail is read one row at a time, as an assistant does
+        /// (item = the row's id), and put back in the short read's rows.</summary>
+        internal static async Task<ModelPlanView> McpPlanWithDetailAsync(IEngine engine)
+        {
+            var plan = await McpTools.GetModelPlan(engine);
+            for (var n = 0; n < plan.Items.Length; n++)
+            {
+                var id = plan.Items[n].Id;
+                plan.Items[n] = (await McpTools.GetModelPlan(engine, id)).Items.Single(i => i.Id == id);
+            }
+            return plan;
         }
 
         private static ModelPlanChangeLine FormatLine(ModelPlanView plan, string target) =>

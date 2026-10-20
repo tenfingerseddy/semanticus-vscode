@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Semanticus.Analysis;
 using TabularEditor.TOMWrapper;
 
 namespace Semanticus.Engine
@@ -21,6 +22,9 @@ namespace Semanticus.Engine
         public string ModelFingerprint { get; set; }
         public bool Live { get; set; }                    // was a live XMLA connection available for the probes
         public TestHealth Health { get; set; }
+        /// <summary>The timing verdicts the grade was worked out with, kept in memory so the grade can be worked out again when a check is accepted or taken back.</summary>
+        [System.Text.Json.Serialization.JsonIgnore, Newtonsoft.Json.JsonIgnore]
+        internal Verdict[] TimingVerdicts { get; set; } = Array.Empty<Verdict>();
         public RelationshipIntegrityReport Relationships { get; set; }
         public ReconcileOutcome[] Reconciles { get; set; } = Array.Empty<ReconcileOutcome>();
         public int DefinitionCount { get; set; }
@@ -31,6 +35,8 @@ namespace Semanticus.Engine
         public string Environment { get; set; }           // where the probes ran (database on server); null offline
         public bool CacheCleared { get; set; }            // the timing pass cleared the SE cache before its runs
         public TestRunScope Scope { get; set; }
+        /// <summary>The run in the one unit a person sees, for the assistant to read first: "2 of 3 checks pass: 1 differs." The numbers under Health count probes and comparisons inside those checks.</summary>
+        public string Headline => CheckTally.Of(this).Line();
     }
 
     /// <summary>What this run covered. A partial scope never mints a letter grade and is never recorded.</summary>
@@ -115,6 +121,8 @@ namespace Semanticus.Engine
         public string Name { get; set; }
         public string Check { get; set; }            // which check within a relationship; null elsewhere
         public Verdict Verdict { get; set; }
+        /// <summary>Who accepted this difference and when, when the person did. The verdict stays a difference; the check counted as accepted.</summary>
+        public CheckWaiver Accepted { get; set; }
         /// <summary>The answer the check was agreed against, what it actually got, and the difference. A
         /// relationship check that counts rows expects zero of them; one that compares data types has no
         /// number on either side, and leaves all three absent rather than inventing one.</summary>
@@ -124,6 +132,9 @@ namespace Semanticus.Engine
         public string Note { get; set; }
         public RecordedContext[] Contexts { get; set; }
         public int ContextsTotal { get; set; }
+        /// <summary>How many of <see cref="ContextsTotal"/> comparisons differed, over ALL of them. The kept rows are the worst
+        /// first and capped, so counting them says nothing about the whole run. Absent on runs recorded before this was kept.</summary>
+        public int? Mismatches { get; set; }
 
         /// <summary>The SETTINGS this check ran with, kept as they were at execution time. Reading today's
         /// definition to describe a run from weeks ago describes a check that may since have been edited, which
@@ -222,14 +233,9 @@ namespace Semanticus.Engine
         /// beside its model identity and is never shown against a different one.</summary>
         private (string ModelIdentity, TableRowCountResult[] Results, string When) _lastTableCounts;
 
-        private string TestsDirFor(Session s)
-        {
-            // The VitalsFileFor anchor ladder: the model's own .semanticus sidecar when it lives on disk, else
-            // the workspace's; a live-only session with no workspace has no home → null (callers degrade to
-            // "not persisted" honestly, never a throw).
-            var anchored = !ExperienceStore.IsEphemeralAnchor(s.SourcePath) ? LayoutStore.DirFor(s.SourcePath) : null;
-            return anchored ?? (_workspaceDir == null ? null : Path.Combine(_workspaceDir, LayoutStore.DirName));
-        }
+        // The model's one place (LocalEngine.ModelHome.cs): beside its file, else the folder it was given, else the home while it has no folder.
+        // Null only for an unsaved model with no folder open (callers degrade to "not persisted" honestly, never a throw).
+        private string TestsDirFor(Session s) => PlaceFor(s)?.Dir;
 
         /// <summary>Load only the open model's definitions. A .semanticus directory can be shared by live models
         /// (workspace fallback) or by multiple model files in one folder, so file placement alone never proves
@@ -277,9 +283,9 @@ namespace Semanticus.Engine
                 : Enumerable.Empty<TestDefinition>()).Distinct())
                 TestSuiteStore.Upsert(dir, d, () => d.Id);
 
-            var hidden = all.Count - scoped.Count;
-            return (scoped, unreadable, identities, hidden == 0 ? null
-                : $"{hidden} saved mapping(s) belong to another model or predate model scoping and were hidden.");
+            // Checks that belong to another model are not this person's to see, and a count of what is hidden from them is noise
+            // (Kane saw "176 saved mapping(s) ... were hidden" on a model he never made them for).
+            return (scoped, unreadable, identities, null);
         }
 
         public async Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist = false, string origin = "human", string[] only = null, string[] sections = null, string runId = null)
@@ -531,6 +537,8 @@ namespace Semanticus.Engine
             // value question here and write the outcome back to the interview store, which made a Tests run
             // quietly change a second, separate record. The store, its questions and its own operations are
             // untouched and stay where a person put them; a Tests run simply does not call them.
+            // A difference the person accepted counts as accepted (CheckWaivers), read from the store that lives with the checks.
+            try { CheckWaivers.Apply((await LoadCheckWaiversAsync(s)).Records, outcomes); } catch { /* a store that cannot be read waives nothing: the checks differ as they did */ }
             var health = TestHealthAnalyzer.Analyze(relReport, outcomes, timingVerdicts);
             // A part-run IS graded, on what it ran. It used to throw that away and report the word "Partial",
             // which told the person nothing about the checks they had just asked for. What it must never do is
@@ -547,6 +555,7 @@ namespace Semanticus.Engine
                     : string.IsNullOrEmpty(live.Database) ? live.DataSource : live.Database + " on " + live.DataSource,
                 CacheCleared = cacheCleared,
                 Health = health,
+                TimingVerdicts = timingVerdicts.ToArray(),
                 Relationships = relReport,
                 Reconciles = outcomes.ToArray(),
                 DefinitionCount = selected || sectioned ? defs.Count : suiteCount,
@@ -712,6 +721,91 @@ namespace Semanticus.Engine
             DurationMs = run.DurationMs,
         };
 
+        // ---- accepting a difference (UAT P38/F55) ---------------------------------------------------------------------------------
+        // A check that differs can be accepted as it is: one press, no reason needed. The record lives WITH THE CHECKS (CheckWaiverStore: the
+        // folder's .semanticus, or the per-user home keyed by the model when there is no folder), never in the model. So accepting never marks the
+        // model unsaved, never reaches production on Publish, and survives Save, a restart and a reopen of a live model. It is not on the model's undo
+        // stack either: Undo waive is the one way back, and Ctrl+Z leaves it alone. The record carries the exact difference that was accepted. The
+        // runs still on screen are updated in place, so the page, the report and the grade say "accepted" at once, without a second run.
+
+        /// <summary>Where a model's check waivers live: beside its checks (the model's one place), else the per-user home keyed by the model (an
+        /// unsaved model with no folder, for as long as it is open).</summary>
+        internal string CheckWaiverDirFor(Session s) => TestsDirFor(s) ?? ModelHome.HomeDir(ModelIdentityOf(s));
+
+        /// <summary>The model's check waivers. A waiver an earlier build left in the model's annotation is read into the store once, then never again.</summary>
+        private async Task<(string Dir, List<WaiverRecord> Records)> LoadCheckWaiversAsync(Session s)
+        {
+            var dir = CheckWaiverDirFor(s);
+            if (dir == null) return (null, new List<WaiverRecord>());
+            if (!CheckWaiverStore.Exists(dir))
+            {
+                try
+                {
+                    var legacy = await s.ReadAsync(m => WaiverStore.Load(m).Where(r => string.Equals(r.System, CheckWaivers.System, StringComparison.OrdinalIgnoreCase)).ToList());
+                    CheckWaiverStore.ImportOnce(dir, legacy);
+                }
+                catch { /* nothing to carry over */ }
+            }
+            return (dir, CheckWaiverStore.Load(dir));
+        }
+
+        private ReconcileOutcome LatestOutcomeOf(string defId)
+        {
+            lock (_recentTestRuns)
+                for (var i = _recentTestRuns.Count - 1; i >= 0; i--)
+                {
+                    var o = _recentTestRuns[i].Reconciles?.FirstOrDefault(x => x != null && string.Equals(x.DefId, defId, StringComparison.Ordinal));
+                    if (o != null) return o;
+                }
+            return null;
+        }
+
+        private async Task<SetResult> WaiveCheckAsync(string defId, string note, string origin)
+        {
+            if (string.IsNullOrWhiteSpace(defId)) throw new ArgumentException("Name the check to accept. list_tests shows each check's id.");
+            var s = _sessions.CurrentContext.RequireSession();
+            var seen = LatestOutcomeOf(defId.Trim()) ?? throw new ArgumentException("Run the check first, so there is a difference to accept.");
+            if (!CheckWaivers.CanWaive(seen)) throw new ArgumentException("That check does not differ, so there is nothing to accept.");
+            var (dir, _) = await LoadCheckWaiversAsync(s);
+            var written = CheckWaiverStore.Upsert(dir, new WaiverRecord
+            {
+                System = CheckWaivers.System, RuleId = defId.Trim(), ObjectRef = CheckWaivers.RefOf(defId.Trim()),
+                Reason = string.IsNullOrWhiteSpace(note) ? null : note.Trim(),   // optional: the page shows the difference itself
+                By = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
+                When = DateTimeOffset.UtcNow.ToString("o"),
+                Accepted = CheckWaivers.Signature(seen),
+            });
+            if (!written) throw new InvalidOperationException("The accepted difference could not be saved. Check that the folder that holds your checks can be written to.");
+            await ReapplyCheckWaiversAsync(s, origin);
+            return new SetResult { Revision = s.Revision, Changed = true };
+        }
+
+        private async Task<SetResult> UnwaiveCheckAsync(string defId, string origin)
+        {
+            if (string.IsNullOrWhiteSpace(defId)) throw new ArgumentException("Name the check to take back. list_waivers shows each accepted check.");
+            var s = _sessions.CurrentContext.RequireSession();
+            var (dir, _) = await LoadCheckWaiversAsync(s);
+            var removed = CheckWaiverStore.Remove(dir, defId.Trim());
+            await ReapplyCheckWaiversAsync(s, origin);
+            return new SetResult { Revision = s.Revision, Changed = removed };
+        }
+
+        /// <summary>Read the stored waivers again over every run still held, and work each run's grade out again from its own outcomes. Then tell the
+        /// page (an activity, not a model change).</summary>
+        private async Task ReapplyCheckWaiversAsync(Session s, string origin)
+        {
+            var (_, recs) = await LoadCheckWaiversAsync(s);
+            TestSuiteRunResult[] runs;
+            lock (_recentTestRuns) runs = _recentTestRuns.ToArray();
+            foreach (var run in runs)
+            {
+                foreach (var o in run.Reconciles ?? Array.Empty<ReconcileOutcome>()) if (o != null) { o.Waiver = null; o.WaiverLapsed = false; }
+                CheckWaivers.Apply(recs, run.Reconciles);
+                if (run.Health != null) run.Health = TestHealthAnalyzer.Analyze(run.Relationships, run.Reconciles ?? Array.Empty<ReconcileOutcome>(), run.TimingVerdicts);
+            }
+            _sessions.Bus.PublishActivity(new ActivityEvent { Kind = CheckWaivers.ActivityKind, Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin, Label = "Accepted checks changed", Ok = true });
+        }
+
         private const int RecentTestRunCap = 8;
         private readonly List<TestSuiteRunResult> _recentTestRuns = new List<TestSuiteRunResult>();
 
@@ -844,6 +938,30 @@ namespace Semanticus.Engine
             return line + " Showing the " + shown.ToString(CultureInfo.InvariantCulture)
                 + (shown == 1 ? " biggest difference of " : " biggest differences of ")
                 + total.ToString(CultureInfo.InvariantCulture) + " comparisons.";
+        }
+
+        /// <summary>A passing comparison in the person's words. The reconciler's own summary ("All clear: 3/3 cells reconcile within
+        /// tolerance") is written for the assistant and says "cells"; the page says places.</summary>
+        internal static string PlainReconciledMessage(ReconcileRunResult r)
+        {
+            var places = r.Matches == 1 ? "1 place matches" : r.Matches.ToString(CultureInfo.InvariantCulture) + " places match";
+            if (r.Unverifiable == 0 && r.Complete) return r.Matches == 1 ? "The one place compared matches." : $"All {r.Matches.ToString(CultureInfo.InvariantCulture)} places compared match.";
+            var left = r.Unverifiable == 0 ? "" : r.Unverifiable == 1 ? " 1 place could not be checked." : $" {r.Unverifiable.ToString(CultureInfo.InvariantCulture)} places could not be checked.";
+            return places + "." + left + (r.Complete ? "" : " Some places were left out because there were too many.");
+        }
+
+        /// <summary>The biggest difference, said as a sentence with no engine syntax: no brackets, no "DAX=", "SQL=", "delta=" or "rel=".</summary>
+        internal static string PlainWorstLine(ReconcileRunResult r, string sourceLabel)
+        {
+            var worst = r.Cells?.FirstOrDefault(c => c?.Cell != null && c.Verdict == ReconcileVerdict.Mismatch
+                && (r.WorstKey == (c.Cell.GroupingKey == null || c.Cell.GroupingKey.Length == 0 ? "(grand total)" : string.Join(" | ", c.Cell.GroupingKey))));
+            if (worst?.Cell == null) return "";
+            var cell = worst.Cell;
+            var model = cell.DaxUnsupported || cell.DaxBlank || !cell.Dax.HasValue ? "nothing" : cell.Dax.Value.ToString("#,0.######", CultureInfo.InvariantCulture);
+            var source = cell.SqlUnsupported || cell.SqlNull || !cell.Sql.HasValue ? "nothing" : cell.Sql.Value.ToString("#,0.######", CultureInfo.InvariantCulture);
+            var where = cell.GroupingKey == null || cell.GroupingKey.Length == 0 ? "the overall total" : string.Join(", ", cell.GroupingKey);
+            var name = string.IsNullOrWhiteSpace(sourceLabel) ? "the source" : sourceLabel;
+            return $" The biggest difference is {where}: the model gives {model} and {name} gives {source}.";
         }
 
         public Task<TestReportResult> ExportTestReportAsync()
@@ -1144,6 +1262,9 @@ namespace Semanticus.Engine
             // A MAPPED table signs in the way its named SQL source says to. Only an unmapped table keeps the old
             // endpoint lookup, which finds a sign-in mode only when a remembered XMLA target happens to share the
             // address, and otherwise leaves the helper to read an absent mode as azcli.
+            // No sign-in token for a server the person has not saved: a table's server can come from the model's own partitions, which
+            // are somebody else's words. The row count reads as not counted, with the same plain line a check gives.
+            if (!SqlHostTrust.IsSavedOrMicrosoft(table.Server)) { table.SourceError = SqlHostTrust.UnsavedWords(table.Server); return; }
             var authMode = table.AuthMode;
             var tenantId = table.TenantId;
             if (string.IsNullOrWhiteSpace(authMode))
@@ -1475,6 +1596,8 @@ namespace Semanticus.Engine
             // was going to ask with, and so a recorded run never has to be described by today's definition.
             o.Filter = string.IsNullOrWhiteSpace(plan.Request?.FilterDax) ? null : plan.Request.FilterDax.Trim();
             o.SourceLabel = SourceLabelFor(sqlSource);
+            // Where this check reads, said before it runs, so a check that cannot run still shows where it would have gone.
+            o.Server = sqlSource.Server; o.Database = sqlSource.Database;
             o.ToleranceNote = ToleranceSettingText(plan.Request?.ToleranceAbsolute, plan.Request?.ToleranceRelative, plan.Request?.BlankPolicy);
             if (!live) { o.Verdict = Verdict.NotVerifiable; o.Message = "reconciliation needs a live connection. Connect a live model in Connections and re-run"; return o; }
 
@@ -1482,6 +1605,7 @@ namespace Semanticus.Engine
             // partitions is never handed the model's endpoint on the way to the query.
             var r = await ReconcileMeasureCoreAsync(plan.Request, origin, sqlSource, plan.Binding, sqlTokens);
             o.Dax = r.DaxQuery;
+            o.Server = r.Server ?? o.Server; o.Database = r.Database ?? o.Database; o.UnsavedServer = r.UnsavedServer;
             o.Rows = BuildCompareRows(r.Cells, out var rowsTotal);
             o.RowsTotal = rowsTotal;
             // The same three fields a trusted-answer check carries, so one contract serves both kinds. Here the
@@ -1501,16 +1625,27 @@ namespace Semanticus.Engine
             {
                 case ReconcileStatus.Reconciled:
                     o.Verdict = Verdict.Pass;
-                    o.Message = r.Unverifiable == 0 && r.Complete ? r.Summary : $"{r.Summary} (caveated: {r.Unverifiable} unverifiable cell(s){(r.Complete ? "" : ", truncated")})";
+                    o.Message = PlainReconciledMessage(r);
+                    break;
+                // A saved check that compares only the overall total and finds the two totals equal passes: the person asked
+                // for the total, and "could not check" on a number that ties to the cent reads as a broken check (UAT 1.5.104).
+                // The reconcile tool keeps its own status for the assistant; only the saved check's verdict is decided here.
+                case ReconcileStatus.InsufficientCoverage
+                    when r.Error == null && r.Complete && r.HasGrandTotal && r.MemberCellsChecked == 0
+                        && r.Matches > 0 && r.Mismatches == 0 && r.Unverifiable == 0 && r.InvalidInputs == 0:
+                    o.Verdict = Verdict.Pass;
+                    o.Message = decimal.TryParse(o.Actual, NumberStyles.Float, CultureInfo.InvariantCulture, out var matched)
+                        ? $"The model and the source both give {matched.ToString("#,0.######", CultureInfo.InvariantCulture)}."
+                        : "The two totals match.";
                     break;
                 case ReconcileStatus.Mismatch:
                     o.Verdict = Verdict.Fail;
-                    o.Message = ComparisonCountLine(r.Mismatches, r.Matches, o.Rows.Length, o.RowsTotal) + " "
-                        + (string.IsNullOrEmpty(r.WorstExplanation) ? r.Summary : $"{r.Summary} Worst: {r.WorstKey}: {r.WorstExplanation}");
+                    o.Message = ComparisonCountLine(r.Mismatches, r.Matches, o.Rows.Length, o.RowsTotal) + PlainWorstLine(r, o.SourceLabel);
                     break;
                 default:
                     o.Verdict = Verdict.NotVerifiable;
                     o.Message = r.Error ?? r.Summary ?? "the run could not verify enough to certify";
+                    o.Detail = r.RawError;
                     break;
             }
             return o;
@@ -1576,8 +1711,25 @@ namespace Semanticus.Engine
                 }
                 else
                     measure = ObjectRefs.Resolve(m, def.TargetRef ?? request.MeasureRef) as Measure;
-                if (measure == null) return (Missing: true, Name: (string)null, Empty: false, Ref: def.TargetRef);
-                return (Missing: false, Name: measure.Name, Empty: string.IsNullOrWhiteSpace(measure.Expression), Ref: ObjectRefs.For(measure));
+                if (measure == null) return (Missing: true, Name: (string)null, Empty: false, Ref: def.TargetRef, Numeric: false, FilterColumn: (string)null);
+                // Hero 26 N2: a filter on a whole-number column (Year) is compared as a number, not as text, or the model cannot answer it.
+                var numeric = false;
+                string filterColumn = null;
+                // Round 2 N8: the form's own example is a bare "Year". A bare field name finds its table column: one match is taken,
+                // several take the first in the model's table order (the filter shown with the result says which).
+                if (!string.IsNullOrWhiteSpace(request.FilterColumn) && request.FilterColumn.IndexOf('[') < 0)
+                {
+                    var bare = request.FilterColumn.Trim();
+                    var hit = m.Tables.SelectMany(t => t.Columns.Select(c => (Table: t, Column: c)))
+                        .FirstOrDefault(x => string.Equals(x.Column.Name, bare, StringComparison.OrdinalIgnoreCase));
+                    if (hit.Column != null) filterColumn = "'" + hit.Table.Name.Replace("'", "''") + "'[" + hit.Column.Name.Replace("]", "]]") + "]";
+                }
+                if (AnchorGate.TryParseColumnRef(filterColumn ?? request.FilterColumn, out var ft, out var fc))
+                {
+                    var col = m.Tables.FirstOrDefault(t => string.Equals(t.Name, ft, StringComparison.OrdinalIgnoreCase))?.Columns.FirstOrDefault(c => string.Equals(c.Name, fc, StringComparison.OrdinalIgnoreCase));
+                    numeric = col != null && (col.DataType.ToString() is "Int64" or "Double" or "Decimal");
+                }
+                return (Missing: false, Name: measure.Name, Empty: string.IsNullOrWhiteSpace(measure.Expression), Ref: ObjectRefs.For(measure), Numeric: numeric, FilterColumn: filterColumn);
             });
             o.TargetRef = bound.Ref ?? o.TargetRef;
             if (bound.Missing)
@@ -1595,9 +1747,13 @@ namespace Semanticus.Engine
                 o.Message = "This measure has no formula.";
                 return (o, null);
             }
+            // A whole-number column's value goes in as a number (hero 26 N2); anything that is not a number stays quoted text.
+            var numberText = bound.Numeric && !string.IsNullOrWhiteSpace(request.FilterValue)
+                && decimal.TryParse(request.FilterValue.Trim(), NumberStyles.Number, CultureInfo.InvariantCulture, out var number)
+                ? number.ToString(CultureInfo.InvariantCulture) : null;
             var filter = !string.IsNullOrWhiteSpace(request.FilterDax) ? request.FilterDax.Trim()
                 : !string.IsNullOrWhiteSpace(request.FilterColumn) && !string.IsNullOrWhiteSpace(request.FilterValue)
-                    ? request.FilterColumn + " = \"" + request.FilterValue.Replace("\"", "\"\"") + "\""
+                    ? (bound.FilterColumn ?? request.FilterColumn) + " = " + (numberText ?? "\"" + request.FilterValue.Replace("\"", "\"\"") + "\"")
                     : null;
             o.Filter = filter;
             var dax = BuildMeasureValueDax(bound.Name, expression, filter, out var refusal);
@@ -1628,10 +1784,23 @@ namespace Semanticus.Engine
             catch (Exception ex)
             {
                 p.Outcome.Verdict = Verdict.NotVerifiable;
-                p.Outcome.Message = "Could not ask the measure: " + ex.Message;
+                p.Outcome.Message = "Could not ask the measure: " + PlainCheckError(ex.Message);
                 return p.Outcome;
             }
             return JudgeMeasureValue(p, rs);
+        }
+
+        /// <summary>A check that errored says one plain line: the model's first sentence, without its markup, its "Technical Details" and its activity ids (hero 26 N2).</summary>
+        internal static string PlainCheckError(string error)
+        {
+            if (string.IsNullOrWhiteSpace(error)) return null;
+            var text = System.Text.RegularExpressions.Regex.Replace(error, "</?[A-Za-z]{2,8}>", "");
+            var cut = text.IndexOf("Technical Details", StringComparison.OrdinalIgnoreCase);
+            if (cut >= 0) text = text.Substring(0, cut);
+            var id = text.IndexOf("RootActivityId", StringComparison.OrdinalIgnoreCase);
+            if (id >= 0) text = text.Substring(0, id);
+            text = System.Text.RegularExpressions.Regex.Replace(text, "\\s+", " ").Trim();
+            return text.Length == 0 ? null : text.Length > 240 ? text.Substring(0, 237).TrimEnd() + "..." : text;
         }
 
         /// <summary>The verdict for one trusted-number check from the answer it got. One path for a check asked on its own
@@ -1643,7 +1812,7 @@ namespace Semanticus.Engine
             if (rs == null || rs.Error != null)
             {
                 o.Verdict = Verdict.NotVerifiable;
-                o.Message = rs?.Error ?? "Could not ask the measure.";
+                o.Message = PlainCheckError(rs?.Error) ?? "Could not ask the measure.";
                 return o;
             }
             // The check promised one number. Require that shape BEFORE any verdict: reading the first cell of a
@@ -1661,9 +1830,10 @@ namespace Semanticus.Engine
             var rel = request.ToleranceRelative ?? InterviewScoring.OracleRelTol;
             var match = MeasureValueMatches(actual, request.ExpectedValue, abs, rel);
             o.Verdict = match ? Verdict.Pass : Verdict.Fail;
+            // A miss shows both numbers, so the person never has to open the page to see how far off it is (round 2 N9).
             o.Message = match
                 ? "The measure matched the number you trust."
-                : "The measure did not match the number you trust.";
+                : MeasureValueMissLine(actual, request.ExpectedValue);
             // The three numbers travel as fields. NO compare row is built: there is no source side to put in one,
             // and the empty cell the old row carried is what made the page print "SQL result NULL".
             o.Actual = MeasureValueActualText(actual);
@@ -1895,6 +2065,9 @@ namespace Semanticus.Engine
         {
             if (InterviewScoring.IsBlankSentinel(expected)) return actual == null;
             if (actual == null) return false;
+            // A person types, and the form shows, 58.1% for a ratio: it is compared as 0.581 at the precision written (round 2 N11).
+            if (TryPercent(expected, out var wantRatio, out var halfStep) && IsNumber(actual))
+                return Math.Abs(Convert.ToDouble(actual) - wantRatio) <= Math.Max(Math.Max(absTol, relTol * Math.Abs(wantRatio)), halfStep * 1.0000001);
             if (double.TryParse(expected, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var want)
                 && (actual is byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal))
             {
@@ -1902,6 +2075,23 @@ namespace Semanticus.Engine
                 return Math.Abs(got - want) <= Math.Max(absTol, relTol * Math.Abs(want));
             }
             return InterviewScoring.OracleMatches(actual, expected);
+        }
+
+        private static bool IsNumber(object v) => v is byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal;
+
+        /// <summary>"58.1%" is 0.581, good to half the last written digit (0.0005). False when the text is not a number followed by a percent sign.</summary>
+        internal static bool TryPercent(string text, out double ratio, out double halfStep)
+        {
+            ratio = 0; halfStep = 0;
+            var t = text?.Trim();
+            if (string.IsNullOrEmpty(t) || !t.EndsWith("%", StringComparison.Ordinal)) return false;
+            var body = t.Substring(0, t.Length - 1).Trim();
+            if (!double.TryParse(body, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var pct)) return false;
+            var dot = body.IndexOf('.');
+            var decimals = dot < 0 ? 0 : body.Length - dot - 1;
+            ratio = pct / 100;
+            halfStep = 0.5 * Math.Pow(10, -(decimals + 2));
+            return true;
         }
 
         /// <summary>What the model actually returned, as text a person reads. A DAX BLANK is reported as blank
@@ -1916,12 +2106,46 @@ namespace Semanticus.Engine
                 : Convert.ToString(actual, CultureInfo.InvariantCulture);
         }
 
+        /// <summary>"The model gives A. You trust B." with both numbers at enough places that they differ when they differ:
+        /// a trusted 0.358 against 0.35825 read "0.36" on both sides at two places (round 2 N9).</summary>
+        private static string MeasureValueMissLine(object actual, string expected)
+        {
+            string got = null, trust = null;
+            for (var extra = 0; extra <= 8; extra++)
+            {
+                got = MeasureValueShown(actual, expected, extra);
+                trust = MeasureValueShown(expected, null, extra);
+                if (got != trust) break;
+            }
+            return $"The model gives {got}. You trust {trust}.";
+        }
+
+        /// <summary>A number as a person reads it: thousands separators, no trailing zeros past two decimals. Text and blank stay as they are.
+        /// <paramref name="extraPlaces"/> adds places for a pair of numbers that would otherwise read the same.</summary>
+        private static string MeasureValueShown(object value, string likeExpected = null, int extraPlaces = 0)
+        {
+            if (value == null) return "blank";
+            // Next to a trusted "58.1%", the model's 0.5812 reads as 58.1%, in the same units and at the same precision.
+            if (TryPercent(likeExpected, out _, out _) && ToDecimal(value) is decimal ratioValue && !(value is string))
+            {
+                var body = likeExpected.Trim().TrimEnd('%').Trim();
+                var dot = body.IndexOf('.');
+                var places = dot < 0 ? 0 : body.Length - dot - 1;
+                return (ratioValue * 100).ToString("N" + (places + extraPlaces), CultureInfo.InvariantCulture) + "%";
+            }
+            var text = Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim();
+            if (string.IsNullOrEmpty(text) || InterviewScoring.IsBlankSentinel(text)) return "blank";
+            var number = value is string ? (decimal.TryParse(text, NumberStyles.Any, CultureInfo.InvariantCulture, out var parsed) ? parsed : (decimal?)null) : ToDecimal(value);
+            return number.HasValue ? number.Value.ToString("#,##0." + new string('#', 2 + extraPlaces), CultureInfo.InvariantCulture) : text;
+        }
+
         /// <summary>Actual minus expected, or null when either side is not a number (a blank result, or a trusted
         /// answer written as text). A missing difference is honest; a zero would claim the two sides agree.</summary>
         private static decimal? MeasureValueDifference(object actual, string expected)
         {
             var got = ToDecimal(actual);
             if (!got.HasValue) return null;
+            if (TryPercent(expected, out var ratio, out _)) return got.Value - (decimal)ratio;
             return decimal.TryParse(expected, System.Globalization.NumberStyles.Any, CultureInfo.InvariantCulture, out var want)
                 ? got.Value - want
                 : (decimal?)null;
@@ -1957,6 +2181,7 @@ namespace Semanticus.Engine
                     DefId = o.DefId,
                     Name = string.IsNullOrWhiteSpace(o.Title) ? o.TargetRef : o.Title,
                     Verdict = o.Verdict,
+                    Accepted = o.Waiver,
                     Expected = o.Expected,
                     Actual = o.Actual,
                     Difference = o.Difference,
@@ -1971,6 +2196,7 @@ namespace Semanticus.Engine
                     DaxMs = o.DurationMs > 0 ? o.DurationMs : (long?)null,
                     SqlMs = o.SqlDurationMs > 0 ? o.SqlDurationMs : (long?)null,
                     ContextsTotal = o.RowsTotal,
+                    Mismatches = o.RowsTotal > 0 ? o.Mismatches : (int?)null,
                     Contexts = (o.Rows ?? Array.Empty<CompareRow>()).Where(r => r != null).Select(r => new RecordedContext
                     {
                         Context = r.Context,

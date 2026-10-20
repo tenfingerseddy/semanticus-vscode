@@ -78,7 +78,10 @@ namespace Semanticus.Engine
                 if (ring.Count > StudioNoteRing) ring.RemoveRange(0, ring.Count - StudioNoteRing);
             }
             _sessions.Bus.PublishStudioShow(note);
-            return Task.FromResult(new StudioShowResult { Id = note.Id, Place = place.Id, How = place.How, Screen = ScreenFor() });
+            // Hero 27 P6: every query the assistant ran (run_dax, ask_data) is already a row on the Query page, with its number and its DAX, so it is not
+            // asked to be pasted there.
+            var shown = place.Tool == "query" ? "Anything you ran with run_dax or ask_data is already a row on that page, with its number and its DAX. Do not tell the person to paste a query there." : null;
+            return Task.FromResult(new StudioShowResult { Id = note.Id, Place = place.Id, How = place.How, Screen = ScreenFor(), Shown = shown });
         }
 
         // "moved" only when a Studio is attached, the mode is Claude drives and the person has not taken the wheel.
@@ -121,6 +124,48 @@ namespace Semanticus.Engine
             return Task.FromResult(new StudioSuggestResult { Id = suggestion.Id, Shown = true });
         }
 
+        /// <summary>A step that publishes goes once a publish of this model has SUCCEEDED after the suggestion was made: the words are on the service, so
+        /// offering to publish them again is stale (UAT 17 Oct). A restore point does not say it: one is written before the push, for every model, so
+        /// another model's publish or a failed one would take the step away. The fact is the audit record a committed publish writes
+        /// (NotePublished). The words the assistant wrote ("It is not published") are stale too, so the line says what is left instead.
+        /// The other steps stay. Null when nothing is left to offer.</summary>
+        private StudioSuggestion WithoutDonePublishSteps(StudioSuggestion s)
+        {
+            if (s?.Steps == null) return s;
+            if (!s.Steps.Any(x => x != null && IsPublishStep(x))) return s;
+            DateTime landed;
+            lock (_publishedGate) _publishedAt.TryGetValue(s.SessionId ?? "", out landed);
+            if (landed == default || landed < ParseAt(s.At)) return s;
+            var kept = s.Steps.Where(x => x != null && !IsPublishStep(x)).ToArray();
+            return kept.Length == 0 ? null : new StudioSuggestion { Id = s.Id, Say = StudioPublishedSuggestSay, Steps = kept, At = s.At, SessionId = s.SessionId };
+        }
+
+        internal const string StudioPublishedSuggestSay = "Published. Here is what is left.";
+        private readonly object _publishedGate = new();
+        private readonly Dictionary<string, DateTime> _publishedAt = new();
+
+        /// <summary>A committed publish of the open model landed (the audit record a successful deploy_live or push writes). Public to the tests.</summary>
+        internal void NotePublished(string sessionId)
+        {
+            lock (_publishedGate) _publishedAt[sessionId ?? ""] = DateTime.UtcNow;
+        }
+
+        /// <summary>Undo publish (rollback_push) landed: the service is back as it was, so "Published." no longer holds.</summary>
+        internal void ClearPublished(string sessionId)
+        {
+            lock (_publishedGate) _publishedAt.Remove(sessionId ?? "");
+        }
+
+        internal static bool IsPublishUndone(VerifiedEditRecord rec) =>
+            string.Equals(rec?.Verdict, "deployed", StringComparison.Ordinal) && string.Equals(rec.Op, "rollback_push", StringComparison.Ordinal);
+
+        internal static bool IsPublishLanded(VerifiedEditRecord rec) =>
+            string.Equals(rec?.Verdict, "deployed", StringComparison.Ordinal)
+            && (string.Equals(rec.Op, "deploy_live", StringComparison.Ordinal) || string.Equals(rec.Op, "apply_model_diff", StringComparison.Ordinal));
+
+        private static bool IsPublishStep(StudioStep s) =>
+            (s.Label ?? "").TrimStart().StartsWith("publish", StringComparison.OrdinalIgnoreCase);
+
         public Task<StudioNotesView> GetStudioNotesAsync(string sessionId)
         {
             var key = string.IsNullOrEmpty(sessionId) ? _sessions.SessionId : sessionId;
@@ -132,7 +177,7 @@ namespace Semanticus.Engine
                 {
                     SessionId = key,
                     Notes = ring?.ToArray() ?? Array.Empty<StudioNote>(),
-                    Suggestion = suggestion,
+                    Suggestion = WithoutDonePublishSteps(suggestion),
                     Answer = _studioAnswer.TryGetValue(key ?? "", out var answer) ? answer : null,
                 });
             }
@@ -190,6 +235,17 @@ namespace Semanticus.Engine
             // These calls narrate their measured result after they commit, including rejected items and no-ops.
             if (tool is "waive_findings" or "write_words" or "edit_objects" or "create_measures" or "delete_objects" or "unwaive_findings" or "apply_fixes" or "duplicate_objects" or "set_doc_sections" or "set_perspective_members" or "set_object_permissions" or "set_plan_items" or "add_plan_items" or "edit_start_plans" or "plan_rows") return;
             var say = StudioMaps.AutoFor(tool);
+            // Accepting a Validation check's difference is the same tool as accepting a finding, but it is a different act in a different place.
+            if (tool is "waive_finding" or "unwaive_finding" && focus != null && focus.StartsWith(McpHealthAppender.CheckFocusPrefix, StringComparison.Ordinal))
+            {
+                var accepting = tool == "waive_finding";
+                say = new StudioMaps.AutoSay
+                {
+                    Place = StudioMaps.FindPlace("review/validation"), Always = true,
+                    Say = accepting ? "Your assistant is accepting a difference in a check." : "Your assistant is bringing a difference back in a check.",
+                };
+                focus = null;
+            }
             if (say == null || _sessions.Bus.HumanClientAttached?.Invoke() != true) return;
             focus = string.IsNullOrWhiteSpace(focus) || focus.IndexOf(':') < 1 ? null : focus.Trim();
             var press = StudioMaps.PressFor(tool);

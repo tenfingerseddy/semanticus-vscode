@@ -78,19 +78,21 @@ const readable = (html) => html
 
 // ── 1. The place ────────────────────────────────────────────────────────────────────────────────────
 const route = src('route.ts');
-assert.match(route, /\| 'askdata'/, 'askdata is a tool id');
-assert.match(route, /data: 'explore', askdata: 'explore'/, 'Ask your data sits in Explore');
+assert.match(route, /\| 'query'/, 'query is a tool id');
+assert.match(route, /data: 'explore', query: 'explore'/, 'Query sits in Explore');
+assert.match(route, /askdata: \{ tool: 'query' \}/, 'the old Ask your data id lands on Query');
+assert.match(route, /daxlab: \{ tool: 'query' \}/, 'the old Queries id lands on Query');
 const app = src('App.tsx');
-assert.match(app, /\{ id: 'data', label: 'Data' \}, \{ id: 'askdata', label: 'Ask your data' \},/,
-  'Ask your data is the Explore segment right after Data');
+assert.match(app, /\{ id: 'data', label: 'Data' \}, \{ id: 'query', label: 'Query' \},/,
+  'Query is the Explore segment right after Data');
 const features = src('features.ts');
 assert.match(features, /export type ProFeature = 'workflows' \| 'askData';/, 'the wire id matches the engine');
-assert.match(features, /askdata: 'askData',/, 'the page is gated on its own feature');
-assert.match(src('askbox.tsx'), /askdata: 'Ask your data',/, 'the ask box names the page as the strip does');
-assert.match(src('help.tsx'), /"askdata": \{/, 'the page has a help entry, which the router copies its words from');
+assert.doesNotMatch(features, /askdata: 'askData',/, 'the page is free: only its words box is Pro (feature askData)');
+assert.match(src('askbox.tsx'), /query: 'Query',/, 'the ask box names the page as the strip does');
+assert.match(src('help.tsx'), /"query": \{/, 'the page has a help entry, which the router copies its words from');
 assert.match(readFileSync(join(repoRoot, 'Semanticus.Engine', 'Entitlement', 'ProFeature.cs'), 'utf8'),
   /ProFeature\.AskData => "askData",/, 'the engine reports the same wire id');
-assert.match(src('propreview.tsx'), /'askdata': \{/, 'free sees a preview of the page, which calls nothing');
+assert.doesNotMatch(src('propreview.tsx'), /'askdata': \{/, 'free sees the page itself, so there is no preview of it');
 
 const M = load(join(webview, 'src', 'askdata-model.ts'));
 
@@ -201,8 +203,8 @@ assert.doesNotMatch(card(answered, { onSwitch: () => {} }), /You may have meant|
   assert.doesNotMatch(card(assumed), /instead/, 'without a switch there is no button');
 }
 {
-  const src = readFileSync(join(webview, 'src', 'askdata.tsx'), 'utf8');
-  assert.match(src, /onSwitch=\{\(p\) => void ask\(p\)\}/, 'the page switches by asking the other parts, which are read by you, not Jev');
+  const src = readFileSync(join(webview, 'src', 'queriesask.tsx'), 'utf8');
+  assert.match(src, /onSwitch=\{ask\.askParts\}/, 'the page switches by asking the other parts, which are read by you, not Jev');
 }
 
 // Stopped at the cap.
@@ -414,28 +416,28 @@ assert.equal(draft.title, 'Net Sales for Year = 2025, Store Region = Coast is 12
   const drawer = (from) => readable(renderToStaticMarkup(React.createElement(realAuthoring.AuthorDrawer,
     { shape: 'measureValue', editing: draft, handedFrom: from, onClose: () => {}, onSaved: () => {} })));
   const fromPage = drawer('askdata');
-  assert.doesNotMatch(fromPage, /DAX Lab/, 'a check from Ask your data does not mention DAX Lab');
-  assert.match(fromPage, /Ask your data/, 'it says where the number came from');
+  assert.doesNotMatch(fromPage, /DAX Lab/, 'a check from the Query page does not mention DAX Lab');
+  assert.match(fromPage, /your question in Query/, 'it says where the number came from');
   assert.match(drawer(undefined), /You changed the formula in DAX Lab/, 'the DAX Lab hand-off keeps its words');
 }
-assert.match(src('askdata.tsx'), /handedFrom="askdata"/, 'the page tells the drawer where the check came from');
+assert.match(src('query.tsx'), /handedFrom="queries"/, 'the page tells the drawer where the check came from');
 
 // Who asked, in the history: the assistant's asks carry the marker.
 assert.equal(M.whoAsked({ origin: 'agent' }), 'Your assistant');
 assert.equal(M.whoAsked({ origin: 'human' }), 'You');
 
 // ── 6. The wiring ───────────────────────────────────────────────────────────────────────────────────
-assert.match(route, /\| 'daxText'/, 'Open in Queries hands the DAX over as a one-use seed');
-assert.match(app, /tab === 'askdata' \? \(/, 'App mounts the page');
-assert.match(app, /seed\?\.kind === 'daxText'/, 'App hands the DAX seed to Queries');
+assert.match(route, /\| 'daxText'/, 'a DAX text handed to the Query page is a one-use seed');
+assert.match(app, /tab === 'query' \? \(/, 'App mounts the page');
+assert.match(app, /seed\?\.kind === 'daxText'/, 'App hands the DAX seed to Query');
 const lab = src('daxlab.tsx');
 assert.match(lab, /navTarget\?\.dax/, 'Queries adopts a handed DAX text');
 assert.match(lab, /onNavConsumed\?\.\(navTarget\.nonce\)/, 'and acknowledges it once adopted');
-const page = src('askdata.tsx');
+const page = src('query.tsx') + src('query-notebook.tsx') + src('queriesask.tsx') + src('daxlab.tsx');
 assert.match(page, /rpc\('cancelDax'\)/, 'Stop reuses the query cancel');
 assert.match(page, /aria-live="polite"/, 'results are announced');
-assert.match(page, /useClaudeReflection\('ask_data', \(\) => loadHistory\(\)\)/, 'an assistant ask, pushed live as an activity, refreshes the list');
-assert.match(page, /usePersistedState<DataAsk>\('askdata\.parts\.' \+ persistKey/, 'the question survives leaving the page and coming back (Studio unmounts a tab)');
+assert.match(page, /useClaudeReflection\('ask_data', \(\) => \{ void reload\(\); \}\)/, 'an assistant ask, pushed live as an activity, refreshes the list');
+assert.match(page, /usePersistedState<DataAsk \| null>\('lab\.ask\.parts\.' \+ persistKey/, 'the question survives leaving the page and coming back (Studio unmounts a tab)');
 assert.doesNotMatch(page + src('askdata-model.ts'), /—/, 'no em dashes in the page');
 
 // ── 7. The verifier's defects on the combined build (26 Sep) ────────────────────────────────────────────
@@ -459,8 +461,8 @@ assert.equal(M.questionLine(null), '');
   assert.equal(P.rowName({ ...refused, reading: 'Net Sales by Store Region' }), 'Net Sales by Store Region', 'the engine\'s reading comes first');
   assert.equal(P.rowName({ ...refused, question: 'sales in atlantis' }), 'sales in atlantis', 'then the words asked');
   assert.equal(P.rowName({ ...refused, parts: null }), 'A question that was not run', 'and only a row with nothing to name it by says so');
-  assert.match(page, /\{rowName\(r\)\}/, 'the history draws each row\'s name with rowName');
-  assert.match(page, /aria-label=\{`Run again: \$\{rowName\(r\)\}`\}/, 'and its Run again button is named the same');
+  assert.match(src('query-notebook-model.ts'), /questionLine\(r\.parts\)/, 'the history names a row from its words, its reading, then its parts, as rowName does');
+  assert.match(page, /aria-label=\{`Run again: \$\{rowText\(r\)\}`\}/, 'and its Run again button is named the same');
 }
 // The pickers leave out a calculation group's columns, which the engine refuses every time (defect 6).
 assert.deepEqual(M.askableColumns([{ table: 'Sales', name: 'Amount' }, { table: 'Time Intelligence', name: 'Time Calculation' }], ['Time Intelligence']),
@@ -492,23 +494,22 @@ assert.ok(engineQueryNotes.includes(`SwitchedOffNote = "${off}"`), 'the switched
   }
 }
 // A model change puts away the last model's answer and list (defect 4; driven in tools/uishot/verify-askdata-drive.mjs).
-assert.match(page, /\}, \[persistKey, loadHistory\]\);/, 'the page resets when the open model changes');
+assert.match(page, /setAll\(\[\]\); setReady\(false\); setNote\(null\); setSelected\(new Set\(\)\); void reload\(\);/, 'the page resets its list when the open model changes');
 assert.match(src('hooks.ts'), /if \(held\.key !== key\)/, 'usePersistedState reads the new key\'s value when its key changes');
 
 // ── 8. The minimalism pass (Kane, 8 Oct): the words box first, passed checks folded, repeats merged ─────────────────
 {
-  // Words first: the form comes before the chips, its Ask is the primary button, and the title line, the empty-state
-  // line and Refresh are gone. The empty line keeps its test id on the quiet "or build it yourself" label.
+  // The bar comes first: Words, Build or DAX, with the words box in it; Ask is the primary button; Refresh is gone; the
+  // list reloads on its own.
   const at = (needle) => page.indexOf(needle);
-  assert.ok(at('aria-label="Ask in your own words"') > 0 && at('aria-label="Ask in your own words"') < at('aria-label="The question, as parts"'), 'the words box comes before the chips');
-  assert.match(page, /placeholder="Ask about your numbers, like net sales by region for 2025"/, 'the placeholder says what to type');
-  assert.match(page, /className="sem-btn sem-btn-primary" disabled=\{busy \|\| !words\.trim\(\)\}>Ask</, 'Ask is the one jade button');
-  assert.match(page, /or build it yourself:/, 'the chips are the second way');
+  assert.ok(at('<Head q={q} nb={nb} />') > 0 && at('<Head q={q} nb={nb} />') < at('<Book q={q}'), 'the box comes before the notebook');
+  assert.match(page, /placeholder="Ask about your data, like net sales by store region for 2025"/, 'the placeholder says what to type');
+  assert.match(page, /className="sem-btn sem-btn-primary" disabled=\{!conn\?\.connected \|\| !q\.askState\.words\.trim\(\) \|\| q\.idle\} onClick=\{\(\) => asking\.askWords\(\)\}/, 'Ask is the one jade button');
+  assert.match(page, /data-testid="mode-build"/, 'Fields is the second way, in the DAX view');
   assert.doesNotMatch(page, />Refresh</, 'the list reloads on its own, so there is no Refresh');
   assert.doesNotMatch(page, /Choose a number and how to split it|Nothing runs until a number is chosen/, 'no page header line and no empty-state paragraph');
-  assert.match(page, /<h1 className="sr-only">Ask your data<\/h1>/, 'the page keeps a heading for a screen reader');
-  assert.match(page, /className=\{`group sem-stack/, 'a history row is one hover target');
-  assert.match(page, /opacity-0 group-hover:opacity-100 focus:opacity-100/, 'Run again shows on hover or focus, and a keyboard reaches it');
+  assert.match(page, /<h1 className="sr-only">Query<\/h1>/, 'the page keeps a heading for a screen reader');
+  assert.match(page, /data-testid="history-row"/, 'a history row is one line, pressed to run again');
 
   // The passed checks fold into one line. A failed check never folds.
   const C = card(answered);
@@ -520,7 +521,7 @@ assert.match(src('hooks.ts'), /if \(held\.key !== key\)/, 'usePersistedState rea
   const bad = { ...answered, outcome: 'refused', checks: [{ name: 'reach', passed: false, line: 'Net Sales does not reach Store Region.' }, { name: 'rows', passed: true, line: '0 rows.' }] };
   assert.match(card(bad), /Net Sales does not reach Store Region\./, 'a failed check prints in full');
   // Few rows need no filter box and no frame.
-  const gridCall = /<ResultGrid columns=\{rs\.columns[\s\S]{0,400}filterable=\{rs\.rows\.length > 20\} framed=\{false\}/.exec(page);
+  const gridCall = /<ResultGrid columns=\{rs\.columns[\s\S]{0,400}filterable=\{rs\.rows\.length > 20\} framed=\{false\}/.exec(src('askdata.tsx'));
   assert.ok(gridCall, 'the grid has a filter only above 20 rows and draws no frame inside the card');
 
   // Data and the connect line (same pass): connected, the line is not drawn (the footer's Tests slot names the model and opens the
@@ -541,14 +542,11 @@ assert.match(src('hooks.ts'), /if \(held\.key !== key\)/, 'usePersistedState rea
   const unnamed = P.mergeRepeats([{ id: 'x', askedAt: 'z', outcome: 'refused' }, { id: 'y', askedAt: 'z', outcome: 'refused' }]);
   assert.equal(unnamed.length, 2, 'two refused asks with no reading are not the same question');
 
-  // K17 (Kane, 8 and 9 Oct): the history has no scroll bar of its own. The latest 8 questions show and "Show all" opens the
-  // rest in place, so the page scrolls.
-  assert.equal(P.HISTORY_SHOWN, 8, 'the list shows the latest 8 questions');
-  const history = page.slice(page.indexOf('aria-label="Asked before"'), page.indexOf('</aside>', page.indexOf('aria-label="Asked before"')));
-  assert.doesNotMatch(history, /overflow-auto|overflow-y|inset-0|askdata-history-frame/, 'the history card holds no scroll area of its own');
-  assert.match(history, /mergedHistory\.length > HISTORY_SHOWN/, 'the link shows only when there is more than the 8');
-  assert.match(history, /showAllHistory \? 'Show fewer' : 'Show all'/, 'Show all opens the list in place, and Show fewer closes it');
-  assert.match(page, /showAllHistory \? mergedHistory : mergedHistory\.slice\(0, HISTORY_SHOWN\)/, 'closed, the list is cut to the latest 8');
+  // K17 (Kane, 8 and 9 Oct), now the notebook's history (16 Oct): every question of the model, newest first, in the clock's menu; the
+  // menu scrolls inside its own height so the page does not grow with the history.
+  const nbSrc = src('query-notebook.tsx');
+  assert.match(nbSrc, /const list = useMemo\(\(\) => historyRows\(nb\.all\), \[nb\.all\]\);/, 'the history lists every row, newest first');
+  assert.match(src('query.css'), /\.qn-histlist \{ max-height: calc\(var\(--sem-row\) \* 10\); overflow: auto;/, 'and scrolls inside its own height');
 }
 
 console.log('ask-data-page: all checks passed');

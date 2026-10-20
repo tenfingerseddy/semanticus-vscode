@@ -22,6 +22,10 @@ namespace Semanticus.Tests
             public EntitlementInfo Info => new EntitlementInfo { Tier = "pro" };
         }
 
+        private static string Snapshot2(string dir) => string.Join("\n", Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
+            .Where(f => !f.Contains(Path.DirectorySeparatorChar + ".semanticus")).OrderBy(f => f, StringComparer.Ordinal)
+            .Select(f => f + "=" + Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(File.ReadAllBytes(f)))));
+
         private static string Scratch(string prefix)
         {
             var dir = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
@@ -129,6 +133,387 @@ namespace Semanticus.Tests
                 Assert.Equal(before, Snapshot(tmdl));
                 Assert.DoesNotContain("9 + 9", Snapshot(tmdl), StringComparison.Ordinal);
                 Assert.True((await engine.SessionInfoAsync()).HasUnsavedChanges);
+            }
+            finally { Delete(root); }
+        }
+
+        // Verifier v-fix-fleet-core (17 Oct): a fleet worker saved "a copy" into a folder INSIDE the open TMDL folder. The nested
+        // model.tmdl then merges with the real one and the model can never be opened again (owner crash, every fleet tick fails).
+        [Fact]
+        public async Task A_copy_saved_inside_the_open_model_folder_leaves_the_model_openable()
+        {
+            var root = Scratch("nest-");
+            var tmdl = Path.Combine(root, "model");
+            try
+            {
+                using (var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
+                {
+                    await engine.OpenAsync(TestModels.FindBim());
+                    await engine.SaveAsync(tmdl, "TMDL", false, "human");
+                }
+                using (var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
+                {
+                    await engine.OpenAsync(tmdl);
+                    try { await McpTools.SaveModel(engine, Path.Combine(tmdl, "Model-copy"), "TMDL"); }
+                    catch (InvalidOperationException) { } // refusing the nested copy is a fine answer too
+                }
+                using (var reopen = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
+                    Assert.False(string.IsNullOrEmpty((await reopen.OpenAsync(tmdl)).ModelName), "the model folder still opens after the copy");
+            }
+            finally { Delete(root); }
+        }
+
+        // fix-save-inside (17 Oct): the refusal says where a copy CAN go, writes nothing, and leaves both a save in place and a save outside working.
+        [Fact]
+        public async Task A_save_inside_the_open_folder_is_refused_in_a_plain_line_and_saves_in_place_and_outside_still_work()
+        {
+            var root = Scratch("nest2-");
+            var tmdl = Path.Combine(root, "model");
+            try
+            {
+                using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(tmdl, "TMDL", false, "human");
+                await engine.OpenAsync(tmdl);
+                foreach (var origin in new[] { "agent", "human" })
+                {
+                    var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SaveAsync(Path.Combine(tmdl, "deeper", "Model-copy"), "TMDL", false, origin));
+                    Assert.Contains("outside that folder", refused.Message);
+                    Assert.Contains(Path.Combine(root, "model copy"), refused.Message);
+                    Assert.False(Directory.Exists(Path.Combine(tmdl, "deeper")));
+                }
+                Assert.Empty(ModelPathResolver.NestedModelRoots(tmdl));
+                var outside = await McpTools.SaveModel(engine, Path.Combine(root, "model copy"), "TMDL");
+                Assert.Equal(Path.Combine(root, "model copy"), outside.Path);
+                Assert.True(File.Exists(Path.Combine(root, "model copy", "model.tmdl")));
+                var inPlace = await McpTools.SaveModel(engine, null, "TMDL");
+                Assert.Equal(tmdl, inPlace.Path);
+            }
+            finally { Delete(root); }
+        }
+
+        // F-296 (Codex on pull request 402): a copy saved as TMDL is a folder, and only a copy FILE was remembered, so the assistant's second
+        // save to the same copy path was refused although the instructions promise it refreshes the copy. A folder that is still exactly what this
+        // session wrote is replaced whole; one that changed since goes untouched and the copy is written beside it; a folder it did not write is refused.
+        [Fact]
+        public async Task A_second_agent_save_refreshes_an_unchanged_tmdl_copy_folder_and_goes_beside_a_changed_one_and_a_foreign_folder_is_still_refused()
+        {
+            var root = Scratch("f296-");
+            var sales = Path.Combine(root, "Sales");
+            var copy = Path.Combine(root, "Sales backup");
+            var foreign = Path.Combine(root, "foreign");
+            try
+            {
+                using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(sales, "TMDL", false, "human");
+                await engine.OpenAsync(sales);
+
+                var first = await engine.SaveAsync(copy, "TMDL", false, "agent");
+                Assert.True(first.IsBackupCopy);
+                Assert.True(File.Exists(Path.Combine(copy, "model.tmdl")));
+
+                var refreshed = await engine.SaveAsync(copy, "TMDL", false, "agent");   // nothing in the copy changed: it is replaced, as the instructions promise
+                Assert.True(refreshed.IsBackupCopy);
+                Assert.Equal(Path.GetFullPath(copy), Path.GetFullPath(refreshed.Path));
+                Assert.True(File.Exists(Path.Combine(copy, "model.tmdl")));
+                Assert.Empty(Directory.GetFileSystemEntries(root, "Sales backup.semanticus-bak-*"));
+
+                var stray = Path.Combine(copy, "stray.txt");
+                File.WriteAllText(stray, "added to the copy after it was written");
+                var beside = await engine.SaveAsync(copy, "TMDL", false, "agent");   // something changed: the copy goes beside it
+                Assert.True(beside.IsBackupCopy);
+                Assert.Equal(Path.GetFullPath(Path.Combine(root, "Sales backup 2")), Path.GetFullPath(beside.Path));
+                Assert.True(File.Exists(Path.Combine(beside.Path, "model.tmdl")));
+                Assert.True(File.Exists(stray), "a file somebody added to the copy folder was deleted");
+                Assert.Equal("added to the copy after it was written", File.ReadAllText(stray));
+                Assert.Contains("Sales backup 2", beside.Note);
+
+                // A folder this session did not write is never replaced.
+                Directory.CreateDirectory(foreign);
+                var theirs = Path.Combine(foreign, "notes.txt");
+                File.WriteAllText(theirs, "somebody else's file");
+                var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SaveAsync(foreign, "TMDL", false, "agent"));
+                Assert.Contains("Nothing was saved", refused.Message);
+                Assert.Equal("somebody else's file", File.ReadAllText(theirs));
+                Assert.False(File.Exists(Path.Combine(foreign, "model.tmdl")));
+            }
+            finally { Delete(root); }
+        }
+
+        // Verifier v-fix-codex402 (F-296 lost-work bar): a file the person adds to a copy folder after Semanticus wrote it is the person's
+        // work. The next copy to that path may refresh what Semanticus wrote, or refuse, but it must never delete the person's file.
+        [Fact]
+        public async Task Verifier_a_file_the_person_added_to_the_copy_folder_survives_the_next_copy()
+        {
+            var root = Scratch("vf296a-");
+            var sales = Path.Combine(root, "Sales");
+            var copy = Path.Combine(root, "Sales backup");
+            try
+            {
+                using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(sales, "TMDL", false, "human");
+                await engine.OpenAsync(sales);
+                await engine.SaveAsync(copy, "TMDL", false, "agent");
+                var notes = Path.Combine(copy, "my notes.txt");
+                File.WriteAllText(notes, "the person's own notes");
+
+                var again = await engine.SaveAsync(copy, "TMDL", false, "agent");   // a redirect, never a refusal with no way on
+                Assert.NotEqual(Path.GetFullPath(copy), Path.GetFullPath(again.Path));
+                Assert.True(File.Exists(Path.Combine(again.Path, "model.tmdl")));
+
+                Assert.True(File.Exists(notes), "the next copy deleted a file the person added to the copy folder");
+                Assert.Equal("the person's own notes", File.ReadAllText(notes));
+            }
+            finally { Delete(root); }
+        }
+
+        // Same bar: a file Semanticus wrote and the person then edited is no longer what Semanticus wrote. Refuse or keep it; never overwrite it.
+        [Fact]
+        public async Task Verifier_an_edit_the_person_made_inside_the_copy_folder_survives_the_next_copy()
+        {
+            var root = Scratch("vf296b-");
+            var sales = Path.Combine(root, "Sales");
+            var copy = Path.Combine(root, "Sales backup");
+            try
+            {
+                using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(sales, "TMDL", false, "human");
+                await engine.OpenAsync(sales);
+                await engine.SaveAsync(copy, "TMDL", false, "agent");
+                var model = Path.Combine(copy, "model.tmdl");
+                File.AppendAllText(model, Environment.NewLine + "// the person's edit" + Environment.NewLine);
+
+                var again = await engine.SaveAsync(copy, "TMDL", false, "agent");   // a redirect, never a refusal with no way on
+                Assert.NotEqual(Path.GetFullPath(copy), Path.GetFullPath(again.Path));
+                Assert.True(File.Exists(Path.Combine(again.Path, "model.tmdl")));
+
+                Assert.Contains("// the person's edit", File.ReadAllText(model));
+            }
+            finally { Delete(root); }
+        }
+
+        // Same bar: the person removed the copy and put their own folder at that path. The session wrote the PATH once, not this folder.
+        [Fact]
+        public async Task Verifier_a_folder_the_person_put_at_a_former_copy_path_is_not_replaced()
+        {
+            var root = Scratch("vf296c-");
+            var sales = Path.Combine(root, "Sales");
+            var copy = Path.Combine(root, "Sales backup");
+            try
+            {
+                using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(sales, "TMDL", false, "human");
+                await engine.OpenAsync(sales);
+                await engine.SaveAsync(copy, "TMDL", false, "agent");
+                Directory.Delete(copy, true);
+                Directory.CreateDirectory(copy);
+                var theirs = Path.Combine(copy, "report.xlsx");
+                File.WriteAllText(theirs, "somebody's spreadsheet");
+
+                var again = await engine.SaveAsync(copy, "TMDL", false, "agent");   // a redirect, never a refusal with no way on
+                Assert.NotEqual(Path.GetFullPath(copy), Path.GetFullPath(again.Path));
+                Assert.True(File.Exists(Path.Combine(again.Path, "model.tmdl")));
+
+                Assert.True(File.Exists(theirs), "the next copy deleted a folder the person made at a path the session once wrote");
+            }
+            finally { Delete(root); }
+        }
+
+        // Verifier v2-codex402 (F-296 hash record): every kind of change since the copy was written sends the next copy beside it,
+        // and the change is still there afterwards.
+        [Theory]
+        [InlineData("rename")]
+        [InlineData("same-size")]
+        [InlineData("empty-subfolder")]
+        [InlineData("file-symlink")]
+        [InlineData("dir-symlink")]
+        [InlineData("dangling-symlink")]
+        [InlineData("remove")]
+        public async Task V2_any_change_to_a_copy_folder_sends_the_next_copy_beside_it(string change)
+        {
+            var root = Scratch("v2f296-");
+            var sales = Path.Combine(root, "Sales");
+            var copy = Path.Combine(root, "Sales backup");
+            var outside = Path.Combine(root, "outside");
+            try
+            {
+                using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(sales, "TMDL", false, "human");
+                await engine.OpenAsync(sales);
+                await engine.SaveAsync(copy, "TMDL", false, "agent");
+                var model = Path.Combine(copy, "model.tmdl");
+                var renamed = Path.Combine(copy, "model renamed.tmdl");
+                var sub = Path.Combine(copy, "my empty folder");
+                var link = Path.Combine(copy, "link");
+                Directory.CreateDirectory(outside);
+                File.WriteAllText(Path.Combine(outside, "keep.txt"), "outside");
+                string sameSizeText = null;
+                switch (change)
+                {
+                    case "rename": File.Move(model, renamed); break;
+                    case "same-size":
+                        var bytes = File.ReadAllBytes(model);
+                        var i = Array.FindIndex(bytes, b => b == (byte)'m');
+                        bytes[i] = (byte)'M';
+                        File.WriteAllBytes(model, bytes);
+                        sameSizeText = File.ReadAllText(model);
+                        break;
+                    case "empty-subfolder": Directory.CreateDirectory(sub); break;
+                    case "file-symlink":
+                        try { File.CreateSymbolicLink(link, Path.Combine(outside, "keep.txt")); } catch (Exception) { return; }   // Windows without the right
+                        break;
+                    case "dir-symlink":
+                        try { Directory.CreateSymbolicLink(link, outside); } catch (Exception) { return; }
+                        break;
+                    case "dangling-symlink":
+                        try { File.CreateSymbolicLink(link, Path.Combine(outside, "nothing-here.txt")); } catch (Exception) { return; }
+                        break;
+                    case "remove":
+                        var victim = Directory.EnumerateFiles(copy, "*.tmdl", SearchOption.AllDirectories).First(f => !f.EndsWith("model.tmdl"));
+                        File.Delete(victim);
+                        break;
+                }
+
+                var again = await engine.SaveAsync(copy, "TMDL", false, "agent");
+                Assert.NotEqual(Path.GetFullPath(copy), Path.GetFullPath(again.Path));
+                Assert.True(File.Exists(Path.Combine(again.Path, "model.tmdl")));
+                Assert.Contains(Path.GetFileName(again.Path), again.Note);
+                Assert.True(Directory.Exists(copy), "the changed copy folder is gone");
+                switch (change)
+                {
+                    case "rename": Assert.True(File.Exists(renamed)); Assert.False(File.Exists(model)); break;
+                    case "same-size": Assert.Equal(sameSizeText, File.ReadAllText(model)); break;
+                    case "empty-subfolder": Assert.True(Directory.Exists(sub)); break;
+                    case "file-symlink": case "dir-symlink": case "dangling-symlink": Assert.NotNull(new FileInfo(link).LinkTarget); break;
+                }
+                Assert.Equal("outside", File.ReadAllText(Path.Combine(outside, "keep.txt")));
+                Assert.Empty(Directory.GetFileSystemEntries(root, "*.semanticus-bak-*"));
+
+                // The redirected copy is now a copy this session wrote: the next copy aimed at it refreshes it in place.
+                var refresh = await engine.SaveAsync(again.Path, "TMDL", false, "agent");
+                Assert.Equal(Path.GetFullPath(again.Path), Path.GetFullPath(refresh.Path));
+            }
+            finally { Delete(root); }
+        }
+
+        // fix-save-parent (17 Oct): a copy aimed at the folder that HOLDS the open model, or at a folder that holds another model, is
+        // refused in one plain line with a place that works. Nothing is written, nothing is removed, and the happy paths still save.
+        [Fact]
+        public async Task A_copy_aimed_at_a_folder_that_holds_models_is_refused_with_a_place_that_works_and_removes_nothing()
+        {
+            var root = Scratch("up2-");
+            var models = Path.Combine(root, "models");
+            var sales = Path.Combine(models, "Sales");
+            var finance = Path.Combine(models, "Finance");
+            try
+            {
+                using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(sales, "TMDL", false, "human");
+                await engine.SaveAsync(finance, "TMDL", false, "human");
+                await engine.OpenAsync(sales);
+                foreach (var origin in new[] { "agent", "human" })
+                {
+                    var holds = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SaveAsync(models, "TMDL", false, origin));
+                    Assert.Contains("Nothing was saved", holds.Message);
+                    Assert.Contains(Path.Combine(root, "Sales copy"), holds.Message);
+                    Assert.DoesNotContain('\n', holds.Message);
+                    Assert.DoesNotContain("—", holds.Message);
+                }
+                // A folder above the models holds them too.
+                await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.SaveModel(engine, root, "TMDL"));
+                // A folder that holds ANOTHER model (not the open one) is refused for a copy as well.
+                var other = Path.Combine(root, "elsewhere");
+                await engine.SaveAsync(Path.Combine(other, "Marketing"), "TMDL", false, "human");
+                await engine.OpenAsync(sales);
+                var before = Snapshot2(root);
+                var neighbour = await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.SaveModel(engine, other, "TMDL"));
+                Assert.Contains("new or empty folder", neighbour.Message);
+                // A copy onto another model's own folder is refused, too.
+                await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.SaveModel(engine, finance, "TMDL"));
+                Assert.Equal(before, Snapshot2(root));
+
+                // The place the line names works, and so does a plain save in place.
+                var good = await McpTools.SaveModel(engine, Path.Combine(models, "Sales copy"), "TMDL");
+                Assert.True(File.Exists(Path.Combine(good.Path, "model.tmdl")));
+                Assert.Equal(sales, (await McpTools.SaveModel(engine, null, "TMDL")).Path);
+                // An existing but empty folder is a fine place for a copy.
+                var empty = Path.Combine(root, "empty"); Directory.CreateDirectory(empty);
+                Assert.True(File.Exists(Path.Combine((await McpTools.SaveModel(engine, empty, "TMDL")).Path, "model.tmdl")));
+            }
+            finally { Delete(root); }
+        }
+
+        [Fact]
+        public async Task A_save_inside_a_pbip_semantic_model_folder_is_refused_but_a_copy_beside_a_loose_bim_is_not()
+        {
+            var root = Scratch("nest3-");
+            var envelope = Path.Combine(root, "proj", "Sales.SemanticModel");
+            var looseBim = Path.Combine(root, "loose", "Sales.bim");
+            try
+            {
+                using (var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
+                {
+                    await engine.OpenAsync(TestModels.FindBim());
+                    await engine.SaveAsync(Path.Combine(envelope, "definition"), "TMDL", false, "human");
+                    await engine.SaveAsync(looseBim, "bim", false, "human");
+                }
+                using (var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
+                {
+                    await engine.OpenAsync(envelope);
+                    await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.SaveModel(engine, Path.Combine(envelope, "copy"), "TMDL"));
+                    await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.SaveModel(engine, Path.Combine(envelope, "definition", "copy"), "TMDL"));
+                    Assert.False(Directory.Exists(Path.Combine(envelope, "copy")));
+                }
+                using (var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
+                {
+                    await engine.OpenAsync(looseBim);
+                    var beside = await McpTools.SaveModel(engine, Path.Combine(root, "loose", "Sales-backup.bim"), "bim");
+                    Assert.True(File.Exists(beside.Path));
+                }
+            }
+            finally { Delete(root); }
+        }
+
+        // A folder that already holds a nested copy (saved by an older build) opens as the top model, says where the copy is,
+        // and keeps the copy whole through a save in place.
+        [Fact]
+        public async Task A_folder_that_already_holds_a_nested_copy_opens_as_the_top_model_and_names_the_copy()
+        {
+            var root = Scratch("nest4-");
+            var tmdl = Path.Combine(root, "model");
+            var nested = Path.Combine(tmdl, "Model-copy");
+            try
+            {
+                using (var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
+                {
+                    await engine.OpenAsync(TestModels.FindBim());
+                    await engine.SaveAsync(tmdl, "TMDL", false, "human");
+                    // What an older build left behind: a whole second model inside the first.
+                    await engine.SaveAsync(Path.Combine(root, "elsewhere"), "TMDL", false, "human");
+                }
+                foreach (var file in Directory.EnumerateFiles(Path.Combine(root, "elsewhere"), "*", SearchOption.AllDirectories))
+                {
+                    var dest = Path.Combine(nested, Path.GetRelativePath(Path.Combine(root, "elsewhere"), file));
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest));
+                    File.Copy(file, dest);
+                }
+                using var reopen = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+                var opened = await reopen.OpenAsync(tmdl);
+                Assert.True(opened.Tables > 0);
+                Assert.Equal(tmdl, opened.Source);
+                Assert.Contains("Model-copy", opened.Note);
+                Assert.DoesNotContain("\u2014", opened.Note);
+                var saved = await McpTools.SaveModel(reopen, null, "TMDL");
+                Assert.Equal(tmdl, saved.Path);
+                Assert.True(File.Exists(Path.Combine(nested, "model.tmdl")));
+                var again = await reopen.OpenAsync(tmdl);
+                Assert.Equal(opened.Tables, again.Tables);
             }
             finally { Delete(root); }
         }

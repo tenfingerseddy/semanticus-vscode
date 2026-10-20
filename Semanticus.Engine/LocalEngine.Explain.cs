@@ -23,9 +23,27 @@ namespace Semanticus.Engine
         private const int ExplainChainNodeCap = 64;     // dependency BFS node budget
         private const int ExplainMemberCap = 5000;      // contributor members scanned (past it: refuse honestly)
         private const int ExplainDriverCap = 4;         // measures a number is built from, worked out beside it
+        private const int ExplainSplitColumnCap = 40;   // columns whose number of values is counted when the engine picks the split
+        private const int ExplainSplitProbes = 12;      // columns whose split is worked out, the ones with fewest values first
+        private const int ExplainSplitProbeRows = 60;   // a column with more values than this in the cell is a list, not a split
         private const int ExplainFilterProbeCap = 6;    // drop-one-filter probes (bounded live cost)
 
-        public async Task<ExplainDossier> ExplainValueAsync(string measureRef, ExplainFilterContext context, bool decompose, string decomposeBy, int topK, string origin)
+        // A page that re-asks the same explain on its own must not flood the live model (hero 24: about 3,500 queries in 13 minutes).
+        // The same request joins the one running, and a repeat within a few seconds gets that answer back.
+        private readonly RepeatGuard _explainRepeats = new(TimeSpan.FromSeconds(3));
+
+        public Task<ExplainDossier> ExplainValueAsync(string measureRef, ExplainFilterContext context, bool decompose, string decomposeBy, int topK, string origin)
+        {
+            // The session id and revision are in the key: an explain asked right after an edit describes the edited model, never the one from before it.
+            var cur = _sessions.Current;
+            var key = string.Join("\u001f", _sessions.Generation, cur?.Id, cur?.Revision, System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_live), origin, measureRef, decompose, decomposeBy, topK,
+                System.Text.Json.JsonSerializer.Serialize(context ?? new ExplainFilterContext()));
+            return _explainRepeats.RunAsync(key, () => ExplainValueCoreAsync(measureRef, context, decompose, decomposeBy, topK, origin), d => d?.Status == "ok");
+        }
+
+        internal const string ExplainDeniedNote = "Your assistant is not allowed to read values from this model's data, so the number was not computed. You can allow it in Your assistant > Permissions.";
+
+        private async Task<ExplainDossier> ExplainValueCoreAsync(string measureRef, ExplainFilterContext context, bool decompose, string decomposeBy, int topK, string origin)
         {
             var s = _sessions.Require();
             if (string.IsNullOrWhiteSpace(measureRef))
@@ -47,12 +65,16 @@ namespace Semanticus.Engine
             var filterTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var f in memberFilters) { var t = ExplainLogic.TableOf(f.Column); if (t != null) filterTables.Add(t); }
             foreach (var p in predicates) foreach (var t in ExplainLogic.TablesInPredicate(p)) filterTables.Add(t);
+            // The columns the number is already fixed on or laid out by: a split by one of them would have nothing to split.
+            var fixedColumns = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var c in memberFilters.Select(f => f.Column).Concat(groupBy)) { var k = ExplainLogic.ColumnKeyOf(c); if (k != null) fixedColumns.Add(k); }
+            foreach (var p in predicates) foreach (var k in ExplainLogic.ColumnsInPredicate(p)) fixedColumns.Add(k);
 
             // ---- ONE dispatcher read: resolve + chain BFS + lineage + graph + roles + decompose candidates ----
             ExplainSnapshot snap;
             try
             {
-                snap = await s.ReadAsync(m => BuildExplainSnapshot(m, measureRef, filterTables));
+                snap = await s.ReadAsync(m => BuildExplainSnapshot(m, measureRef, filterTables, fixedColumns));
             }
             catch (InvalidOperationException ex)
             {
@@ -78,6 +100,16 @@ namespace Semanticus.Engine
             var cellQuery = BuildExplainQuery(exprForEval, groupBy, memberArgs, predicates);
 
             var live = _live;
+            // The breakdown carries member names and their values, which is rows of the person's data. Where the person has DENIED their
+            // assistant data reads (QueryData) on this target, the assistant gets the structure and no numbers. "Ask" is not a denial and
+            // nothing is queued, so a default preset answers with no extra question. The person is never gated (the same rule as get_model_facts).
+            if (live != null && AgentPolicyGuard.Decide(AgentCapability.QueryData, ResolveTargetLabel(live.DataSource, live.Database), origin, isCommit: true, AgentPolicyStore.Get()).Outcome == GateOutcome.Deny)
+            {
+                d.Evidence = new ExplainEvidence { Available = false, Query = cellQuery, Note = ExplainDeniedNote };
+                d.Summary = ExplainDeniedNote + $" The structure below still shows what feeds {Bracket(snap.Name)}.";
+                await FinishExplainAsync(s, d, origin);
+                return d;
+            }
             if (live == null)
             {
                 d.Evidence = new ExplainEvidence { Available = false, Query = cellQuery, Note = "No live connection, so the number itself was not computed. Connect with open_local / open_live (or connect_local / connect_xmla) and run explain_value again for the value, the blank checks, and the breakdown." };
@@ -158,7 +190,7 @@ namespace Semanticus.Engine
             public List<(string Name, string Format)> Drivers;     // the measures it uses directly
         }
 
-        private ExplainSnapshot BuildExplainSnapshot(Model m, string measureRef, ISet<string> filterTables)
+        private ExplainSnapshot BuildExplainSnapshot(Model m, string measureRef, ISet<string> filterTables, ISet<string> fixedColumns)
         {
             var target = ResolveMeasureForExplain(m, measureRef);
             var canonical = ObjectRefs.For(target);
@@ -230,7 +262,7 @@ namespace Semanticus.Engine
                 Roles = m.Roles.Select(BuildRoleInfo).ToArray(),
                 Graph = graph,
                 Bodies = bodies,
-                DecomposeCandidates = FindDecomposeCandidates(m, graph, depTables, filterTables),
+                DecomposeCandidates = FindDecomposeCandidates(m, graph, depTables, fixedColumns),
                 Format = string.IsNullOrWhiteSpace(target.FormatString) ? null : target.FormatString,
                 Drivers = chain.Where(n => n.Depth == 1 && n.Kind == "measure")
                     .Select(n => ObjectRefs.Resolve(m, n.Ref) as Measure).Where(me => me != null)
@@ -269,36 +301,69 @@ namespace Semanticus.Engine
             return head + (ds != null ? " · " + ds : "") + (expr.Length > 0 ? " · " + expr : "");
         }
 
-        // Deterministic decompose-dimension candidates: dimension tables one active hop from the measure's
-        // data tables (filter flows dimension → data), skipping hidden tables and tables the context
-        // already filters; within a table prefer a text column, then a key, then anything visible.
-        private static List<string> FindDecomposeCandidates(Model m, ModelGraph graph, ISet<string> depTables, ISet<string> filterTables)
+        // Deterministic split candidates: every visible, non-key column of the dimension tables one active hop from the measure's data tables
+        // (filter flows dimension to data), except the columns the number is already fixed on. A table the context filters on stays in: a year
+        // is pinned, its months are the split. The order is the model's own, and it breaks ties between splits. First the next level of a
+        // pinned level: a later level of the same hierarchy, or, in a date table, a column after the pinned one. Then the other hierarchy
+        // levels in hierarchy order. Then the rest, by table and column order as the model holds them.
+        private static readonly System.Text.RegularExpressions.Regex KeyLikeName = new(@"(Key|ID|Id)$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private static List<string> FindDecomposeCandidates(Model m, ModelGraph graph, ISet<string> depTables, ISet<string> fixedColumns)
         {
-            var tables = new List<string>();
+            var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var r in (graph.Relationships ?? Array.Empty<GraphRelationship>()).Where(r => r.IsActive))
             {
                 string dim = null;
                 if (string.Equals(r.ToCardinality, "One", StringComparison.OrdinalIgnoreCase) && depTables.Contains(r.FromTable)) dim = r.ToTable;
                 else if (string.Equals(r.FromCardinality, "One", StringComparison.OrdinalIgnoreCase) && depTables.Contains(r.ToTable)) dim = r.FromTable;
-                if (dim == null || filterTables.Contains(dim) || tables.Contains(dim)) continue;
+                if (dim == null || depTables.Contains(dim)) continue;
                 var gt = graph.Tables?.FirstOrDefault(x => string.Equals(x.Name, dim, StringComparison.OrdinalIgnoreCase));
                 if (gt != null && gt.IsHidden) continue;
                 tables.Add(dim);
             }
-            tables.Sort(StringComparer.OrdinalIgnoreCase);
 
-            var refs = new List<string>();
-            foreach (var name in tables)
+            var found = new List<(int Class, int Table, int Hierarchy, int Level, int Column, string Ref)>();
+            var ti = -1;
+            foreach (var tb in m.Tables)
             {
-                if (!m.Tables.Contains(name)) continue;
-                var tb = m.Tables[name];
-                var visible = tb.Columns.Where(c => c.Type != ColumnType.RowNumber && !c.IsHidden).OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList();
-                var pick = visible.FirstOrDefault(c => c.DataType == DataType.String && !c.IsKey)
-                        ?? visible.FirstOrDefault(c => c.IsKey)
-                        ?? visible.FirstOrDefault();
-                if (pick != null) refs.Add(ColRef(tb.Name, pick.Name));
+                ti++;
+                if (!tables.Contains(tb.Name)) continue;
+                var levelOf = new Dictionary<string, (int Hierarchy, int Ordinal)>(StringComparer.Ordinal);
+                var fixedLevels = new List<HashSet<int>>();
+                var h = 0;
+                foreach (var hier in tb.Hierarchies)
+                {
+                    var pinned = new HashSet<int>();
+                    foreach (var lv in hier.Levels.OrderBy(l => l.Ordinal))
+                    {
+                        if (lv.Column == null) continue;
+                        if (!levelOf.ContainsKey(lv.Column.Name)) levelOf[lv.Column.Name] = (h, lv.Ordinal);
+                        if (fixedColumns.Contains(ExplainLogic.ColumnKey(tb.Name, lv.Column.Name))) pinned.Add(lv.Ordinal);
+                    }
+                    fixedLevels.Add(pinned);
+                    h++;
+                }
+                var cols = tb.Columns.ToList();
+                var isDateTable = string.Equals(tb.DataCategory, "Time", StringComparison.OrdinalIgnoreCase) || cols.Any(c => c.IsKey && c.DataType == DataType.DateTime);
+                var firstPinned = cols.FindIndex(c => fixedColumns.Contains(ExplainLogic.ColumnKey(tb.Name, c.Name)));
+                for (var ci = 0; ci < cols.Count; ci++)
+                {
+                    var c = cols[ci];
+                    if (c.Type == ColumnType.RowNumber || c.IsHidden || c.IsKey || KeyLikeName.IsMatch(c.Name)) continue;
+                    if (c.DataType != DataType.String && c.DataType != DataType.Int64 && c.DataType != DataType.Boolean && c.DataType != DataType.DateTime) continue;
+                    if (fixedColumns.Contains(ExplainLogic.ColumnKey(tb.Name, c.Name))) continue;
+                    var cls = 2; var hi = int.MaxValue; var lo = 0;
+                    if (levelOf.TryGetValue(c.Name, out var at))
+                    {
+                        hi = at.Hierarchy; lo = at.Ordinal;
+                        cls = fixedLevels[at.Hierarchy].Any(o => o < at.Ordinal) ? 0 : 1;
+                    }
+                    else if (isDateTable && firstPinned >= 0 && ci > firstPinned) cls = 0;
+                    found.Add((cls, ti, hi, lo, ci, ColRef(tb.Name, c.Name)));
+                }
             }
-            return refs;
+            return found.OrderBy(f => f.Class).ThenBy(f => f.Table).ThenBy(f => f.Hierarchy).ThenBy(f => f.Level).ThenBy(f => f.Column)
+                .Select(f => f.Ref).Take(ExplainSplitColumnCap).ToList();
         }
 
         /// <summary>The filter argument for each pinned member of the clicked cell. A column the model types as a date gets its members as dates, not text.</summary>
@@ -570,50 +635,101 @@ namespace Semanticus.Engine
         private async Task<ExplainContributors> BuildContributorsAsync(LiveConnection live, ExplainSnapshot snap,
             string exprForEval, string[] groupBy, string[] memberArgs, string[] predicates, string decomposeBy, int topK, double cellValue, ISet<string> filterTables)
         {
-            var dim = !string.IsNullOrWhiteSpace(decomposeBy) ? decomposeBy.Trim() : snap.DecomposeCandidates.FirstOrDefault();
-            if (dim == null)
-                return new ExplainContributors { Additive = false, Note = "No related column was found to break this number down by." };
-            if (groupBy.Any(g => string.Equals(g, dim, StringComparison.OrdinalIgnoreCase)))
-                return new ExplainContributors { Dimension = dim, Additive = false, Note = "That column is already fixed for this number, so there is nothing to split. Pick a different column." };
+            // The person (or the assistant) named the column: split by exactly that, as asked.
+            if (!string.IsNullOrWhiteSpace(decomposeBy))
+            {
+                var dim = decomposeBy.Trim();
+                if (groupBy.Any(g => string.Equals(g, dim, StringComparison.OrdinalIgnoreCase)))
+                    return new ExplainContributors { Dimension = dim, Additive = false, Note = "That column is already fixed for this number, so there is nothing to split. Pick a different column." };
+                var one = await ReadSplitAsync(live, exprForEval, groupBy, memberArgs, predicates, dim, ExplainMemberCap);
+                if (one.Note != null) return new ExplainContributors { Dimension = dim, Additive = false, Note = one.Note };
+                var c = ExplainLogic.BuildContributors(dim, cellValue, one.Trial.Members, one.Trial.Truncated, topK);
+                if (!c.Additive && !one.Trial.Truncated) c.Spread = ExplainLogic.Spread(one.Trial.Members);
+                return c;
+            }
 
-            // The cell's OWN context (axis + filters — Finding A) with the decompose dim appended as the last
-            // axis column, so each part is exactly "this cell, further split by one member".
+            var candidates = snap.DecomposeCandidates ?? new List<string>();
+            if (candidates.Count == 0)
+                return new ExplainContributors { Additive = false, Note = "No related column was found to break this number down by." };
+
+            // One cheap query counts the values of every candidate; the ones with few values are tried first.
+            var counts = await DistinctCountsAsync(live, candidates);
+            // A date table holds many columns of few values; they must not use up every probe. Round-robin by table: the first candidate (the date's
+            // next level when a date is pinned) leads its table, the table's other columns go fewest values first, and each round takes one per table.
+            var eligible = Enumerable.Range(0, candidates.Count).Where(i => counts == null || (counts[i] >= 2 && counts[i] <= 100)).ToList();
+            var byTable = eligible.GroupBy(i => ExplainLogic.TableOfRef(candidates[i])).Select(g => g
+                .OrderBy(i => i == eligible[0] ? 0 : 1)
+                .ThenBy(i => counts != null && counts[i] <= ExplainLogic.SplitFewMax ? 0 : 1)
+                .ThenBy(i => counts != null && counts[i] <= ExplainLogic.SplitFewMax ? counts[i] : 0)
+                .ThenBy(i => i).ToList()).ToList();   // GroupBy keeps the tables in the order they first appear
+            var picked = new List<int>();
+            for (var round = 0; picked.Count < ExplainSplitProbes && byTable.Any(t => round < t.Count); round++)
+                foreach (var t in byTable)
+                    if (round < t.Count && picked.Count < ExplainSplitProbes) picked.Add(t[round]);
+            var order = picked.OrderBy(i => i).ToList();   // tried in the model's order, which is the tie-break
+
+            var trials = new List<SplitTrial>();
+            foreach (var i in order)
+            {
+                var r = await ReadSplitAsync(live, exprForEval, groupBy, memberArgs, predicates, candidates[i], ExplainSplitProbeRows);
+                if (r.Trial != null) trials.Add(r.Trial);
+            }
+            return ExplainLogic.PickSplit(trials, cellValue, topK);
+        }
+
+        // How many values each candidate column holds in the whole model (null when the server will not say: every candidate is then tried).
+        private static async Task<long[]> DistinctCountsAsync(LiveConnection live, List<string> columns)
+        {
+            try
+            {
+                var q = "EVALUATE ROW(" + string.Join(", ", columns.Select((c, i) => $"\"c{i}\", DISTINCTCOUNT({c})")) + ")";
+                var rs = await live.ExecuteAsync(q, 2, 60);
+                var row = rs?.Rows?.FirstOrDefault();
+                if (rs == null || !string.IsNullOrEmpty(rs.Error) || row == null || row.Length < columns.Count) return null;
+                var counts = new long[columns.Count];
+                for (var i = 0; i < counts.Length; i++)
+                {
+                    if (row[i] == null || !IsNum(row[i])) return null;
+                    counts[i] = Convert.ToInt64(row[i], System.Globalization.CultureInfo.InvariantCulture);
+                }
+                return counts;
+            }
+            catch { return null; }
+        }
+
+        // The cell, further split by one column: each member and its value, "this cell, one member". Note is set when it could not be worked out.
+        private async Task<(SplitTrial Trial, string Note)> ReadSplitAsync(LiveConnection live, string exprForEval, string[] groupBy, string[] memberArgs, string[] predicates, string dim, int memberCap)
+        {
+            // The cell's OWN context (axis + filters, Finding A) with the split column appended as the last axis column.
             var axis = groupBy.Concat(new[] { dim }).ToArray();
-            var mIdx = groupBy.Length;        // the dim member column
+            var mIdx = groupBy.Length;        // the split column
             var vIdx = axis.Length;           // the value column
             ResultSet rs;
-            try { rs = await live.ExecuteAsync(BuildExplainQuery(exprForEval, axis, memberArgs, predicates), ExplainMemberCap + 1, 120); }
-            catch (Exception ex) { return new ExplainContributors { Dimension = dim, Additive = false, Note = "The breakdown could not be worked out: " + FirstLine(ex.Message) }; }
+            try { rs = await live.ExecuteAsync(BuildExplainQuery(exprForEval, axis, memberArgs, predicates), memberCap + 1, 120); }
+            catch (Exception ex) { return (null, "The breakdown could not be worked out: " + FirstLine(ex.Message)); }
             if (rs == null || !string.IsNullOrEmpty(rs.Error))
-                return new ExplainContributors { Dimension = dim, Additive = false, Note = "The breakdown could not be worked out: " + FirstLine(rs?.Error ?? "no result") };
+                return (null, "The breakdown could not be worked out: " + FirstLine(rs?.Error ?? "no result"));
 
             var members = new List<KeyValuePair<string, double>>();
-            var allNumeric = true;
             foreach (var row in rs.Rows ?? Array.Empty<object[]>())
             {
                 if (row == null || row.Length <= vIdx || row[vIdx] == null) continue;   // blank member rows contribute nothing
-                if (!IsNum(row[vIdx])) { allNumeric = false; break; }
+                if (!IsNum(row[vIdx])) return (null, "The values are not numbers here, so there is no breakdown.");
                 var member = row[mIdx] == null ? "(blank)" : Convert.ToString(row[mIdx], System.Globalization.CultureInfo.InvariantCulture);
                 members.Add(new KeyValuePair<string, double>(member, Convert.ToDouble(row[vIdx], System.Globalization.CultureInfo.InvariantCulture)));
             }
-            if (!allNumeric)
-                return new ExplainContributors { Dimension = dim, Additive = false, Note = "The values are not numbers here, so there is no breakdown." };
-
-            var truncated = rs.Truncated || members.Count > ExplainMemberCap;
-            var c = ExplainLogic.BuildContributors(dim, cellValue, members, truncated, topK);
-            if (!c.Additive && !truncated) c.Spread = ExplainLogic.Spread(members);
-            return c;
+            return (new SplitTrial { Dimension = dim, Members = members, Truncated = rs.Truncated || members.Count > memberCap }, null);
         }
 
         // ---- shared evidence: audit digest + the live activity broadcast (both doors see it) --------
 
-        private async Task FinishExplainAsync(Session s, ExplainDossier d, string origin)
+        internal async Task FinishExplainAsync(Session s, ExplainDossier d, string origin)
         {
             var verdict = d.ValueEvaluated ? (d.IsBlank == true ? "blank-explained" : "explained") : "offline";
             // Audit copy ONLY when a value was actually observed (live) — an offline metadata dossier has no
             // measured evidence to preserve, and a free READ op must not litter the trail with empty records.
             if (d.ValueEvaluated)
-                await RecordVerifiedEditAsync(s, new VerifiedEditRecord
+                await RecordAnalysisAsync(s, new VerifiedEditRecord
                 {
                     SessionId = s.Id, Revision = 0, Origin = origin ?? "agent", Op = "explain_value", ObjectRef = d.Measure,   // 0: a read mutates nothing
                     Verdict = verdict,

@@ -64,6 +64,30 @@ namespace Semanticus.Tests
         //    undoable write would not), and the audit write is not itself an undo step.
         // ============================================================================================================
 
+        // A Properties-grid Expression edit is a DAX write like set_dax: in Verified Mode it leaves the same "validated" record (KNOWN 14).
+        [Fact]
+        public async Task A_Properties_grid_Expression_edit_writes_the_same_record_as_set_dax()
+        {
+            var (engine, _) = await OpenAsync(pro: false);
+            using (engine)
+            {
+                var mref = await FirstMeasureRefAsync(engine);
+                await engine.SetVerifiedModeAsync(true, "human");
+                var res = await engine.SetObjectPropertyAsync(mref, "Expression", "1 + 41", "human");
+                Assert.True(res.Changed);
+                var chain = await engine.ListVerifiedEditsAsync();
+                var rec = Assert.Single(chain.Records);
+                Assert.Equal("validated", rec.Verdict);
+                Assert.Equal("set_dax", rec.Op);
+                Assert.Equal(mref, rec.ObjectRef);
+                Assert.Equal("human", rec.Origin);
+
+                await engine.SetVerifiedModeAsync(false, "human");
+                await engine.SetObjectPropertyAsync(mref, "Expression", "2 + 2", "human");
+                Assert.Single((await engine.ListVerifiedEditsAsync()).Records);   // mode off: nothing more is recorded
+            }
+        }
+
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Record_survives_undo_change()

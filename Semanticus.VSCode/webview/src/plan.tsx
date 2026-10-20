@@ -7,6 +7,8 @@ import * as P from './plan-model';
 import { linkWork } from './personality/link-state';
 import { usePersonalitySettings } from './personality/settings';
 import { askAssistant } from './studio/ask-assistant';
+import { nextStore } from './studio/next-line';
+import { useDriver } from './studio/driver-store';
 import { useConsentCard } from './consent';
 import { OptimizeView } from './optimize';
 import { PlanHead, DriveSwitch, LiveSlot, usePlanGrade } from './plan-head';
@@ -26,7 +28,6 @@ import type { WorkflowRunView } from './workflow-ui';
 import { ComposerDraft } from './composer-draft';
 import { draftIdOf, draftRowId, type DraftView } from './composer-model';
 import { objectLabel, refToObject, type ObjectRef } from './route';
-import { jumpTarget } from './search-names';
 import { startPageMode, startPlanBelongs } from './startplan-model';
 import { BuiltPlanBand, StartFormKept, StartFromSql, StartPlanPanel, useStartPlan, WordsKeptAfterBuild } from './startplan';
 import { draftModel } from './drafts';
@@ -160,9 +161,11 @@ export function PlanStarts({ starts, onStart }: { starts: P.PlanStart[]; onStart
  *    nothing open              Plan done
  *  On free the Pro line stands where the button stands, as before. `unknown` draws neither: a paying customer must not
  *  meet an upsell for one frame while the licence is being read. */
-export function RunArea({ plan, grant, running, held, steps, onRun, onTell, told, calm = false }: {
+export function RunArea({ plan, grant, running, held, steps, onRun, afterUnlock, onTell, told, calm = false }: {
   plan: P.Plan; grant: PlanRankingGrant; running: boolean; held?: readonly string[]; steps?: Readonly<Record<string, P.RunPhase>>;
   onRun: () => void; onTell?: () => void; told?: boolean;
+  /** What turning Pro on does with the press that asked for it. It works the changes out and leaves them to approve: nothing is written by an unlock (hero 25 H3). */
+  afterUnlock?: () => void;
   /** In the calm header (1.5) the live slot says what is running and the list says who has what, so only the press itself is drawn. */
   calm?: boolean;
 }) {
@@ -170,7 +173,7 @@ export function RunArea({ plan, grant, running, held, steps, onRun, onTell, told
     return <span className="plan-pro" data-testid="plan-pro-line">
       <span className="plan-pro-tag">Pro</span>
       <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-unlock" title="Pro runs the plan for you, as one step you can undo."
-        onClick={() => upgradeToPro({ label: 'Run the plan', tab: 'plan', run: onRun })}>Unlock Pro</button>
+        onClick={() => upgradeToPro({ label: 'Run the plan', tab: 'plan', run: afterUnlock ?? (() => undefined) })}>Unlock Pro</button>
     </span>;
   }
   if (grant === 'denied') {
@@ -178,7 +181,7 @@ export function RunArea({ plan, grant, running, held, steps, onRun, onTell, told
     return <span className="plan-pro" data-testid="plan-pro-line">
       <span className="plan-pro-tag">Pro</span>
       <span className="plan-muted">Pro runs the plan for you, as one step you can undo.</span>
-      <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-unlock" onClick={() => upgradeToPro({ label: 'Run the plan', tab: 'plan', run: onRun })}>Unlock Pro</button>
+      <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-unlock" onClick={() => upgradeToPro({ label: 'Run the plan', tab: 'plan', run: afterUnlock ?? (() => undefined) })}>Unlock Pro</button>
     </span>;
   }
   if (grant !== 'granted') return <span className="plan-muted">{PENDING_ACCESS}</span>;
@@ -299,6 +302,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   /** Bumped when the Plan area button is pressed: the page goes back to its Work view (journey m11 F2). */
   homeNonce?: number;
 }) {
+  const driver = useDriver();
   const [plan, setPlan] = useState<P.Plan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -313,6 +317,8 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   const slotShownReceipt = receipt && C.receiptStays(receipt.kind === 'ran' ? receipt : { kind: 'said' }, plan?.revision) ? receipt : null;
   /** Each row's step during a run, from plan/runProgress. A finished row keeps its Done and its change count. */
   const [steps, setSteps] = useState<Record<string, P.RunPhase>>({});
+  /** What Jev is being asked while the press waits for it, in the engine's words with the real count; null when nothing is out. */
+  const [choosing, setChoosing] = useState<string | null>(null);
   const [stepAt, setStepAt] = useState(() => Date.now());
   const stepStamp = useRef<Record<string, number>>({});
   /** The rows this press holds, in the order the plan lists them: those not reached yet read In this run. */
@@ -342,7 +348,8 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
 
   // A different model is a different plan: nothing of the last press belongs to it.
   useEffect(() => {
-    setReceipt(null); setSteps({}); setPressRows([]); setJustDone(new Set()); setRepeatRow(null);
+    nextStore.setScope(sessionId);
+    setReceipt(null); setSteps({}); setChoosing(null); setPressRows([]); setJustDone(new Set()); setRepeatRow(null);
     stepStamp.current = {}; prevPlan.current = null; lastSeen.current = new Map();
   }, [sessionId]);
   // plan/runProgress: the engine says each step of each row. Several rows of one batch share a step.
@@ -352,6 +359,8 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     for (const id of ids) if (typeof id === 'string') stepStamp.current[id] = at;
     setStepAt(at);
     setSteps((prev) => P.foldProgress(prev, raw));
+    const said = P.choosingOf(raw);
+    if (said !== undefined) setChoosing(said);
     const e = raw as { phase?: string; itemIds?: string[] } | null;
     if (e?.phase === 'done' && Array.isArray(e.itemIds)) {
       setJustDone((prev) => new Set([...prev, ...e.itemIds!]));
@@ -681,7 +690,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   const runRowRef = useRef<(item: P.PlanItem) => Promise<void>>(async () => {});
   const runRow = useCallback(async (item: P.PlanItem) => {
     if (!plan) return;
-    if (grant === 'denied') { upgradeToPro({ label: 'Run the plan', tab: 'plan', run: () => { void runRowRef.current(item); } }); return; }
+    if (grant === 'denied') { upgradeToPro({ label: 'Run the plan', tab: 'plan', run: () => { void proposeReadyRef.current(item); } }); return; }
     if (grant !== 'granted') return;
     setBusy('run'); setActionError(null); setSentence(null);
     setReceipt(null); setSteps({ [item.id]: { step: 'work' } }); setJustDone(new Set()); setPressRows([item.id]); setTold(false);
@@ -716,6 +725,24 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     }
   }, [plan, grant, refreshGrade]);
   runRowRef.current = runRow;
+
+  /** After Pro turns on, the press that asked for it works its changes out and stops there (hero 25 H3): the person sees each change set
+   *  and approves it, so an unlock never writes to the open model by itself. One row, or every row the press would have run. */
+  const proposeReadyRef = useRef<(only?: P.PlanItem) => Promise<void>>(async () => {});
+  const proposeReady = useCallback(async (only?: P.PlanItem) => {
+    if (!plan) return;
+    const todo = only ? [only] : P.pressSet(plan.items);
+    setBusy('propose'); setActionError(null);
+    try {
+      for (const item of todo) {
+        if (C.proposedDigest(item)) continue;
+        const worked = await rpc<PlanActionResult>('modelPlanAction', item.id, 'propose', 'human', null);
+        if (worked?.plan) setPlan(normalize(worked.plan));
+      }
+    } catch (failure: unknown) { setActionError(messageOf(failure)); }
+    finally { setBusy(null); }
+  }, [plan]);
+  proposeReadyRef.current = proposeReady;
 
   /** The receipt's Undo takes back the whole press: undo('human', firstEntryId) walks back through every batch from the first. */
   const undoPress = useCallback(async () => {
@@ -900,15 +927,16 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     const kind = C.rowPressOf(item);
     if (!kind) return null;
     if (kind === 'run') return { kind, onPress: () => void runRow(item) };
-    if (kind === 'ask') return { kind, onPress: () => void askRow(item) };
-    return { kind, onPress: () => onGo(item.jump!.tool, jumpTarget(item.jump)) };
+    // With no assistant there is no one to ask: the row says so in its words and the one quiet line offers the connection (UAT F8).
+    if (kind === 'ask') return driver.assistantConnected ? { kind, onPress: () => void askRow(item) } : null;
+    return { kind, onPress: () => onGo(item.jump!.tool) };
   };
   const askRow = async (item: P.PlanItem) => {
     const r = await askAssistant(C.askRowRequest(item));
     if (r.ok) { setActionError(null); setSentence(r.text); } else setActionError(r.text);
   };
   const rowProps = (item: P.PlanItem, first = false, recent = false) => ({
-    item, items, busy, onAction, onDoer, onGo, labelOf, first, calm: true, press: pressFor(item),
+    item, items, busy, onAction, onDoer, onGo, labelOf, first, calm: true, press: pressFor(item), assistantConnected: driver.assistantConnected,
     lead: offered.has(item.id) ? String(offered.get(item.id)) : null, meta: trackMeta(item),
     open: openId === item.id,
     step: stepFor(item),
@@ -960,7 +988,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     {savable && !shownReceipt.saved && <button type="button" className="pc-undo" data-testid="plan-run-save" disabled={!!busy} onClick={savePress}>Save</button>}
     {shownReceipt.saved && <span className="plan-muted" data-testid="plan-run-saved">{shownReceipt.savedText ?? 'Saved.'}</span>}
   </span>;
-  const pressing = busy === 'run' ? C.pressWords(pressRows, liveSteps, items, quiet) : null;
+  const pressing = busy === 'run' ? C.pressWords(pressRows, liveSteps, items, quiet, 0, choosing) : null;
   const matchedCount = calmShown.length;
   const filterChip = filterOn ? C.filterChip(filterText, goal, matchedCount, everyRow.length) : null;
   const clearFilter = () => { setGoal('all'); setFilterText(''); };
@@ -991,7 +1019,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
       slot={<LiveSlot press={pressing} receipt={slotReceipt} receiptActions={receiptActions} />}
       drive={<DriveSwitch queue={queue} onQueue={(q) => void control('queue', 'setAssistantQueue', q)} />}
       run={<RunArea calm plan={showPlan} grant={grant} running={busy === 'run'} held={pressRows} steps={liveSteps}
-        onRun={() => void runPlan()} onTell={tellAssistant} told={told} />} />
+        onRun={() => void runPlan()} afterUnlock={() => void proposeReadyRef.current()} onTell={tellAssistant} told={told} />} />
     <ProPlanWatch inactive={!!showPlan.billingUrl} />
 
     {/* The tour draws over the page; the What changed card draws here, in flow (lane U4). */}
@@ -1153,10 +1181,10 @@ export function ObjectActions({ sessionId, objectRef, onGo, onHistory }: {
   let also: React.ReactNode;
   if (object.kind === 'table') {
     primary = <><button className={main} onClick={() => onGo('data', ref)}>Preview data</button><button className={btn} onClick={() => onGo('mcode', ref)}>Edit Power Query</button><button className={btn} onClick={() => onGo('diagram', ref, [object.table])}>Show in diagram</button></>;
-    also = <><button className={quiet} onClick={() => onGo('lineage', ref)}>Lineage</button><button className={quiet} onClick={() => onGo('stats', ref)}>Table size</button><button className={quiet} onClick={() => onGo('search', ref)}>Find in this table</button><button className={quiet} onClick={() => runHostCommand('semanticus.newMeasure', ref, sessionId)}>Add measure</button><button className={quiet} onClick={onHistory}>History</button></>;
+    also = <><button className={quiet} onClick={() => onGo('lineage', ref)}>Lineage</button><button className={quiet} onClick={() => onGo('stats', ref)}>Table size</button><button className={quiet} onClick={() => runHostCommand('semanticus.newMeasure', ref, sessionId)}>Add measure</button><button className={quiet} onClick={onHistory}>History</button></>;
   } else if (object.kind === 'measure') {
-    primary = <><button className={main} onClick={() => runHostCommand('semanticus.editDax', ref, sessionId)}>Edit formula</button><button className={btn} onClick={() => onGo('daxlab', ref)}>Try calculation</button><button className={btn} onClick={() => onGo('tests', ref)}>Add check</button></>;
-    also = <><button className={quiet} onClick={() => onGo('lineage', ref)}>Lineage</button><button className={quiet} onClick={() => onGo('search', ref)}>Find and replace</button><button className={quiet} onClick={onHistory}>History</button></>;
+    primary = <><button className={main} onClick={() => runHostCommand('semanticus.editDax', ref, sessionId)}>Edit formula</button><button className={btn} onClick={() => onGo('query', ref)}>Try calculation</button><button className={btn} onClick={() => onGo('tests', ref)}>Add check</button></>;
+    also = <><button className={quiet} onClick={() => onGo('lineage', ref)}>Lineage</button><button className={quiet} onClick={onHistory}>History</button></>;
   } else if (object.kind === 'relationship') {
     primary = <><button className={main} onClick={() => onGo('diagram', ref)}>Edit in diagram</button><button className={btn} onClick={() => onGo('lineage', ref)}>Lineage</button></>;
     also = <><button className={quiet} onClick={onHistory}>History</button></>;

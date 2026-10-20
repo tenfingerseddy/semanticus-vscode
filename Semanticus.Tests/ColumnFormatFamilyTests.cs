@@ -674,26 +674,32 @@ namespace Semanticus.Tests
             await SettledPlanAsync(f);
 
             var sent = oracle.Seen.Where(r => r.PointName == Point).ToArray();
-            // One request per TABLE (m11/jev-batch): Sales' four columns and Returns' one.
-            Assert.Equal(2, sent.Length);
+            // One request for the whole model (m16/jev-batch): Sales' four columns and Returns' one.
+            Assert.Single(sent);
             var declared = DecisionRegistry.Require(Point).SnapshotFields;
             foreach (var r in sent)
             {
-                Assert.Equal(new[] { "columns", "table_columns", "table_name" }, r.Snapshot.Keys.OrderBy(x => x, StringComparer.Ordinal));
+                Assert.Equal(new[] { "columns", "table_columns" }, r.Snapshot.Keys.OrderBy(x => x, StringComparer.Ordinal));
                 Assert.All(r.Snapshot.Keys, k => Assert.Contains(k, declared));
                 using var entries = JsonDocument.Parse(JsonSerializer.Serialize(r.Snapshot["columns"]));
                 foreach (var e in entries.RootElement.EnumerateArray())
-                    Assert.Equal(new[] { "data_type", "is_calculated", "name" },
+                    Assert.Equal(new[] { "data_type", "is_calculated", "name", "table" },
                                  e.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+                // What a table shares is a map keyed by the table's name, once for each table in the request; every entry names a table in it.
                 var others = JsonSerializer.Serialize(r.Snapshot["table_columns"]);
                 using var otherDoc = JsonDocument.Parse(others);
-                foreach (var c in otherDoc.RootElement.EnumerateArray())
+                Assert.Equal(new[] { "Returns", "Sales" }, otherDoc.RootElement.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+                Assert.All(entries.RootElement.EnumerateArray(), e => Assert.True(otherDoc.RootElement.TryGetProperty(e.GetProperty("table").GetString(), out _)));
+                foreach (var c in otherDoc.RootElement.EnumerateObject().SelectMany(t => t.Value.EnumerateArray()))
                     Assert.Equal(new[] { "data_type", "name" }, c.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
-                // One question for each column, naming its entry by path, and the question itself is what it always was.
+                // One question for each column, naming its entry by path and by its own name and table (m16/jev-size), and the question itself is
+                // what it always was.
                 Assert.Equal(entries.RootElement.GetArrayLength(), r.Questions.Count);
                 for (var i = 0; i < r.Questions.Count; i++)
                 {
-                    Assert.StartsWith("For the column `columns[" + i + "]`: ", r.Questions[i].Instructions, StringComparison.Ordinal);
+                    var e = entries.RootElement[i];
+                    Assert.StartsWith("For the column `columns[" + i + "]`, named \"" + e.GetProperty("name").GetString() + "\" in the table \""
+                                      + e.GetProperty("table").GetString() + "\": ", r.Questions[i].Instructions, StringComparison.Ordinal);
                     Assert.EndsWith(ColumnFormatFamily.Instructions, r.Questions[i].Instructions, StringComparison.Ordinal);
                     Assert.StartsWith("format_family:column:", r.Questions[i].Name, StringComparison.Ordinal);
                 }

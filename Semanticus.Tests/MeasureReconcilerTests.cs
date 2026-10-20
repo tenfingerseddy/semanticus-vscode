@@ -16,6 +16,20 @@ namespace Semanticus.Tests
     /// </summary>
     public sealed class MeasureReconcilerTests
     {
+        // UAT 18 Oct, round 3, R1: a check saved with no tolerance (the assistant's save_test, a hand-written paramsJson) must not run on
+        // zero and zero, which reads an average that agrees to fourteen places as "differs". Absent means the default; a saved number stays.
+        [Fact]
+        public void A_request_with_no_tolerance_uses_the_default_and_a_saved_zero_stays_zero()
+        {
+            var bare = TestSuiteStore.Deserialize<ReconcileRequest>("{\"measureRef\":\"measure:Sales/Margin %\",\"blankPolicy\":\"null\"}");
+            Assert.Equal(TolerancePolicy.Default.Absolute, bare.ToleranceAbsolute);
+            Assert.Equal(TolerancePolicy.Default.Relative, bare.ToleranceRelative);
+            Assert.Equal(TolerancePolicy.Default.Absolute, new ReconcileRequest().ToleranceAbsolute);
+            var zero = TestSuiteStore.Deserialize<ReconcileRequest>("{\"toleranceAbsolute\":0,\"toleranceRelative\":0}");
+            Assert.Equal(0d, zero.ToleranceAbsolute);
+            Assert.Equal(0d, zero.ToleranceRelative);
+        }
+
         // ---- builders -------------------------------------------------------------------------------
         private static TolerancePolicy Pol(BlankPolicy b) =>
             new TolerancePolicy { Relative = 1e-7, Absolute = 1e-9, Blank = b };
@@ -237,8 +251,8 @@ namespace Semanticus.Tests
             Assert.True(r.HasGrandTotal);
             Assert.Equal(0, r.MemberCellsChecked);             // ...but zero members were verified
             Assert.DoesNotContain("All clear", r.Summary);
-            Assert.Contains("Insufficient coverage", r.Summary);
-            Assert.Contains("blank", r.Summary);               // names the trap
+            Assert.Contains("only the overall total was compared", r.Summary);   // says what was and was not compared, in plain words
+            Assert.DoesNotContain("blank-row", r.Summary);
         }
 
         [Fact]

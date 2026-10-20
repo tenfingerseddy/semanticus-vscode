@@ -72,9 +72,11 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
     const seq = ++previewSeq.current;
     setSelected(name); setBusy(true); setErr(null); setClaudeEvent(null);
     try {
-      const r = await rpc<ResultSet>('previewTable', name, n);
+      // Ask for one row more than is shown: "More rows exist" is said only when that extra row came back, never for a table of exactly n rows.
+      const r = await rpc<ResultSet>('previewTable', name, n + 1);
       if (seq !== previewSeq.current) return;   // a newer table selection superseded this query — drop its result
-      if (r.error) { setErr(r.error); setRes(null); } else setRes(r);
+      if (r.error) { setErr(r.error); setRes(null); }
+      else setRes(r.rows.length > n ? { ...r, rows: r.rows.slice(0, n), rowCount: n, truncated: true } : r);
     }
     catch (e) { if (seq === previewSeq.current) setErr(String((e as Error).message ?? e)); }
     finally { if (seq === previewSeq.current) setBusy(false); }
@@ -142,7 +144,7 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
         {res ? (
           <>
             {/* One count line: the grid's own "N rows" beside its filter, plus "More rows exist." when cut at the top-N. */}
-            <div className="flex-1 min-h-0"><ResultGrid columns={res.columns.map((c) => ({ ...c, name: fieldName(c.name) }))} rows={res.rows} height="100%" truncated={res.truncated} /></div>
+            <div className="flex-1 min-h-0"><ResultGrid key={selected ?? ''} columns={res.columns.map((c) => ({ ...c, name: fieldName(c.name) }))} rows={res.rows} height="100%" truncated={res.truncated} /></div>
           </>
         ) : (
           // Offline, the connect line above already says it; connected, say what to do next.

@@ -263,6 +263,37 @@ namespace Semanticus.Decisions
             return new DecisionAnswers(PointName, RequestDigest, ServedModelVersion, true, null, mine, InputTokens, OutputTokens);
         }
 
+        /// <summary>The answers of one request that was asked as several smaller ones (a relay older than the client refused it as too big).
+        /// A whole-ask request (no <paramref name="perQuestion"/>) is decided only when every part was, since it has no half state. A batched one is
+        /// decided when any part was, and a question whose part was not answered is listed in <see cref="Rejected"/> with that part's reason,
+        /// so an answer is never dropped without a trace. The digest is the whole request's.</summary>
+        public static DecisionAnswers Merge(DecisionRequest whole, IReadOnlyList<DecisionQuestion> questions, IReadOnlyList<(IReadOnlyList<DecisionQuestion> Asked, DecisionAnswers Answers)> parts, bool perQuestion)
+        {
+            var merged = new Dictionary<string, DecisionAnswer>(StringComparer.Ordinal);
+            var rejected = new Dictionary<string, string>(StringComparer.Ordinal);
+            string served = null, firstWhy = null;
+            int input = 0, output = 0, decided = 0;
+            foreach (var (asked, a) in parts)
+            {
+                input += a.InputTokens; output += a.OutputTokens;
+                if (a.Decided)
+                {
+                    decided++;
+                    served = served ?? a.ServedModelVersion;
+                    foreach (var kv in a.Answers) merged[kv.Key] = kv.Value;
+                    foreach (var kv in a.Rejected) rejected[kv.Key] = kv.Value;
+                }
+                else
+                {
+                    firstWhy = firstWhy ?? a.NotDecidedReason;
+                    foreach (var q in asked) rejected[q.Name] = a.NotDecidedReason;
+                }
+            }
+            if (decided == 0 || (!perQuestion && decided < parts.Count))
+                return NotDecided(whole?.PointName, whole?.Digest, firstWhy);
+            return new DecisionAnswers(whole.PointName, whole.Digest, served, true, null, merged, input, output, rejected: perQuestion ? rejected : null);
+        }
+
         /// <summary>Token counts as reported, for the budget counter. Zero when nothing was spent.</summary>
         public int InputTokens { get; }
         public int OutputTokens { get; }

@@ -220,6 +220,34 @@ namespace Semanticus.Tests
             Assert.Contains(ConnectionHistory.List(), e => e.Kind == "open" && string.Equals(e.Endpoint, Path.GetFullPath(bim), StringComparison.Ordinal));
         }
 
+        // Round 2 UAT (fix2-r2-start, item 2): a model made with New blank model and saved to a file got no saved connection, so the next start
+        // offered nothing and the kept recovery copy was only found by opening the file by path.
+        [Fact]
+        public async Task The_first_save_of_a_new_blank_model_to_a_file_saves_the_connection()
+        {
+            ThrowawayPaths.RootsOverride = new[] { Path.Combine(_root, "elsewhere") };
+            var bim = Path.Combine(_root, "Blank Kept.bim");
+            using (var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro, _root))
+            {
+                await engine.CreateModelAsync("Blank Kept", 1604);
+                await engine.SaveAsync(bim, "BIM", false, "human");
+            }
+            var rec = Assert.Single(ConnectionRegistry.List(), r => string.Equals(r.Endpoint, Path.GetFullPath(bim), StringComparison.Ordinal));
+            Assert.Equal("file", rec.Kind);
+        }
+
+        [Fact]
+        public async Task A_save_under_the_temp_folder_does_not_save_a_connection()
+        {
+            var bim = Path.Combine(_root, "Blank Throwaway.bim");
+            using (var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro, _root))
+            {
+                await engine.CreateModelAsync("Blank Throwaway", 1604);
+                await engine.SaveAsync(bim, "BIM", false, "human");
+            }
+            Assert.DoesNotContain(ConnectionRegistry.List(), r => string.Equals(r.Endpoint, Path.GetFullPath(bim), StringComparison.Ordinal));
+        }
+
         [Fact]
         public async Task Opening_a_model_outside_the_temp_folders_still_saves_the_connection()
         {

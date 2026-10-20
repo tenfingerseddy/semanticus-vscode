@@ -726,6 +726,35 @@ namespace Semanticus.Engine
             }
         }
 
+        /// <summary>Move one model's entry from <paramref name="from"/> into <paramref name="to"/> when <paramref name="to"/> has none for it
+        /// (the model's place moved: LocalEngine.ModelHome.cs). What <paramref name="to"/> already remembers for the model wins. True when
+        /// nothing is left to move.</summary>
+        public static bool CarryModel(string from, string to, string modelIdentity)
+        {
+            if (string.IsNullOrEmpty(from) || string.IsNullOrEmpty(to) || string.IsNullOrEmpty(modelIdentity)) return false;
+            lock (Gate)
+            {
+                try
+                {
+                    if (!File.Exists(from)) return true;
+                    if ((JsonNode.Parse(File.ReadAllText(from)) as JsonObject)?[ModelsKey] is not JsonObject fromModels
+                        || fromModels[modelIdentity] is not JsonObject entry) return true;
+                    using var crossProcess = SidecarFileLock.Acquire(to);
+                    string text = null; JsonObject whole = null;
+                    if (File.Exists(to)) { text = File.ReadAllText(to); whole = JsonNode.Parse(text) as JsonObject; }
+                    if (whole == null) { whole = new JsonObject(); text = null; }
+                    if (whole[ModelsKey] is not JsonObject models) { models = new JsonObject(); whole[ModelsKey] = models; }
+                    if (models[modelIdentity] != null) return true;
+                    models[modelIdentity] = entry.DeepClone();
+                    Directory.CreateDirectory(Path.GetDirectoryName(to));
+                    File.WriteAllText(to + ".tmp", FileFormat.Of(text).Write(whole));
+                    File.Move(to + ".tmp", to, overwrite: true);
+                    return true;
+                }
+                catch { return false; }
+            }
+        }
+
         private static PlanSaveMark ReadSaveMark(JsonNode node)
         {
             if (node is not JsonObject o) return null;

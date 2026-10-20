@@ -323,17 +323,25 @@ namespace Semanticus.Engine
             // the "Restored" flag row already says it.
             var editKeys = new HashSet<(string, long)>(rows.SelectMany(r => new[] { r }.Concat(r.Children ?? Array.Empty<PlanHistoryRow>()))
                 .Where(r => r.SessionId != null && r.Revision > 0).Select(r => (r.SessionId, r.Revision)));
-            foreach (var record in chain?.Records ?? Array.Empty<VerifiedEditRecord>())
+            // The read-only analyses (explain_value, blame_value, a baseline compare) are kept beside the model's own
+            // trail, not in it (AnalysisRecordStore), so asking about a number never marks the model unsaved. They read
+            // here as the same kind of row; an empty Hash tells the two apart.
+            VerifiedEditRecord[] analysis;
+            try { analysis = AnalysisRecordsFor(s); } catch { analysis = Array.Empty<VerifiedEditRecord>(); }
+            // The chain travels with the MODEL, so a model opened from the service carries records of people and runs this machine never saw
+            // (UAT P12). Only a session this machine's ledger knows can be called "you"; the rest were before this person opened it.
+            var knownSessions = new HashSet<string>(entries.Select(e => e.SessionId).Where(x => !string.IsNullOrEmpty(x)), StringComparer.Ordinal) { s.Id };
+            foreach (var record in (chain?.Records ?? Array.Empty<VerifiedEditRecord>()).Concat(analysis))
             {
                 if (record.Revision > 0 && editKeys.Contains((record.SessionId, record.Revision))) continue;
                 if (!DateTimeOffset.TryParse(record.When, System.Globalization.CultureInfo.InvariantCulture,
                         System.Globalization.DateTimeStyles.RoundtripKind, out var when)) continue;
                 rows.Add(new PlanHistoryRow
                 {
-                    Id = "record:" + record.Seq.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    Id = (string.IsNullOrEmpty(record.Hash) ? "analysis:" : "record:") + record.Seq.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     Kind = "record",
                     When = when,
-                    By = ChangeBy.For(null, record.Origin),
+                    By = !string.IsNullOrEmpty(record.SessionId) && knownSessions.Contains(record.SessionId) ? ChangeBy.For(null, record.Origin) : ChangeBy.Earlier,
                     Title = record.Op,
                     Deltas = string.IsNullOrEmpty(record.ObjectRef) ? Array.Empty<ChangeDelta>()
                         : new[] { new ChangeDelta { Kind = "check", Ref = record.ObjectRef } },
@@ -387,7 +395,7 @@ namespace Semanticus.Engine
             // A broken chain is never read as Verified: a word whose record sits at or after the break says so.
             if (chain != null && !chain.ChainIntact)
             {
-                bool Broken(VerifiedEditRecord r) => chain.FirstBrokenSeq <= 0 || (r != null && r.Seq >= chain.FirstBrokenSeq);
+                bool Broken(VerifiedEditRecord r) => r != null && string.IsNullOrEmpty(r.Hash) ? false : chain.FirstBrokenSeq <= 0 || (r != null && r.Seq >= chain.FirstBrokenSeq);   // an analysis record is outside the chain
                 void Distrust(PlanHistoryRow r)
                 {
                     foreach (var c in r.Children ?? Array.Empty<PlanHistoryRow>()) Distrust(c);

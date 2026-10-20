@@ -37,10 +37,13 @@ namespace Semanticus.Tests
             _modelDir = Path.Combine(_root, "model");
             Directory.CreateDirectory(_modelDir);
             ConnectionRegistry.RootOverride = _root;
+            // These tests are about the shape of the door, not its question: a new host asks the person (SqlHostAskTests proves that).
+            GateSeams.DisabledForTest["sql-host"] = true;
         }
 
         public void Dispose()
         {
+            GateSeams.DisabledForTest.TryRemove("sql-host", out _);
             SqlSourceProbe.TokenForTests = null;
             SqlSourceProbe.QueryForTests = null;
             ThrowawayPaths.RootsOverride = null;

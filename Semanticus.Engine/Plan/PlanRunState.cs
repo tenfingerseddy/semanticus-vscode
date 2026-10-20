@@ -139,11 +139,13 @@ namespace Semanticus.Engine
             foreach (var i in items ?? Array.Empty<ModelPlanItem>())
             {
                 if (i?.Id == null) continue;
+                // Saving is not a task of the plan: a run's own edits raise "Save the model" the moment it ends, which took 71% down to 69% (hero 26 N9).
+                if (i.Id == LocalEngine.UnsavedItemId) continue;
                 if (i.StateWord == PlanStateWords.Done) doneIds.Add(i.Id);
                 else if (i.StateWord == PlanStateWords.SetAside) asideIds.Add(i.Id);
                 else openIds.Add(i.Id);
             }
-            foreach (var id in x.DoneIds ?? Array.Empty<string>()) if (!string.IsNullOrWhiteSpace(id)) doneIds.Add(id);
+            foreach (var id in x.DoneIds ?? Array.Empty<string>()) if (!string.IsNullOrWhiteSpace(id) && id != LocalEngine.UnsavedItemId) doneIds.Add(id);
             doneIds.ExceptWith(openIds); doneIds.ExceptWith(asideIds);   // a row that came back is open again; a set-aside row is not a task to do
 
             return new PlanStrip

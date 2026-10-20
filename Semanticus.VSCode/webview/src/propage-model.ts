@@ -80,21 +80,21 @@ export interface JevStateView { state: JevState; word: string; line: string }
  *  null consent means no model is open to hold a permission, so reachable is On and the line says permission
  *  is given per model. */
 export function jevStateOf(budget: JevBudgetW | null | undefined, consent: JevConsentW | null | undefined, read: boolean): JevStateView {
-  if (!read) return { state: 'checking', word: 'Checking', line: 'Checking whether Jev can be reached.' };
-  if (!budget) return { state: 'unreachable', word: 'Not reachable', line: 'Semanticus could not check whether Jev can be reached.' };
+  if (!read) return { state: 'checking', word: 'Checking', line: 'Checking whether Pro planning can be reached.' };
+  if (!budget) return { state: 'unreachable', word: 'Not reachable', line: 'Semanticus could not check whether Pro planning can be reached.' };
   if (budget.route === 'none' || budget.serviceAvailable === false) {
-    return { state: 'unreachable', word: 'Not reachable', line: 'This computer has no way to reach Jev.' };
+    return { state: 'unreachable', word: 'Not reachable', line: 'This computer has no way to reach Pro planning.' };
   }
   if (budget.route === 'relay' && (budget.monthlyUsedInputTokens == null || budget.monthlyCapInputTokens == null)) {
     // One calm sentence, the same words as the Plan and the Ask (Kane, 8 Oct, r1 join). The engine's reason stays in its log
     // and in what the assistant reads (get_decision_budget), not on this card.
-    return { state: 'unreachable', word: 'Not reachable', line: 'Jev is not available right now.' };
+    return { state: 'unreachable', word: 'Not reachable', line: 'Pro planning is not available right now.' };
   }
-  if (!consent) return { state: 'on', word: 'On', line: 'Jev can be reached. It asks about a model only once you give permission for that model.' };
+  if (!consent) return { state: 'on', word: 'On', line: 'Pro planning can be reached. It asks about a model only once you give permission for that model.' };
   if (consent.current !== true) {
-    return { state: 'noConsent', word: 'No permission', line: 'Jev asks nothing about this model until you give permission.' };
+    return { state: 'noConsent', word: 'No permission', line: 'Pro planning asks nothing about this model until you give permission.' };
   }
-  return { state: 'on', word: 'On', line: 'Jev is on for this model.' };
+  return { state: 'on', word: 'On', line: 'Pro planning is on for this model.' };
 }
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -158,17 +158,16 @@ export function trialSpan(startedAt: number | undefined, endsAt: number | undefi
   return `${ay === by ? a.slice(0, -5) : a} to ${b}`;
 }
 
-export interface FirstWeekItem { key: 'apply' | 'jev' | 'workflow'; title: string; hint?: string; done: boolean }
+export interface FirstWeekItem { key: 'apply' | 'jev'; title: string; hint?: string; done: boolean }
 
-/** The first-week list: three things Pro does, each ticked from the tally. It shows for the first seven days
- *  of the month and leaves once all three are done. Null when it should not show. */
+/** The first-week list: two things Pro does, each ticked from the tally. It shows for the first seven days
+ *  of the month and leaves once both are done. Null when it should not show. */
 export function firstWeekOf(tally: TallyW | null | undefined, nowSeconds: number): FirstWeekItem[] | null {
   if (!tally?.startedAt) return null;
   if (nowSeconds - tally.startedAt > 7 * 86400) return null;
   const items: FirstWeekItem[] = [
     { key: 'apply', title: 'Apply many changes at once', hint: 'Run the plan on the Plan page. One undo takes it all back.', done: (tally.changesApplied ?? 0) > (tally.steps ?? 0) && (tally.steps ?? 0) > 0 },
-    { key: 'jev', title: 'Ask Jev to tidy your measures', hint: 'Jev picks what to fix. You keep or drop each change.', done: (tally.jevChoices ?? 0) > 0 },
-    { key: 'workflow', title: 'Run a workflow', hint: 'Work you repeat becomes steps the app checks as you go.', done: (tally.workflowsRun ?? 0) > 0 },
+    { key: 'jev', title: 'Run the plan to tidy your measures', hint: 'Semanticus picks what to fix. You keep or drop each change.', done: (tally.jevChoices ?? 0) > 0 },
   ];
   return items.every((i) => i.done) ? null : items;
 }

@@ -1,10 +1,10 @@
 {
-  "version": "1.5.0",
+  "version": "1.6.0",
   "skills": [
     {
       "name": "semanticus",
       "path": "plugins/semanticus/skills/semanticus/SKILL.md",
-      "sha256": "28a41399d64ad0ab54cf0c5d82f5b992f3712da5f6fd4999bbfe1b6257f6b03e"
+      "sha256": "eea8a1c24244f6375706b0d28578d4262d533787584d6d3f950065dda2ea7019"
     },
     {
       "name": "semanticus-optimize-dax",
@@ -19,7 +19,7 @@
     {
       "name": "semanticus-interview-model",
       "path": "plugins/semanticus/skills/semanticus-interview-model/SKILL.md",
-      "sha256": "8453a0373d74275af5d962d3c3d2750b2fca9a7df394ffee1f28b9f131d9fc75"
+      "sha256": "8f5bb16676ed04dc1c8501cceec73c0ca368504f4c2c7af05465a14e172045d1"
     },
     {
       "name": "semanticus-model-pr",
@@ -35,6 +35,13 @@
       "name": "semanticus-curate-knowledge",
       "path": "plugins/semanticus/skills/semanticus-curate-knowledge/SKILL.md",
       "sha256": "60977665f7c13b2e79cd8af83f5fca96577467d9ac805a89f69610a434959fd8"
+    }
+  ],
+  "agents": [
+    {
+      "name": "copilot-student",
+      "path": "plugins/semanticus/agents/copilot-student.md",
+      "sha256": "c2baaf33bde97353f43e5d02d4916ad236fba4126ef4f6e48d8194895d22d9ba"
     }
   ]
 }

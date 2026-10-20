@@ -110,9 +110,9 @@ const FINANCE = { id: 'sql-finance', name: 'Finance' };
 }
 
 // The wiring: the baseline is taken in the Add handler, and the effect refuses to adopt without one.
-assert.match(authoring, /addBaseline\s*=\s*useRef<string\[\]\s*\|\s*null>\(null\)/,
-  'the drawer holds a baseline captured when Add is invoked');
-assert.match(authoring, /beginAddSqlSource/, 'Add a SQL source goes through the handler that takes the baseline');
+// CHANGED 17 Oct 2026 (UAT 1.5.104): the drawer saves the source itself and adopts that one id, so no baseline is taken at all.
+assert.doesNotMatch(authoring, /addBaseline/, 'there is no baseline to compare: the source is added in the drawer');
+assert.match(authoring, /beginAddSqlSource/, 'Add a SQL source opens the form in the drawer');
 assert.doesNotMatch(authoring, /sourceAddedWhileWaiting\(current, latestSources\)/,
   'the old mount-time comparison is gone');
 
@@ -264,12 +264,18 @@ assert.equal(model.unknownCellText({ actual: '1,204,112' }), null, 'a row with a
 // that describes a control the page does not have.
 // ===================================================================================================
 assert.doesNotMatch(page, /canTick|tickingIsPossible|savedChecksHint|tickedMenuNote/, 'the ticked menu item and the tick hint are gone with their helpers');
-assert.match(page, /ticked \? onRunTicked : onRunAll/, 'the one button runs the ticked checks when any are ticked, and everything otherwise');
+// Validation A (1.6): Run checks always runs everything; "Choose checks..." in its arrow menu opens the list of checks that are on, and
+// the chosen ones run from there. A model with no check turned on says so instead of offering a dead run.
+assert.match(page, /onClick=\{onRunAll\}>\{busy \? 'Running…' : 'Run checks'\}/, 'the one button runs everything');
+assert.match(page, /onClick=\{\(\) => pick\(onChoose\)\}>Choose checks…/, 'the arrow menu offers Choose checks');
+assert.match(page, /No check is turned on\./, 'with nothing on, the chooser says so');
+assert.match(page, /onClick=\{\(\) => \{ closePanel\(\); onRunTicked\(\); \}\}/, 'the chosen checks run from the chooser');
 
 // The wiring: the tick box is a labelled control, and a key pressed inside the row's own controls does not reach the row.
-assert.match(page, /aria-label=\{`Tick \$\{def\.title\} to run on its own`\}/, 'every tick box is labelled by the check it ticks');
-assert.match(page, /if \(event\.target !== event\.currentTarget\) return;/,
-  'Space on the tick box must tick it, not expand the row and cancel the tick');
+assert.match(page, /aria-label=\{`Tick \$\{r\.def\.title\} to run on its own`\}/, 'every tick box is labelled by the check it ticks');
+// Validation A (1.6): the tick box is a plain checkbox in the chooser's own list, and nothing around it takes Space.
+assert.match(page, /<input type="checkbox" checked=\{ticked\.has\(r\.def\.id\)\}/, 'the tick box is a real checkbox, so Space ticks it');
+assert.doesNotMatch(page, /function CheckDetail[\s\S]{0,3000}role="button" tabIndex=\{0\}/, 'an opened check is not itself a button that a key could toggle');
 
 // ===================================================================================================
 // 10. The tolerance sentence keeps its precision, and a tiny difference is never a lying 0.00.
@@ -407,9 +413,33 @@ assert.match(page, /settings\.push\(\['Tolerance', check\.tolerance\]\)/,
 assert.doesNotMatch(page, /toleranceSentence\([^)]*check\./,
   'and the page must not recompute a recorded run’s tolerance from its own numbers');
 
+// Round 2 N14: Escape on an open list closes the list only; with no list open it closes the surface.
+{
+  const el = (tagName, { open = false, expanded = null } = {}) => ({ tagName, matches: (q) => q === ':open' && open, getAttribute: (n) => (n === 'aria-expanded' ? expanded : null) });
+  assert.equal(surfaces.escapeClosesList(null), false, 'nothing focused: Escape belongs to the surface');
+  assert.equal(surfaces.escapeClosesList(el('SELECT', { open: true })), true, 'an open select keeps the surface');
+  assert.equal(surfaces.escapeClosesList(el('SELECT')), false, 'a closed select does not');
+  assert.equal(surfaces.escapeClosesList(el('INPUT', { expanded: 'true' })), true, 'a combobox with its list open keeps the surface');
+  assert.equal(surfaces.escapeClosesList(el('INPUT', { expanded: 'false' })), false, 'a combobox with its list shut does not');
+  assert.equal(surfaces.escapeClosesList({ tagName: 'SELECT', matches: () => { throw new Error('unsupported'); } }), false, 'a browser without :open falls back to closing the surface');
+}
+
 // No em dash anywhere in either module.
 for (const file of ['webview/src/tests-model.ts', 'webview/src/surface-stack.ts']) {
   assert.doesNotMatch(readFileSync(resolve(root, file), 'utf8'), /—/, `no em dashes in ${file}`);
 }
 
 console.log('Tests page fixes (Astra 2026-09-15) passed');
+
+// ===================================================================================================
+// 11. A trusted percent reads as a percent everywhere, and Details states the allowance the check really uses (round 2 N11).
+// ===================================================================================================
+assert.equal(model.shownFigure('0.358250292035059', '35.8%'), '35.8%', 'the model answer is in the trusted number\'s own format');
+assert.equal(model.shownFigure('36251380.48', '36,000,000'), '36,251,380.48');
+assert.equal(model.shownFigure('0.358250292035059', '0.358'), '0.35825', 'a long plain number is cut to the places written plus two');
+assert.equal(model.differenceSentence('35.8%', '0.358250292035059', 0.000250292035059, 'the answer you trust'),
+  'The model is 0.03 points higher than the answer you trust.');
+// 35.8% is good to half of the last digit written: 0.05 points. The old Details said 0.000001 while a 0.00025 gap held.
+assert.equal(model.toleranceSentence(0.000001, 1e-9, '35.8%'), 'Allowed difference: 0.05 points.');
+assert.equal(model.toleranceSentence(0.000001, 1e-9, '36%'), 'Allowed difference: 0.50 points.');
+assert.equal(model.toleranceSentence(0.000001, 0, '0.358'), 'Allowed difference: 0.000001.', 'a plain number keeps its own allowance');

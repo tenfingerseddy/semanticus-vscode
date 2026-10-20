@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { revealInTree, copyText } from './bridge';
-import { plainRuleName } from './rule-words';
+import { plainRuleName, plainCategory } from './rule-words';
 import { Caret } from './ui';
 import { draftModel, draftStore, heldDraft } from './drafts';
 import { OrphanDrafts } from './orphandrafts';
@@ -169,7 +169,7 @@ export function GroupedFindings({ rows, renderActions, renderRuleActions, catego
           <div key={cat.category}>
             <Row onClick={() => toggle(collapsedCats, cat.category, setCollapsedCats)}
               className="text-(length:--sem-text-body) font-semibold">
-              <Twist open={!catCollapsed} />{cat.category}<span className="sem-num font-normal" style={{ color: 'var(--sem-muted)' }}>{cat.count}</span>
+              <Twist open={!catCollapsed} />{plainCategory(cat.category)}<span className="sem-num font-normal" style={{ color: 'var(--sem-muted)' }}>{cat.count}</span>
             </Row>
             {!catCollapsed && cat.rules.map((g) => {
               const rk = cat.category + '/' + g.ruleId;

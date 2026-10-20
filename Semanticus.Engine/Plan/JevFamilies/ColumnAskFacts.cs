@@ -250,16 +250,29 @@ namespace Semanticus.Engine
             };
         }
 
-        /// <summary>The declared snapshot of one chunk of one table's columns.</summary>
-        internal static IReadOnlyDictionary<string, object> BatchSnapshot(DecisionPoint point, TableShare share, IEnumerable<Dictionary<string, object>> entries) =>
-            DecisionSnapshot.Build(point, new[]
+        /// <summary>The declared snapshot of one request: the entries of columns of one or many tables (each entry names its table), the model's
+        /// table list once, and what each table shares (its column names and its facts) in maps keyed by the table's name.</summary>
+        internal static IReadOnlyDictionary<string, object> BatchSnapshot(DecisionPoint point, IEnumerable<(string TableName, TableShare Share)> shares,
+                                                                         IEnumerable<Dictionary<string, object>> entries)
+        {
+            var list = shares.ToList();
+            var tableColumns = new Dictionary<string, object>(StringComparer.Ordinal);
+            var tableFacts = new Dictionary<string, object>(StringComparer.Ordinal);
+            foreach (var (name, share) in list)
             {
-                new KeyValuePair<string, object>("table_name", share.TableName),
-                new KeyValuePair<string, object>("table_columns", share.TableColumns),
-                new KeyValuePair<string, object>("model_tables", share.ModelTables),
-                new KeyValuePair<string, object>("table_facts", share.TableFacts),
-                new KeyValuePair<string, object>("columns", entries.Cast<object>().ToList()),
+                if (tableColumns.ContainsKey(name)) continue;
+                tableColumns[name] = share.TableColumns;
+                tableFacts[name] = share.TableFacts;
+            }
+            var withTable = entries.Zip(list, (e, s) => (object)JevTableBatch.WithTable(e, s.TableName)).ToList();
+            return DecisionSnapshot.Build(point, new[]
+            {
+                new KeyValuePair<string, object>("table_columns", tableColumns),
+                new KeyValuePair<string, object>("model_tables", list.Count == 0 ? null : list[0].Share.ModelTables),
+                new KeyValuePair<string, object>("table_facts", tableFacts),
+                new KeyValuePair<string, object>("columns", withTable),
             });
+        }
 
         /// <summary>The model facts for one table and one column of it, or nulls when nothing was measured.</summary>
         internal static (Facts.TableFacts Table, Facts.MeasuredFacts Measured) FactsOf(Facts.ModelFacts facts, Table table, Column c)

@@ -26,4 +26,4 @@ export declare function holdRoutes(prev: Map<string, RouteResult> | undefined, l
 export declare function pathOf(pts: RoutePoint[]): string;
 export declare function busOrder(names: string[], links: { many: string; one: string }[]): { dims: string[]; facts: string[]; iso: string[]; parent: Record<string, string> };
 export declare function busGrid(dims: Size[], facts: Size[], iso: Size[], aspect: number | undefined,
-  o?: { nodeW?: number; nodeH?: number; gap?: number; colGap?: number; rowGap?: number; isoGap?: number }): { dims: RoutePoint[]; facts: RoutePoint[]; iso: RoutePoint[]; cols: number; isoCols: number };
+  o?: { nodeW?: number; nodeH?: number; gap?: number; colGap?: number; rowGap?: number; isoGap?: number; fitWidth?: number }): { dims: RoutePoint[]; facts: RoutePoint[]; iso: RoutePoint[]; cols: number; isoCols: number };

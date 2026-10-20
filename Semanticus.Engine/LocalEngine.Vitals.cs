@@ -42,8 +42,8 @@ namespace Semanticus.Engine
             // Pre-existing (predates this PR): the workspace fallback shares ONE vitals.jsonl across every live
             // model opened under that workspace — retention prunes across models and reads lean on the record
             // fingerprint filter. Left as-is for scope; the GLOBAL fallback below is per-fingerprint.
-            if (_workspaceDir != null)
-                return Path.Combine(_workspaceDir, LayoutStore.DirName, VitalsStore.SubDir, VitalsStore.FileName);
+            if (FolderDir != null)
+                return Path.Combine(FolderDir, LayoutStore.DirName, VitalsStore.SubDir, VitalsStore.FileName);
             // GLOBAL fallback — ephemeral anchor (live/XMLA/unsaved) AND no workspace open: a live model with no
             // folder, the highest-value Pro case, where capture used to be silently DROPPED (dir == null). Mirror
             // the SENSITIVE half of PR #112 (its project-insight store), NOT experience.jsonl: a PER-FINGERPRINT
@@ -375,7 +375,7 @@ namespace Semanticus.Engine
             result.Note = note;
 
             // ---- shared evidence (the compare_baseline precedent): ONE shape → audit + L0 tee + UI ----
-            await RecordVerifiedEditAsync(s, new VerifiedEditRecord
+            await RecordAnalysisAsync(s, new VerifiedEditRecord
             {
                 SessionId = s.Id, Revision = 0, Origin = origin ?? "agent", Op = "blame_value", ObjectRef = canonical,   // 0: analysis mutates nothing
                 Verdict = result.Verdict,

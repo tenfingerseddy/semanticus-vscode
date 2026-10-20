@@ -403,7 +403,7 @@ namespace Semanticus.Tests
         [Theory]
         [Trait("Round4", "1")]
         [InlineData("change", "The question asks how the numbers changed, and Semanticus does not work out a change yet.")]
-        [InlineData("share", "The question asks for a share or a percent, and Semanticus does not work that out yet.")]
+        [InlineData("share", "The question asks for a share, a percent or an average that no measure here gives, and Semanticus does not work it out for you yet.")]
         [InlineData("none_or_only", "The question asks about things with no sales, or sold in one place only, and Semanticus does not work that out yet.")]
         public async Task A_gap_is_said_beside_the_number_and_the_run_goes_on(string gap, string line)
         {

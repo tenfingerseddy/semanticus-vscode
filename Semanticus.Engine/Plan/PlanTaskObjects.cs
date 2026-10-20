@@ -266,6 +266,7 @@ namespace Semanticus.Engine
         {
             if (state == null || now == null || now.Count == 0) return false;
             var changed = false;
+            var moves = new List<(string Old, string Now)>();
             string[] Move(string[] refs, PlanObjectGround[] grounds)
             {
                 if (grounds == null) return refs;
@@ -274,12 +275,23 @@ namespace Semanticus.Engine
                     if (g?.Ref == null || !now.TryGetValue(g.Ref, out var n) || n.Gone || n.Current == g.Ref) continue;
                     var old = g.Ref;
                     g.Ref = n.Current;
+                    moves.Add((old, n.Current));
                     if (refs != null) refs = refs.Select(r => string.Equals(r, old, StringComparison.Ordinal) ? n.Current : r).ToArray();
                     changed = true;
                 }
                 return refs;
             }
-            foreach (var t in state.Tasks) t.Objects = Move(t.Objects, t.Grounds) ?? Array.Empty<string>();
+            foreach (var t in state.Tasks)
+            {
+                moves.Clear();
+                t.Objects = Move(t.Objects, t.Grounds) ?? Array.Empty<string>();
+                // A task's claims name the same objects (a ref, or "rule|ref"), and they are what keeps its row from listing the object as new: a declined task whose column
+                // was renamed since must keep holding it (UAT 18 Oct N22), so the claims move with the object.
+                if (t.Claims is { Length: > 0 } && moves.Count > 0)
+                    t.Claims = t.Claims.Select(c => moves.Aggregate(c, (claim, mv) =>
+                        string.Equals(claim, mv.Old, StringComparison.Ordinal) ? mv.Now
+                        : claim != null && claim.EndsWith("|" + mv.Old, StringComparison.Ordinal) ? claim.Substring(0, claim.Length - mv.Old.Length) + mv.Now : claim)).ToArray();
+            }
             foreach (var r in state.Repeats) r.Objects = Move(r.Objects, r.Grounds);
             return changed;
         }
@@ -321,6 +333,18 @@ namespace Semanticus.Engine
             var now = await GroundsNowAsync(binding.Session, grounded.Select(k => new PlanObjectGround { Ref = k.Ref, Tag = k.Tag })).ConfigureAwait(false);
             var moved = now.Where(p => !p.Value.Gone && p.Value.Current != p.Key).ToDictionary(p => p.Key, p => p.Value.Current, StringComparer.Ordinal);
             if (moved.Count > 0) TryWritePlanMemory(binding, state => FollowSkipRenamesIn(state, moved));
+        }
+
+        /// <summary>Carry a rename into the open tasks before the plan is read, so a task that holds a column (a declined cleanup task, say) still holds it under its new name
+        /// and the row does not list it again as a new job (UAT 18 Oct N22).</summary>
+        internal async Task FollowTaskRenamesAsync(PlanMemoryBinding binding)
+        {
+            // A set-aside task still holds its columns, so its claims follow a rename too (UAT 18 Oct N22, round 2).
+            var open = ReadPlanState(binding).Tasks.Where(t => PlanTasks.IsOpenTask(t) || (t.State == PlanTaskStates.SetAside && t.Claims is { Length: > 0 })).ToList();
+            var grounds = AllGroundsOf(open).Where(g => g.Tag != null).ToArray();
+            if (grounds.Length == 0) return;
+            var now = await GroundsNowAsync(binding.Session, grounds).ConfigureAwait(false);
+            if (now.Any(p => !p.Value.Gone && p.Value.Current != p.Key)) TryWritePlanMemory(binding, state => FollowRenamesIn(state, now));
         }
 
         /// <summary>Rewrite the skips whose ref moved: the id keeps everything before the ref and ends with the new ref. A skip

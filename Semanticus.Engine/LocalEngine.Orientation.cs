@@ -197,9 +197,9 @@ namespace Semanticus.Engine
         /// exactly where the tee wrote (an ephemeral-no-workspace session's log now lands in the per-user Semanticus home, not /dev/null).</summary>
         private string CurrentExperienceFile()
         {
-            var workspaceFallback = _workspaceDir == null
+            var workspaceFallback = FolderDir == null
                 ? ExperienceStore.GlobalFile()
-                : Path.Combine(_workspaceDir, LayoutStore.DirName, ExperienceStore.FileName);
+                : Path.Combine(FolderDir, LayoutStore.DirName, ExperienceStore.FileName);
             var s = _sessions.Current;
             if (s == null) return workspaceFallback;
             return !ExperienceStore.IsEphemeralAnchor(s.SourcePath) ? ExperienceStore.FileFor(s.SourcePath) : workspaceFallback;

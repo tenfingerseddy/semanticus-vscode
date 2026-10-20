@@ -872,7 +872,9 @@ function sift(order, C) {
  * @returns       { dims: [{x, y}], facts: [{x, y}], iso: [{x, y}], cols: the row's length, isoCols: unlinked per row }
  */
 export function busGrid(dims, facts, iso, aspect, o = {}) {
-  const { nodeW = 190, nodeH = 92, gap = 72, colGap = 96, rowGap = 110, isoGap = 60 } = o;
+  // colGap 48 (was 96): makeRoom keeps ROOM_MIN (48) between cards, so a tighter gap would be pushed straight back out (UAT round 2, item 49).
+  // fitWidth is the widest the first frame may be and still draw at the readable zoom (diagramfit FIRST_FIT_MIN_ZOOM) in that Studio.
+  const { nodeW = 190, nodeH = 92, gap = 72, colGap = 48, rowGap = 110, isoGap = 60, fitWidth = 1350 } = o;
   const factColW = Math.max(nodeW, ...facts.map((b) => b.w));
   const rowH = Math.max(nodeH, ...dims.map((b) => b.h));
   const out = { dims: [], facts: [], iso: [], cols: Math.max(1, dims.length), isoCols: 1 };
@@ -885,15 +887,31 @@ export function busGrid(dims, facts, iso, aspect, o = {}) {
     // facts: a card level with a fact makes the router's channel off that fact's right side as wide as the whole row,
     // and its lines then left the fact halfway across the diagram and came back (diagramroute's stub).
     const k = iso.length <= 4 ? iso.length : Math.ceil(Math.sqrt(iso.length * 2));
-    out.isoCols = k;
     const colW = Array.from({ length: k }, (_, c) => Math.max(nodeW, ...iso.filter((_, i) => i % k === c).map((b) => b.w)));
-    const rows = Math.ceil(iso.length / k);
-    let bottom = rowH;   // each row of them ends where the one under it starts (the first: where the row ends)
-    for (let r = 0; r < rows; r++) {
-      const cardsInRow = iso.slice(r * k, r * k + k), top = bottom - Math.max(...cardsInRow.map((b) => b.h));
-      let cx = (dims.length ? x - colGap : factColW) + isoGap;
-      cardsInRow.forEach((b, c) => { out.iso.push({ x: cx, y: top }); cx += colW[c] + gap; });
-      bottom = top - gap;
+    const rightEdge = (dims.length ? x - colGap : factColW) + isoGap + colW.reduce((a, b) => a + b, 0) + gap * (k - 1);
+    if (dims.length && rightEdge > fitWidth && x - colGap <= fitWidth) {   // only when that makes the whole fit; a longer row pans anyway
+      // Too wide to read in one row: they carry no lines, so they sit in a second row UNDER the last fact instead, from the left edge,
+      // as many to a row as the lookup row is wide. Nothing is routed past them (every line ends at or above the last fact).
+      const per = Math.max(1, Math.floor((Math.max(x - colGap, fitWidth * 0.5) + gap) / (nodeW + gap)));
+      out.isoCols = Math.min(per, iso.length);
+      let top = (facts.length ? y : rowH + rowGap), i = 0;
+      while (i < iso.length) {
+        const rowBoxes = iso.slice(i, i + per);
+        let cx = 0;
+        rowBoxes.forEach((b) => { out.iso.push({ x: cx, y: top }); cx += Math.max(nodeW, b.w) + gap; });
+        top += Math.max(...rowBoxes.map((b) => b.h)) + gap;
+        i += per;
+      }
+    } else {
+      out.isoCols = k;
+      const rows = Math.ceil(iso.length / k);
+      let bottom = rowH;   // each row of them ends where the one under it starts (the first: where the row ends)
+      for (let r = 0; r < rows; r++) {
+        const cardsInRow = iso.slice(r * k, r * k + k), top = bottom - Math.max(...cardsInRow.map((b) => b.h));
+        let cx = (dims.length ? x - colGap : factColW) + isoGap;
+        cardsInRow.forEach((b, c) => { out.iso.push({ x: cx, y: top }); cx += colW[c] + gap; });
+        bottom = top - gap;
+      }
     }
   }
   return out;

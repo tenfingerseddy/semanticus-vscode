@@ -581,7 +581,10 @@ test('the help WHERE index folds the zero-dialog creates but keeps hierarchy + d
     // disappears in a copy sweep fails here instead of leaving a task with no home in the index.
     // 57 from 8 October 2026: two rows that repeated a menu or a page left (Restart the engine is Help > Restart engine;
     // inspecting a Pro license is the Pro page's own "Have a license key?").
-    assert.equal(count, 57, '40 existing task entries, 8 getting-started tasks, 8 term explanations and AI instructions');
+    // 58 from 15 October 2026: Find and replace left the Studio, so "Replace a word across the model" says where the replace went.
+    // 59 from 15 October 2026: the Copilot test joined Review, and the index gained one entry for finding it.
+    // 53 from 18 October 2026: Workflows retired for everyone (Kane, 17 Oct), so the six index rows about workflows left.
+    assert.equal(count, 53, '40 existing task entries, 8 getting-started tasks, 8 term explanations and AI instructions');
     assert.doesNotMatch(block, /q: 'Create a measure',/, 'the standalone "Create a measure" entry is gone (one gesture, self-evident)');
     assert.match(block, /Create a measure, calculated column, calculated table, calculation item, or function/, 'a single create entry covers the five zero-dialog kinds');
     // MEDIUM 6: hierarchy creation (NOT zero-dialog) keeps its own honest entry rather than being folded into the

@@ -56,6 +56,8 @@ test('J3 the Tests page reads its numbers through resultText, and no webview res
   assert.doesNotMatch(page, /minimumFractionDigits:\s*2,\s*maximumFractionDigits:\s*2/, 'no fixed two decimals left on the page');
   // The pages that show a query's or a check's result value (Queries' own toFixed is a timing in milliseconds). Every other toFixed in the webview is a size, a score, a position or a duration.
   for (const f of ['daxvisual.tsx', 'explainpanel.tsx', 'askdata.tsx', 'grid.tsx', 'tests.tsx']) {
-    assert.doesNotMatch(readFileSync(new URL(f, dir), 'utf8'), /\.toFixed\(/, f + ' shows a result value with toFixed');
+    // Explain's contributor share is a percent of the total at one decimal on every row (explain-loop pins it), not a result value.
+    const src = readFileSync(new URL(f, dir), 'utf8').split('r.pct.toFixed(1)').join('');
+    assert.doesNotMatch(src, /\.toFixed\(/, f + ' shows a result value with toFixed');
   }
 });

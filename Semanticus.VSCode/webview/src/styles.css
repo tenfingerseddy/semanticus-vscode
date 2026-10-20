@@ -645,7 +645,7 @@ button:focus-visible { outline: 2px solid var(--sem-accent); outline-offset: 2px
 .sem-primer code { border-radius: var(--sem-radius-chip); padding: 0 var(--sem-space-1); background: var(--sem-surface-2); font-family: var(--sem-font-num); font-size: var(--sem-text-meta); }
 
 /* ==== Explore and Edit pages (One Visual Language, lane vl/explore-edit) ================================
-   Data, Diagram, Lineage, Size by table, Find and replace, Queries, AI instructions, Advanced modelling and
+   Data, Diagram, Lineage, Size by table, Queries, AI instructions, Advanced modelling and
    Power Query, drawn as Instrument on the shared primitives above. Only what the primitives do not cover lives
    here, every value a token. Prefix xe- so this block can merge beside the other page lanes. */
 
@@ -718,9 +718,6 @@ textarea.xe-instr-editor { resize: vertical; overflow-y: hidden; }
 .xe-instr-suggestion { display: flex; align-items: center; gap: var(--sem-stack); min-height: var(--sem-row-2); border-bottom: var(--sem-hairline) solid var(--sem-rule); }
 .xe-instr-suggestion:last-child { border-bottom: 0; }
 
-/* Find and replace: the one-table scope line. */
-.search-scope { display: flex; align-items: center; justify-content: space-between; gap: var(--sem-gap); color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
-.search-scope strong { color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
 .xe-rule-row { border-bottom: var(--sem-hairline) solid var(--sem-rule); }
 .xe-rule-row:last-child { border-bottom: 0; }
 .xe-preview { margin: 0 var(--sem-card-pad) var(--sem-space-3); }
@@ -1589,6 +1586,10 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .pro-chip-flash { animation: pro-chip-flash 1.2s var(--sem-ease-out); }
 @keyframes pro-chip-flash { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sem-accent) 70%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
 @media (prefers-reduced-motion: reduce) { .pro-chip-flash { animation: none; } }
+/* The Your assistant button after the tour from the first-run card: one soft ring, once. */
+.studio-header-action.is-pulsing { animation: sem-assistant-pulse 1.8s var(--sem-ease-out) 1; }
+@keyframes sem-assistant-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--sem-accent) 70%, transparent); } 100% { box-shadow: 0 0 0 10px transparent; } }
+@media (prefers-reduced-motion: reduce) { .studio-header-action.is-pulsing { animation: none; box-shadow: 0 0 0 2px var(--sem-accent); } }
 
 /* The page is the 12-column grid: everything takes the left eight columns. Below 1100px it takes the full row. */
 .pp { box-sizing: border-box; padding: var(--sem-page-margin); display: grid; grid-template-columns: repeat(var(--sem-grid-columns), minmax(0, 1fr)); gap: 0 var(--sem-gap); align-content: start; }
@@ -1683,7 +1684,7 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .pp-note .pp-h3 { margin-top: 0; }
 .pp-note .pp-acts, .pp-main > .pp-acts { margin-top: var(--sem-space-4); display: flex; align-items: center; gap: var(--sem-space-3); flex-wrap: wrap; }
 .pp-main > .pp-acts .pp-m { color: var(--sem-muted); font-size: var(--sem-text-meta); }
-.pp-tally { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sem-gap); margin: 0 0 var(--sem-space-2); }
+.pp-tally { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sem-gap); margin: 0 0 var(--sem-space-2); }
 .pp-tally > div { border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); padding: var(--sem-card-pad); min-width: 0; }
 .pp-big { display: block; font-size: var(--sem-text-page); line-height: var(--sem-lh-page); font-weight: var(--sem-weight-strong); font-variant-numeric: tabular-nums; }
 .pp-lbl { display: block; margin-top: var(--sem-space-1); color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }

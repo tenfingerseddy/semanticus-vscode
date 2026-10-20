@@ -646,6 +646,37 @@ namespace Semanticus.Tests
             Assert.Contains("column:dim_item/BRAND_NOTE", Ticked(set));    // an ordinary text column is still a suggestion
             Assert.Contains(jev.AskedRefs, r => r == "column:dim_item/BARCODE");
         }
+
+        // UAT 18 Oct N22 (round 2): the person set aside "Remove 5 unused columns" and the Plan at once made a new row for the same columns, which survived a
+        // rename, Refresh plan and a re-run. A set-aside task keeps holding its columns, under any name they have since. (The row may still say "Review N" for
+        // columns the task never held: the unticked ones. It never lists a held column.)
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Fact]
+        public async Task A_set_aside_cleanup_task_keeps_holding_its_columns_through_a_rename()
+        {
+            using var f = await ModelAsync("SetAside.bim", pro: true);
+            var e = f.Engine;
+            await ClearTheWayAsync(f);
+            Assert.NotNull(Row(await e.GetModelPlanAsync(), "cleanup/model"));
+
+            await e.SetPlanItemDoerAsync("cleanup/model", PlanDoers.Assistant);
+            var given = await e.GetModelPlanAsync();
+            var task = given.Items.Single(i => i.Title.StartsWith("Remove ", StringComparison.Ordinal) && i.Id.StartsWith("pt-", StringComparison.Ordinal));
+
+            await e.SkipModelPlanItemAsync(task.Id, "not now", "human");
+            AssertHeld("right after Set aside", await e.GetModelPlanAsync());
+
+            await e.RenameObjectAsync("column:dim_client/NOTE_TXT", "NOTE_TEXT", "human");
+            foreach (var step in new[] { "after the rename", "a refresh", "a re-run" })
+                AssertHeld(step, await e.GetModelPlanAsync());
+
+            static void AssertHeld(string step, ModelPlanView plan)
+            {
+                var again = Row(plan, "cleanup/model");
+                Assert.True(again == null || (again.Title.StartsWith("Review ", StringComparison.Ordinal) && (again.Objects ?? Array.Empty<string>()).Length == 0),
+                    step + ": the Plan lists " + again?.Title + " (" + again?.Sub + ") for columns a set-aside task holds");
+            }
+        }
     }
 
     internal static class PlanCleanupReviewExtensions

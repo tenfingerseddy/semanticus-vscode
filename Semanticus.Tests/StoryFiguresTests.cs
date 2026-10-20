@@ -30,7 +30,8 @@ namespace Semanticus.Tests
             Assert.Equal(bpa.BestPracticeScore, plan.Strip.BestPracticeScore);
 
             var rows = plan.Items.Where(i => i.Id != null).GroupBy(i => i.Id).Select(g => g.First()).ToArray();
-            var open = rows.Count(i => i.StateWord != PlanStateWords.Done && i.StateWord != PlanStateWords.SetAside);
+            // Saving is not a task of the plan (hero 26 N9): the Save row is listed, and the strip leaves it out.
+            var open = rows.Count(i => i.Id != "ship/unsaved" && i.StateWord != PlanStateWords.Done && i.StateWord != PlanStateWords.SetAside);
             Assert.True(plan.Strip.TasksDone >= rows.Count(i => i.StateWord == PlanStateWords.Done));
             Assert.Equal(plan.Strip.TasksDone + open, plan.Strip.TasksAll);
         }
@@ -78,7 +79,7 @@ namespace Semanticus.Tests
             Assert.False(cleared.Items.Any(i => i.StateWord == PlanStateWords.Done), "Refresh plan took the done rows off the list");
             Assert.True(cleared.Strip.TasksDone >= doneBefore, "History still holds them, so Plan done keeps them");
             Assert.Equal(allBefore, cleared.Strip.TasksAll);   // clearing a done row from the list is not a new task and not a lost one
-            Assert.Equal(cleared.Strip.TasksDone + cleared.Items.Count(i => i.StateWord != PlanStateWords.Done && i.StateWord != PlanStateWords.SetAside), cleared.Strip.TasksAll);
+            Assert.Equal(cleared.Strip.TasksDone + cleared.Items.Count(i => i.Id != "ship/unsaved" && i.StateWord != PlanStateWords.Done && i.StateWord != PlanStateWords.SetAside), cleared.Strip.TasksAll);
         }
     }
 }

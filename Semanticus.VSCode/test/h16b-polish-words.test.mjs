@@ -52,6 +52,20 @@ test('D3: undo steps and the Latest mark use plain words, never the engine worki
   assert.equal(H.rowTitle({ kind: 'edit', title: 'edit objects', by: 'assistant' }), 'Changed fields');
 });
 
+test('KNOWN 14: a Properties-grid edit row and a baseline compare line read in plain words', () => {
+  assert.equal(C.editWords('set Expression'), 'Changed a formula');
+  assert.equal(C.editWords('set Description'), 'Wrote a description');
+  assert.equal(C.editWords('set IsHidden on 3 objects'), 'Changed whether it is hidden on 3 objects');
+  assert.equal(C.editWords('set FooBarBaz'), 'Changed the foo bar baz');
+  assert.equal(H.rowTitle({ kind: 'edit', title: 'set Expression', by: 'you' }), 'Changed a formula');
+  const rec = (summary) => ({ kind: 'record', title: 'compare_baseline', by: 'agent', record: { op: 'compare_baseline', summary, verdict: 'safe', seq: 1, sessionId: 's', revision: 0 } });
+  assert.equal(H.metaLine(rec('SAFE: 1 downstream measure(s) unchanged across the captured grid.')), 'Nothing moved: 1 measure gave the same numbers as before.');
+  assert.equal(H.metaLine(rec('SAFE: 4 downstream measure(s) unchanged across the captured grid. NOTE: 2 session edit(s) since capture. The live model reflects them only if deployed (deploy_live); an undeployed local edit is NOT validated by this compare.')),
+    'Nothing moved: 4 measures gave the same numbers as before. 2 changes made since the before picture count only once published.');
+  assert.equal(H.metaLine(rec('IMPACT: 2 measure(s) moved, 1 missing, of 5 baselined.')), '2 measures of 5 gave different numbers. 1 measure could not be found.');
+  assert.doesNotMatch(H.metaLine(rec('SAFE: 1 downstream measure(s) unchanged across the captured grid.')), /SAFE|\(s\)|downstream|grid/);
+});
+
 test('D3: a column reads "Margin % in Sales", and a batch of unknown kind is not "objects"', () => {
   assert.equal(H.objectName('column:Sales/Margin %'), 'Margin % in Sales');
   const parent = { kind: 'task', title: 'Tidy' };
@@ -78,4 +92,15 @@ test('D1: "same fields" is said only when the two tasks share a field; otherwise
   assert.equal(P.subLine(waiter).why, P.WAITS_WHY_PLAIN);
   assert.equal(P.WAITS_WHY_PLAIN, "it needs that task's changes first");
   assert.doesNotMatch(P.WAITS_WHY_PLAIN, /same fields/);
+});
+
+test('History words a publish and its undo without the service address', () => {
+  const push = { op: 'apply_model_diff', verdict: 'deployed', summary: 'pushed 2 change(s) to powerbi://api.powerbi.com/v1.0/myorg/Contoso WS/Northstar Sales Working' };
+  assert.equal(H.recordWords(push), 'Sent 2 changes to Northstar Sales Working.');
+  const back = { op: 'rollback_push', verdict: 'deployed', summary: 'rolled powerbi://api.powerbi.com/v1.0/myorg/Contoso WS/Northstar Sales Working back to restore point abc123: restored 1, removed 1' };
+  assert.equal(H.recordWords(back), 'Northstar Sales Working went back to how it was. Put back 1, removed 1.');
+  const partial = { op: 'rollback_push', verdict: 'needs-review', summary: 'rolled powerbi://x/y/Sales back to restore point abc123: restored 0, removed 1, could not restore 1' };
+  assert.match(H.recordWords(partial), /^Sales did not fully go back: 1 object could not be put back\./);
+  assert.equal(H.verifiedWord(partial.verdict).word, 'Needs review', 'a rollback that left something behind is not Verified');
+  for (const r of [push, back, partial]) assert.doesNotMatch(H.recordWords(r), /powerbi:|rolled |restore point/);
 });

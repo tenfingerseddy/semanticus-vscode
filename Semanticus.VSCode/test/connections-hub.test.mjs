@@ -115,7 +115,7 @@ assert.doesNotMatch(listView, /max-h-\[336px\]/, 'the list is never capped at a 
 // ---- honest identity + fail-closed governance -----------------------------------------------------------------
 assert.match(hub, /as \$\{account\} \(was \$\{was\}\)/, 'per-row identity must show "as bob@ (was alice@)" provenance');
 assert.match(hub, /account unknown/, 'an unknown next-open account must read honestly as "account unknown"');
-assert.match(hub, /text: 'No label \(Development settings\)'/, 'an unlabelled cloud model must read "No label (Development settings)", never "Production"');
+assert.match(hub, /text: 'Not set \(treated as Development\)'/, 'an unlabelled cloud model must read "Not set (treated as Development)", never "Production"');
 assert.match(hub, /if \(l\) return \{ text: 'Production', tone: 'warn' \}/, 'a hand-edited label the engine does not know ("Production", "staging") must read Production, because the engine applies prod to it');
 
 // ---- honest friendly naming for local running models (T164 P5) ------------------------------------------------
@@ -298,11 +298,11 @@ assert.match(hub, /const openCreate = \(\) => \{ setCreateName\(''\)/, 'the card
 // ---- the account menu lists the saved profiles (no dead-end); the unlabelled env option never truncates ----------
 const accountMenu = slice('function AccountMenu', 'function AccountDialog');
 assert.match(accountMenu, /profiles\.map\(\(p\) =>/, 'the account menu lists the saved profiles, signed in or not');
-assert.match(accountMenu, /No saved accounts yet\. Pick a workspace model to sign in\./, 'an empty menu says where a sign-in happens');
+assert.match(accountMenu, /data-testid="hub-sign-in-first"/, 'an empty menu is one Sign in that starts the sign-in (fresh-connect.test.mjs)');
 assert.doesNotMatch(accountMenu, /Kept on this device/, 'the account menu does not repeat the History line (C10)');
 assert.match(hub, /Models and sign-ins, kept on this device/, 'the one "kept on this device" note lives in History');
 assert.doesNotMatch(hub, /No switchable live model/, 'the "No switchable live model" dead-end must be retired');
-assert.match(read('webview', 'src', 'connectpickers-model.ts'), /No label \(Development settings\)/, 'the unlabelled env option must be short enough not to truncate');
+assert.match(read('webview', 'src', 'connectpickers-model.ts'), /Not set \(treated as Development\)/, 'the unlabelled env option must be short enough not to truncate');
 
 // ---- connection-relevant notifications broadcast to BOTH panels (the standalone hub is not deaf) ----------------
 assert.match(extension, /function postToPanels\(msg: unknown\)/, 'a multi-panel broadcast helper must exist');
@@ -349,8 +349,9 @@ assert.ok(!hub.includes('!standalone) onClose'), 'no terminal action may stay op
 assert.match(hub, /a SUCCESSFUL terminal action/, 'the close contract is stated in one comment');
 
 // (extension) the hub open is engine-guarded, and an existing standalone panel always gets the requested section.
-assert.match(extension, /async function openConnectionsManager[\s\S]{0,420}Semanticus engine not connected\./,
-  'openConnectionsManager refuses when no engine is connected, before creating/revealing a panel');
+assert.match(extension, /async function openConnectionsManager[\s\S]{0,620}if \(!conn\) await waitForEngine\(\);\s*if \(!conn\) \{ warnNoEngine\(\); return; \}/,
+  'openConnectionsManager waits for a starting engine, then refuses (with the reason) before creating/revealing a panel');
+assert.match(extension, /function warnNoEngine\(\)[\s\S]{0,200}Semanticus engine not connected\./, 'warnNoEngine keeps the plain fallback line');
 assert.ok(!extension.includes("if (section !== 'open') { try { connectionsPanel.webview.postMessage"),
   'the existing-panel branch no longer drops an open request');
 assert.ok(extension.includes("try { connectionsPanel.webview.postMessage({ type: 'openConnections', section }); }"),
@@ -414,7 +415,7 @@ assert.match(hub, /setNotice\(`Tests and queries now run on \$\{nameOf\(r\)\}\.`
 assert.match(connection, /export interface ConnectResult \{ ok: boolean; message\?: string \}/, 'connect returns a result carrying the engine message');
 assert.match(connection, /async function connectXmla\([\s\S]{0,220}Promise<ConnectResult>/, 'connectXmla returns a ConnectResult');
 assert.match(connection, /async function connectLocal\([\s\S]{0,120}Promise<ConnectResult>/, 'connectLocal returns a ConnectResult');
-assert.match(hub, /res\.message \|\| 'The connection did not complete/, 'the Add flow shows the engine message (e.g. the service-principal env-var help), not just a generic line');
+assert.match(hub, /setError\(failure \|\| 'The connection did not complete/, 'the Add flow shows the engine message (e.g. the service-principal env-var help), not just a generic line');
 assert.match(hub, /res\.message \|\| 'That model could not be connected for tests and queries/, 'Use for tests and queries surfaces the engine message');
 
 // (B2) the account menu is never a dead end: Sign in another account routes to where a sign-in happens (the live
@@ -434,7 +435,7 @@ assert.match(hub, /: !p\.signedIn\s*\n\s*\? <button className=\{BTN_QUIET\} data
 assert.match(hub, /data-testid="hub-auth-preflight"/, 'an advanced-auth prerequisites preflight renders');
 assert.match(hub, /rpc<AuthPrerequisites>\('probeAuthPrerequisites', authMode, newTenant\.trim\(\) \|\| null\)/, 'the preflight probes the dual-drive engine op for what it can see');
 assert.match(hub, /data-testid="hub-tenant-input"/, 'advanced modes expose a tenant field (fixes the CLI tenantId=null bug)');
-assert.match(hub, /const advanced = authMode === 'azcli' \|\| authMode === 'serviceprincipal';\s*\n\s*const res = await connectXmla\(endpoint\.trim\(\), database\.trim\(\), authMode, advanced \? \(newTenant\.trim\(\) \|\| null\) : null\)/, 'the add threads the tenant ONLY for advanced modes (a browser connect never carries a hidden stale tenant)');
+assert.match(hub, /const advanced = authMode === 'azcli' \|\| authMode === 'serviceprincipal';\s*\n\s*(?:[^\n]*\n)*?[^\n]*openByAddress\(\{ endpoint: endpoint\.trim\(\), database: database\.trim\(\), authMode, tenantId: advanced \? \(newTenant\.trim\(\) \|\| null\) : null/, 'the add threads the tenant ONLY for advanced modes (a browser connect never carries a hidden stale tenant)');
 assert.match(hub, /Key Vault references are not supported here/, 'the preflight states plainly that Key Vault is not resolved in-app');
 assert.match(hub, /never stores the secret/, 'the preflight states the secret is not stored by Semanticus');
 assert.match(hub, /data-testid="hub-auth-names"[\s\S]{0,160}Show the variable names/, 'the environment variable names sit behind one disclosure, not in the copy (C4)');

@@ -89,6 +89,10 @@ namespace Semanticus.Engine
             RequireProFeature();
             var context = _sessions.CurrentContext;
             var s = context.RequireSession();
+            // A Validation check that differs (system "test", ruleId = the check's id) is accepted through the same call. Those items are not model
+            // edits: each goes to the store that lives with the checks, and the rest of the list goes on as before.
+            var checkItems = (items ?? Array.Empty<FindingWaiverItem>()).Select((x, i) => (x, i)).Where(t => string.Equals((t.x?.System ?? "").Trim(), CheckWaivers.System, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (checkItems.Count > 0) return await WaiveFindingsWithChecksAsync(items, checkItems, origin);
             var result = await WriteBatchAsync(s, items, origin, "waive findings", x => x?.ObjRef, (m, item, _) =>
             {
                 if (item == null) throw new ArgumentException("A finding is required.");
@@ -99,6 +103,31 @@ namespace Semanticus.Engine
                 (accepted, refs) => ChangeWords.For("waived", "findings", refs));
             if (result.Applied > 0) await SyncPlanWithWaiversAsync(context, s);
             NoteBatch(s.Id, origin, result.Applied, "waived", "findings", "plan", result.Words);
+            return result;
+        }
+
+        private async Task<BatchEditResult> WaiveFindingsWithChecksAsync(FindingWaiverItem[] items, List<(FindingWaiverItem Item, int Index)> checkItems, string origin)
+        {
+            var s = _sessions.CurrentContext.RequireSession();
+            var rest = items.Where(x => !checkItems.Any(c => ReferenceEquals(c.Item, x))).ToArray();
+            var restIndex = Enumerable.Range(0, items.Length).Where(i => !checkItems.Any(c => c.Index == i)).ToArray();
+            var rejected = new List<BatchRejection>();
+            var accepted = 0;
+            foreach (var (item, index) in checkItems)
+            {
+                try { await WaiveCheckAsync(item.RuleId, item.Reason, origin); accepted++; }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                { rejected.Add(new BatchRejection { Index = index, ObjRef = item.RuleId, Reason = ex.Message }); }
+            }
+            if (accepted > 0 && origin == "agent")
+                NoteBatch(s.Id, origin, accepted, "accepted", "differences", "review/validation",
+                    new ChangeWords { Verb = "accepted", Noun = "differences", Count = accepted, Targets = Array.Empty<string>() }, undo: false);
+            var result = rest.Length > 0 ? await WaiveFindingsAsync(rest, origin) : new BatchEditResult { Revision = s.Revision };
+            // The items that went through the model batch report their own place in the list: put each back where the caller had it.
+            foreach (var r in result.Rejected ?? Array.Empty<BatchRejection>()) r.Index = restIndex[Math.Min(Math.Max(r.Index, 0), restIndex.Length - 1)];
+            result.Applied += accepted;
+            result.Rejected = (result.Rejected ?? Array.Empty<BatchRejection>()).Concat(rejected).OrderBy(r => r.Index).ToArray();
+            if (rest.Length == 0 && accepted > 0) result.Words = new ChangeWords { Verb = "accepted", Noun = "differences", Count = accepted, Targets = Array.Empty<string>() };
             return result;
         }
 

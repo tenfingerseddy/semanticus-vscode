@@ -166,16 +166,6 @@
    "contrast-light": 0,
    "contrast-hc": 0
   },
-  "edit-find": {
-   "gap": 0,
-   "margin": 0,
-   "padding": 0,
-   "grid": 0,
-   "nesting": 0,
-   "contrast-dark": 0,
-   "contrast-light": 0,
-   "contrast-hc": 0
-  },
   "edit-instructions": {
    "gap": 0,
    "margin": 0,
@@ -2745,22 +2735,6 @@
    "narrow": 0
   },
   "edit-advanced": {
-   "boxed-scroll": 0,
-   "hidden-action": 0,
-   "page-cap": 0,
-   "fixed-box": 0,
-   "primary-small": 0,
-   "narrow": 0
-  },
-  "edit-find": {
-   "boxed-scroll": 0,
-   "hidden-action": 0,
-   "page-cap": 0,
-   "fixed-box": 0,
-   "primary-small": 0,
-   "narrow": 0
-  },
-  "edit-find-results": {
    "boxed-scroll": 0,
    "hidden-action": 0,
    "page-cap": 0,

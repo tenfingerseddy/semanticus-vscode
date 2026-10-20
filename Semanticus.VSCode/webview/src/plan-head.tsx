@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { rpc } from './bridge';
+import { rpc, runHostCommand } from './bridge';
 import { LinkMark, RollingWords, statusWords, useLinkWork, useStepper } from './personality/link';
 import { linkWork } from './personality/link-state';
 import { usePersonalitySettings } from './personality/settings';
 import { VERB_HOLD_MS } from './personality/verbs';
 import { DoerMark } from './plan-row';
 import { PlanFigures } from './plan-figures';
-import { slotOf, driveValue, STEP_FADE_MS, type Grade, type Slot } from './plan-calm-model';
+import { slotOf, driveValue, CONNECT_LABEL, STEP_FADE_MS, type Grade, type Slot } from './plan-calm-model';
 import type { ReadingCard } from './reading-card-model';
 import type { PlanStrip } from './plan-model';
 import { setDriveMode } from './studio/driver-wire';
@@ -76,8 +76,7 @@ export function DriveSwitch({ queue, onQueue }: { queue: 'on' | 'paused'; onQueu
   if (!driver.assistantConnected) return null;
   const wheel = driver.mode === 'claudeDrives' && driver.state === 'personHasWheel';
   const value = driveValue(driver.mode, queue, wheel);
-  const name = driver.assistant?.name ?? 'Your assistant';
-  const driverName = driver.assistant?.key === 'claude' ? 'Claude' : name;
+  const driverName = 'Your assistant';   // one name for the assistant on every surface, whichever one is connected (UAT round 2, N23)
   const waiting = driver.mode === 'claudeDrives' && !driver.assistantWorking;
   const choose = (mode: DriveMode) => {
     if (value === mode && driver.mode === mode) return;
@@ -125,6 +124,7 @@ export function LiveSlot({ press, receipt, receiptActions }: {
     work: running ? { who: work.who === 'assistant' ? 'assistant' : 'person', verb: statusWords(work, step, quiet), progress: work.progress ? `${work.progress.done} of ${work.progress.total}` : null } : null,
     driver: { connected: driver.assistantConnected, mode: driver.mode, wheel: driver.state === 'personHasWheel', assistantWorking: assistantIsActive(driver, Date.now()), name: driver.assistant?.name ?? 'Your assistant' },
     hasNext: !!view && view.on && !view.hidden && !!view.step && (view.step.ask ?? '').trim() !== '',
+    nextNeedsAssistant: !!view?.step && !view.step.doIt,
   });
   const who = slot.kind === 'press' || slot.kind === 'work' ? slot.who : slot.kind === 'next' ? 'assistant' : slot.kind === 'done' ? 'semanticus' : null;
   return <span className={`pc-slot${who ? ` pc-who-${who}` : ''}`} data-testid="plan-slot" data-slot={slot.kind}>
@@ -139,9 +139,11 @@ export function LiveSlot({ press, receipt, receiptActions }: {
     {slot.kind === 'done' && <><span className="pc-done" role="status" data-testid="plan-slot-done">{slot.text}</span>{receiptActions}</>}
     {slot.kind === 'said' && <span className="pc-said" role="status" data-testid="plan-slot-said">{slot.text}</span>}
     {slot.kind === 'wheel' && <><span className="pc-said">{slot.text}</span>
-      <button type="button" className="sem-btn sem-btn-sm" data-testid="driver-resume" onClick={() => driverStore.letClaudeDrive()}>Let {driver.assistant?.key === 'claude' ? 'Claude' : 'your assistant'} drive</button></>}
+      <button type="button" className="sem-btn sem-btn-sm" data-testid="driver-resume" onClick={() => driverStore.letClaudeDrive()}>Let your assistant drive</button></>}
     {slot.kind === 'quiet' && <span className="plan-muted pc-quiet" data-testid="plan-slot-quiet">{slot.text}</span>}
     {slot.kind === 'next' && <NextSuggestion />}
+    {slot.kind === 'connect' && <><span className="plan-muted pc-quiet" data-testid="plan-slot-connect">{slot.text}</span>
+      <button type="button" className="sem-btn sem-btn-sm pc-ask" data-testid="plan-connect" onClick={() => runHostCommand('semanticus.connectClaudeCode')}>{CONNECT_LABEL}</button></>}
   </span>;
 }
 
@@ -175,7 +177,7 @@ function NextSuggestion() {
     <span className="pc-next-acts" data-testid="plan-next-acts">
       {mine
         ? <span className={mine.failed ? 'nx-failed' : 'nx-done'} role="status" data-testid="next-done">{mine.text}</span>
-        : buttons.map((b) => <button key={b.act} type="button" disabled={busy} data-testid={`next-${b.act}`}
+        : buttons.map((b) => <button key={b.act} type="button" disabled={busy} data-testid={`next-${b.act}`} data-keeps-wheel={b.act === 'ask' ? '' : undefined}
           className="sem-btn sem-btn-sm pc-ask" onClick={() => press(b.act)}>{b.label}</button>)}
     </span>
   </>;

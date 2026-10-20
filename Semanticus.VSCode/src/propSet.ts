@@ -61,3 +61,19 @@ export function gridSetCalls(refs: string[], msg: GridSet): EngineCall[] {
     }
     return calls;
 }
+
+/// A rename the model just made (by the assistant, a script or the tree), as the grid needs it: the selection's refs with the renamed object on its NEW ref, or null when no
+/// selected object was renamed. The change carries the new ref, the old name (before) and the new name (after) of a Name update, and '/' is both the ref separator and a legal
+/// name character, so the old ref is the new ref with the literal new name at its tail swapped for the old one (UAT 18 Oct N20: Properties kept the old name and "No properties match").
+export function followRename(refs: readonly string[], deltas: ReadonlyArray<{ kind: string; ref: string; props?: string[]; before?: string | null; after?: string | null }>): string[] | null {
+    let next: string[] | null = null;
+    for (const d of deltas) {
+        if (d.kind !== 'update' || !d.props?.includes('Name') || !d.before || !d.after || d.before === d.after || !d.ref.endsWith(d.after)) continue;
+        const oldRef = d.ref.slice(0, d.ref.length - d.after.length) + d.before;
+        const at = (next ?? refs).indexOf(oldRef);
+        if (at < 0) continue;
+        next = (next ?? refs.slice());
+        next[at] = d.ref;
+    }
+    return next;
+}

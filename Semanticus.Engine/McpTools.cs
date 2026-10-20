@@ -577,9 +577,9 @@ namespace Semanticus.Engine
             // T172: the same fence as update_measure. See the note there for why the engine, not a preflight, owns it.
             => engine.RenameObjectAsync(objRef, newName, "agent", sessionId);
 
-        [McpServerTool(Name = "save_model"), Description("Save the model. Omit path to overwrite the file or folder you opened. Pass a folder path to save as TMDL (tabular model definition language), or a .bim file path. format defaults to TMDL; when overwriting, a .bim stays a .bim. If the files on disk changed after this model was opened, the save is refused unless overwrite is true. A model that has never been saved is never written into another model or over an existing .bim: it goes into a new folder (or a new .bim) next to it, and the result's Note says where.")]
+        [McpServerTool(Name = "save_model"), Description("Save the model. Omit path to overwrite the file or folder you opened: call save_model with no path to save in place. A model opened live has no file of its own: omit path and it saves to a lasting place (the connected folder, else ~/Semanticus/<model>) and the result's Note says where. A copy must go OUTSIDE the open model's own folder, into a new folder or an empty one (or a new file name); any folder that already has anything in it, a path inside the model, and an existing file are refused, nothing is saved, and the reply names a free '<model> copy' place. Pass a folder path to save as TMDL (tabular model definition language), or a .bim file path. format defaults to TMDL; when overwriting, a .bim stays a .bim. If the files on disk changed after this model was opened, the save is refused unless overwrite is true. A model that has never been saved is never written into another model or over an existing .bim: it goes into a new folder (or a new .bim) next to it, and the result's Note says where.")]
         public static Task<SaveResult> SaveModel(IEngine engine,
-            [Description("Target path. Omit or pass null to overwrite the source.")] string path = null,
+            [Description("Target path. Omit or pass null to overwrite the source. A model opened live has no file: it saves to the connected folder, else ~/Semanticus/<model>.")] string path = null,
             [Description("Format: TMDL (default), bim, or folder. Ignored when overwriting a .bim source.")] string format = null,
             [Description("true = replace files that changed on disk after this model was opened; default false refuses that overwrite")] bool overwrite = false)
             => engine.SaveAsync(path, format, overwrite, "agent");
@@ -777,9 +777,9 @@ namespace Semanticus.Engine
             [Description("Object ref the finding is on")] string objRef)
             => RuleSystem(system) == "bpa" ? engine.BpaFixAsync(ruleId, objRef, "agent") : engine.ApplyFixAsync(ruleId, objRef, "agent");
 
-        [McpServerTool(Name = "waive_findings"), Description("Semanticus Pro feature: waive many findings in ONE engine call and one undo step. Use one bulk call per page of work. Each item follows waive_finding. Bad items are left out and named in rejected (index, objRef, reason); applied is the real count. On Free use waive_finding. Send these one after another. Parallel calls wait for the same writer and are not faster.")]
+        [McpServerTool(Name = "waive_findings"), Description("Semanticus Pro feature: waive many findings in ONE engine call and one undo step. Use one bulk call per page of work. Each item follows waive_finding, including {system:'test', ruleId: a check's id} for a Validation check that differs. Bad items are left out and named in rejected (index, objRef, reason); applied is the real count. On Free use waive_finding. Send these one after another. Parallel calls wait for the same writer and are not faster.")]
         public static Task<BatchEditResult> WaiveFindings(IEngine engine,
-            [Description("Findings to waive: [{system:'air' or 'bpa', ruleId, objRef (optional; '*' means the whole rule), reason}].")] FindingWaiverItem[] items)
+            [Description("Findings to waive: [{system:'air' or 'bpa', ruleId, objRef (optional; '*' means the whole rule), reason}]. A Validation check that differs is {system:'test', ruleId: the check's id}, with an optional reason.")] FindingWaiverItem[] items)
             => engine.WaiveFindingsAsync(items, "agent");
 
         [McpServerTool(Name = "write_words"), Description("Semanticus Pro feature: write descriptions, synonyms and display folders for many objects in ONE engine call and one undo step. Use one bulk call per page of work. Feed an authored get_words_queue page straight in using objRef. Synonyms REPLACE the list, exactly like set_synonyms. Omit a field to leave it unchanged; empty text or an empty synonyms list clears it. Bad items are left out and named in rejected (index, objRef, reason); applied counts objects actually changed. On Free use set_description, set_synonyms or set_display_folder. After writing, read get_words_queue again from offset 0 for the next work. Send these one after another. Parallel calls wait for the same writer and are not faster.")]
@@ -797,19 +797,19 @@ namespace Semanticus.Engine
             [Description("Measures: [{tableRef, name, expression, displayFolder?}].")] MeasureCreateItem[] items)
             => engine.CreateMeasuresAsync(items, "agent");
 
-        [McpServerTool(Name = "waive_finding"), Description("WAIVE (accept) a finding so it stops counting against the score, for findings you've consciously decided not to fix (e.g. 'we keep these unused columns'). system: 'bpa' or 'air'. objRef set = waive THIS instance; objRef empty/'*' = waive the ENTIRE rule, every instance model-wide. A reason is REQUIRED: a waiver is an audited decision (stored with who+when on the model), never a silent suppression. The finding is still surfaced (tagged 'waived' with its reason) and the scorecard reports a waived count, so the grade is honest. Hard gates (Copilot index ceiling, >50% measures undescribed) are NOT lifted by waivers. Persisted on the model (undoable, travels with it); per-instance BPA waivers also write Tabular Editor's BestPracticeAnalyzer_IgnoreRules so TE3 honours them. Re-scan to see the score move. On Pro, use waive_findings for many findings in one call.")]
+        [McpServerTool(Name = "waive_finding"), Description("WAIVE (accept) a finding so it stops counting against the score, for findings you've consciously decided not to fix (e.g. 'we keep these unused columns'). system: 'bpa' or 'air'. A Validation check that DIFFERS is accepted the same way: system 'test', ruleId = the check's id (list_tests), no objRef, reason optional. It then counts as accepted (never as a pass) and shows its difference; if the difference changes later, the check differs again. A check's acceptance is kept with the checks, not in the model: it does not change the model, is not an undo step (unwaive_finding takes it back), and survives Save and a restart. objRef set = waive THIS instance; objRef empty/'*' = waive the ENTIRE rule, every instance model-wide. A reason is REQUIRED: a waiver is an audited decision (stored with who+when on the model), never a silent suppression. The finding is still surfaced (tagged 'waived' with its reason) and the scorecard reports a waived count, so the grade is honest. Hard gates (Copilot index ceiling, >50% measures undescribed) are NOT lifted by waivers. Persisted on the model (undoable, travels with it); per-instance BPA waivers also write Tabular Editor's BestPracticeAnalyzer_IgnoreRules so TE3 honours them. Re-scan to see the score move. On Pro, use waive_findings for many findings in one call.")]
         public static Task<SetResult> WaiveFinding(IEngine engine,
-            [Description("Which system the rule belongs to: 'bpa' or 'air'")] string system,
-            [Description("Rule id (e.g. 'UNNECESSARY_COLUMNS' for bpa, 'NAME-MEASURE' for air)")] string ruleId,
-            [Description("Object ref to waive (e.g. 'column:Sales/Foo'); empty or '*' = waive the whole rule model-wide")] string objRef,
-            [Description("Why this finding is accepted: required, stored for audit")] string reason)
+            [Description("Which system the rule belongs to: 'bpa' or 'air', or 'test' for a Validation check that differs")] string system,
+            [Description("Rule id (e.g. 'UNNECESSARY_COLUMNS' for bpa, 'NAME-MEASURE' for air); for system 'test', the check's id from list_tests")] string ruleId,
+            [Description("Object ref to waive (e.g. 'column:Sales/Foo'); empty or '*' = waive the whole rule model-wide. Leave out for system 'test'")] string objRef = null,
+            [Description("Why this finding is accepted: required for bpa and air, stored for audit. Optional for system 'test'")] string reason = null)
             => engine.WaiveFindingAsync(system, ruleId, objRef, reason, "agent");
 
-        [McpServerTool(Name = "unwaive_finding"), Description("Remove a waiver so the finding counts against the score again (re-instates it). system: 'bpa' or 'air'. objRef set = un-waive that instance; empty/'*' = remove the rule-level waiver. Never gated (it makes the model more compliant). Undoable; also clears Tabular Editor's ignore annotation for a per-instance BPA waiver. On Pro, use unwaive_findings for many items in one call.")]
+        [McpServerTool(Name = "unwaive_finding"), Description("Remove a waiver so the finding counts against the score again (re-instates it). system: 'bpa' or 'air', or 'test' with the check's id to take back an accepted Validation check. objRef set = un-waive that instance; empty/'*' = remove the rule-level waiver. Never gated (it makes the model more compliant). Undoable; also clears Tabular Editor's ignore annotation for a per-instance BPA waiver. On Pro, use unwaive_findings for many items in one call.")]
         public static Task<SetResult> UnwaiveFinding(IEngine engine,
-            [Description("'bpa' or 'air'")] string system,
-            [Description("Rule id")] string ruleId,
-            [Description("Object ref, or empty/'*' for the rule-level waiver")] string objRef)
+            [Description("'bpa' or 'air', or 'test' for an accepted Validation check")] string system,
+            [Description("Rule id; for system 'test', the check's id")] string ruleId,
+            [Description("Object ref, or empty/'*' for the rule-level waiver. Leave out for system 'test'")] string objRef = null)
             => engine.UnwaiveFindingAsync(system, ruleId, objRef, "agent");
 
         [McpServerTool(Name = "list_waivers"), Description("List every accepted (waived) finding on the model: system, rule id, object ref (null = rule-level/model-wide), the reason, who waived it and when. The audit trail behind the scorecard's waived count. This is the RAW store, so it can include waivers whose rule id is no longer in the loaded rule set: those accept nothing, and bpa_scan and ai_readiness_scan report them as OrphanedWaivers with a count. Compare the two before you trust a waiver.")]
@@ -1257,9 +1257,28 @@ namespace Semanticus.Engine
             CancellationToken cancellationToken = default)
         {
             var r = await engine.RunDaxAsync(query, maxRows, origin: "agent", cancellationToken);
+            // Its own row in the Query notebook, kept before the Studio hears of the run, so the page can open it and never draws the rows into a row the person owns (hero 25 H1).
+            if (string.IsNullOrEmpty(r.Error) && !r.Cancelled) r.Note = await KeepRunRowAsync(engine, query, r);
             Emit(engine, new ActivityEvent { Kind = "run_dax", Origin = "agent", Label = "Ran DAX query", Query = TruncDax(query),
                 Ok = string.IsNullOrEmpty(r.Error), Error = r.Error, ApprovalId = r.ApprovalId, RowCount = r.RowCount, ElapsedMs = r.ElapsedMs, Result = CapResult(r) });
             return r;
+        }
+
+        /// <summary>Keeps the run as the assistant's row. A failure never fails the run, but it is logged and returned as one plain line for the tool result
+        /// (hero 26 N1: a swallowed failure left the page to draw the number under another question's words).</summary>
+        internal static async Task<string> KeepRunRowAsync(IEngine engine, string query, ResultSet r)
+        {
+            try
+            {
+                var id = await engine.RecordQueryRunAsync(query, r.RowCount, r.ElapsedMs, null, "agent");
+                if (id != null) return null;
+                return "This run was not kept in the Query notebook, because the model keeps no question history.";
+            }
+            catch (Exception ex)
+            {
+                try { Console.Error.WriteLine("[run_dax] keeping the run in the Query notebook failed: " + ex.Message); } catch { }
+                return "This run was not kept in the Query notebook. The rows above are right.";
+            }
         }
 
         [McpServerTool(Name = "run_dmv"), Description("Run a DMV query (e.g. SELECT * FROM $SYSTEM.TMSCHEMA_MEASURES) against the connected live model. Read-only.")]
@@ -1547,7 +1566,7 @@ namespace Semanticus.Engine
             [Description("The measure, e.g. 'measure:Sales/Total Sales' (a unique bare name like 'Total Sales' also works)")] string measureRef,
             [Description("The cell's filter context: { filters: [{column: \"'Table'[Column]\", members: [\"…\"], empty: false}], extraPredicates: [\"'Date'[Year] >= 2024\"], groupBy: [] }. Omit for the grand total.")] ExplainFilterContext filterContext = null,
             [Description("Compute the top-contributors breakdown (default true; it is skipped automatically when the parts don't sum)")] bool decompose = true,
-            [Description("Break the number down by this column ('Table'[Column]); omit to let the engine pick a related dimension deterministically")] string decomposeBy = null,
+            [Description("Split the number by this column ('Table'[Column]); omit and the engine picks the column that explains the number (few values, the top parts cover most of it). The answer's contributors.alternatives lists the other columns that also explain it: pass one here to switch.")] string decomposeBy = null,
             [Description("How many top contributors to return (default 5, max 25)")] int topK = 5)
         {
             // No Emit here: the ENGINE publishes the Kind="explain_value" activity itself (the blame_value
@@ -1948,7 +1967,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "capture_query_plan"), Description("Capture a DAX query's LOGICAL and PHYSICAL query plans (the DAXQueryPlan trace) to understand WHY it's slow. The Formula Engine builds the logical plan, the Storage Engine the physical plan (with #Records per operator). Use it alongside profile_dax when a query is FE-bound (a tall physical plan / huge intermediate records points at the costly operators). Needs a local Power BI Desktop or an admin XMLA endpoint; degrades to 'unavailable' otherwise. Read-only.")]
+        [McpServerTool(Name = "capture_query_plan"), Description("Capture a DAX query's LOGICAL and PHYSICAL query plans (the DAXQueryPlan trace) to understand WHY it's slow. The Formula Engine builds the logical plan, the Storage Engine the physical plan (with #Records per operator). Use it alongside profile_dax when a query is FE-bound (a tall physical plan / huge intermediate records points at the costly operators). Works on a local Power BI Desktop and on a Power BI service model over XMLA (measured on the service 17 Oct); degrades to 'unavailable' when the server sends no plan events. Read-only.")]
         public static async Task<QueryPlanResult> CaptureQueryPlan(IEngine engine,
             [Description("DAX query to plan, e.g. EVALUATE SUMMARIZECOLUMNS(...)")] string query)
         {

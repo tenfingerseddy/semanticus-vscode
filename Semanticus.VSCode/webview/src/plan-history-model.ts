@@ -11,8 +11,9 @@ import { editWords, opLabel, readSafetyCheckOverride, SAFETY_CHECK_COPY } from '
 
 // ---- the wire (Semanticus.Engine/PlanHistory.cs, camelCase over the JSON-RPC door) -----------------------
 
-export type Who = 'you' | 'assistant' | 'semanticus' | 'workflow';
-export type WhoFilter = 'all' | Who;
+/** `earlier` is a record the model carried when this person opened it: nobody here did it, so it never says You (UAT P12). It is not a filter. */
+export type Who = 'you' | 'assistant' | 'semanticus' | 'workflow' | 'earlier';
+export type WhoFilter = 'all' | Exclude<Who, 'earlier'>;
 
 export interface HistoryDelta { kind: string; ref: string; props?: string[] | null; before?: string | null; after?: string | null }
 export interface HistoryCause { kind: string; ids?: string[] | null; title?: string | null; approvedBy?: string | null }
@@ -61,22 +62,28 @@ export interface HistoryCheckpointList { supported: boolean; checkpoints: Histor
 
 // ---- who ------------------------------------------------------------------------------------------------
 
-/** The who filter: exactly these five (contract 8.2). The id is what getPlanHistory's `by` takes. */
+/** The who filter: exactly these four (contract 8.2; Workflows retired 17 Oct, old run rows stay readable under Everyone). The id is what getPlanHistory's `by` takes. */
 export const WHO_FILTERS: ReadonlyArray<{ id: WhoFilter; label: string }> = [
   { id: 'all', label: 'Everyone' },
   { id: 'you', label: 'You' },
   { id: 'assistant', label: 'Your assistant' },
   { id: 'semanticus', label: 'Semanticus' },
-  { id: 'workflow', label: 'Workflows' },
 ];
 
-export const WHO_WORD: Record<Who, string> = { you: 'You', assistant: 'Your assistant', semanticus: 'Semanticus', workflow: 'Workflow' };
+export const WHO_WORD: Record<Who, string> = { you: 'You', assistant: 'Your assistant', semanticus: 'Semanticus', workflow: 'Workflow', earlier: 'Before you opened it' };
 
 /** The `by` argument for getPlanHistory: null asks for everyone. */
 export const whoParam = (filter: WhoFilter): string | null => (filter === 'all' ? null : filter);
 
 export function whoOf(by: string | null | undefined): Who {
-  return by === 'assistant' || by === 'semanticus' || by === 'workflow' ? by : 'you';
+  return by === 'assistant' || by === 'semanticus' || by === 'workflow' || by === 'earlier' ? by : 'you';
+}
+
+/** Is this history empty for the PERSON? Only what they or their assistant did counts. A record the model carried from before they opened it is nobody's
+ *  here, and the plan's own first-time decision ("Semanticus made the plan from the model") is not theirs either, so a first install on a model with an
+ *  old record is still a first install (UAT F7: the What changed card showed to a first-time user). Null when the answer is unknown. */
+export function historyEmptyForPerson(rows: ReadonlyArray<{ by?: string | null }> | null | undefined): boolean | null {
+  return Array.isArray(rows) ? !rows.some((r) => r.by === 'you' || r.by === 'assistant') : null;
 }
 
 /** A Verified Edits record keeps the door it came through, not the new `By`. */
@@ -89,7 +96,8 @@ export function doerClass(who: Who): string {
   return who === 'assistant' ? 'sem-doer sem-doer-agent'
     : who === 'semanticus' ? 'sem-doer sem-doer-engine'
       : who === 'workflow' ? 'sem-doer ph-doer-workflow'
-        : 'sem-doer sem-doer-you';
+        : who === 'earlier' ? 'sem-doer ph-doer-earlier'
+          : 'sem-doer sem-doer-you';
 }
 
 // ---- the Verified word ----------------------------------------------------------------------------------
@@ -223,6 +231,43 @@ const PUBLISHES = new Set(['deploy_live', 'deploy_stage']);
  *  needs no reason, so the record's "overridden" verdict marks it too ("Published with warnings"). */
 export const isRedCheck = (r: VerifiedEditRecord) => (!!r.overrideReason || r.verdict === 'overridden') && PUBLISHES.has(r.op);
 
+/** The sentence a record carries, in plain words. The stored sentence is hash-chained and never edited; this is display only. A baseline compare wrote
+ *  "SAFE: 1 downstream measure(s) unchanged across the captured grid." and "IMPACT: 2 measure(s) moved, 0 missing, of 5 baselined." */
+export function recordWords(record: VerifiedEditRecord | undefined | null): string {
+  const text = (record?.summary ?? '').trim();
+  // A publish and its undo are written with the service address; the person reads the model's name and the counts.
+  const lastName = (s: string) => s.slice(s.lastIndexOf('/') + 1);
+  if (record?.op === 'rollback_push') {
+    const m = /^rolled (.+?) back to restore point \S+: restored (\d+), removed (\d+)(?:, could not restore (\d+))?$/.exec(text);
+    if (m) {
+      const left = m[4] ? +m[4] : 0;
+      return (left ? lastName(m[1]) + ' did not fully go back: ' + left + ' ' + plural(left, 'object', 'objects') + ' could not be put back. ' : lastName(m[1]) + ' went back to how it was. ')
+        + 'Put back ' + m[2] + ', removed ' + m[3] + '.';
+    }
+  }
+  if (record?.op === 'apply_model_diff' && record.verdict !== 'overridden') {
+    const m = /^pushed (\d+) change\(s\) to (.+)$/.exec(text);
+    if (m) return 'Sent ' + m[1] + ' ' + plural(+m[1], 'change', 'changes') + ' to ' + lastName(m[2]) + '.';
+  }
+  if (!record || record.op !== 'compare_baseline') return text;
+  const measures = (n: number) => n + ' ' + plural(n, 'measure', 'measures');
+  const noteAt = text.indexOf(' NOTE: ');
+  const head = noteAt >= 0 ? text.slice(0, noteAt) : text;
+  const note = /^ NOTE: (\d+) session edit\(s\) since capture\./.exec(noteAt >= 0 ? text.slice(noteAt) : '');
+  const safe = /^SAFE: (\d+) downstream measure\(s\) unchanged across the captured grid\./.exec(head);
+  const impact = /^IMPACT: (\d+) measure\(s\) moved, (\d+) missing, of (\d+) baselined\./.exec(head);
+  const unclean = /^(\d+) measure\(s\) not comparable\. NOT safe by default\./.exec(head);
+  let out = head;
+  if (safe) out = 'Nothing moved: ' + measures(+safe[1]) + ' gave the same numbers as before.';
+  else if (impact) {
+    const [moved, missing, all] = [+impact[1], +impact[2], +impact[3]];
+    out = [moved ? measures(moved) + ' of ' + all + ' gave different numbers.' : '', missing ? measures(missing) + ' could not be found.' : ''].filter(Boolean).join(' ');
+  } else if (unclean) out = measures(+unclean[1]) + ' could not be compared, so this is not a safe result.';
+  else if (head.startsWith('nothing moved on the compared rows, but coverage was truncated')) out = 'Nothing moved on the rows checked, but not every row was checked.';
+  if (note) out += ' ' + (+note[1] === 1 ? '1 change' : note[1] + ' changes') + ' made since the before picture count only once published.';
+  return out;
+}
+
 /** The title of a "record" row: the red check in its own words, otherwise the operation in words. */
 function recordTitle(record: VerifiedEditRecord): string {
   if (!isRedCheck(record)) return opLabel(record.op);
@@ -331,7 +376,7 @@ const KIND_PLURAL: Record<string, string> = { measure: 'measures', column: 'colu
   hierarchy: 'hierarchies', partition: 'partitions', role: 'roles', perspective: 'perspectives' };
 
 const CAUSE_WORD: Record<string, string> = { item: 'Plan task', run: 'Workflow run', draft: 'Change group', task: 'Task for your assistant' };
-const EDIT_WORD: Record<Who, string> = { you: 'Your own edit', assistant: 'Your assistant\'s edit', semanticus: 'Semanticus', workflow: 'A workflow step' };
+const EDIT_WORD: Record<Who, string> = { you: 'Your own edit', assistant: 'Your assistant\'s edit', semanticus: 'Semanticus', workflow: 'A workflow step', earlier: 'Before you opened it' };
 
 /** The quiet line under a row's title: what kind of thing it was, and for an edit, the objects it touched. */
 export function metaLine(row: HistoryRow): string {
@@ -345,7 +390,7 @@ export function metaLine(row: HistoryRow): string {
   if (row.kind === 'record') {
     const r = row.record;
     if (r && isRedCheck(r)) return r.overrideReason ? '"' + r.overrideReason + '"' : SAFETY_CHECK_COPY.noReason;
-    return r?.summary ?? 'A check';
+    return r ? recordWords(r) || 'A check' : 'A check';
   }
   if (CAUSE_WORD[row.kind]) {
     const parts = [CAUSE_WORD[row.kind]];
@@ -412,8 +457,10 @@ export function takeRestoreLanding(sessionId: string | null | undefined, now = D
 export function footLine(row: HistoryRow, record: VerifiedEditRecord | undefined, chain: VerifiedEditsChain | null): string {
   const parts: string[] = [];
   if (row.revision) parts.push('Session change ' + row.revision);
-  if (record) parts.push('verified record ' + record.seq);
-  if (record && chain) parts.push(chain.chainIntact || record.seq < chain.firstBrokenSeq ? 'record intact' : 'record broken');
+  // A read-only analysis is kept outside the model's chain (no hash), so it has no record number and no chain to be intact.
+  const inChain = !!record && !!record.hash;
+  if (inChain) parts.push('verified record ' + record!.seq);
+  if (inChain && chain) parts.push(chain.chainIntact || record!.seq < chain.firstBrokenSeq ? 'record intact' : 'record broken');
   return parts.join(' · ');
 }
 

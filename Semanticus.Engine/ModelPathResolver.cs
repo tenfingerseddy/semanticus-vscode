@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
@@ -170,6 +171,28 @@ namespace Semanticus.Engine
             if (File.Exists(Path.Combine(dir, "database.json"))) shape |= ModelShape.TabularEditorFolder;
             if (DefinitionUnderProjectFolder(dir) != null) shape |= ModelShape.SemanticModelHolder;
             return shape;
+        }
+
+        /// <summary>The outermost folders INSIDE a TMDL root that are TMDL roots themselves (a copy someone saved into the model's own folder).
+        /// The TMDL loader reads every folder under a root, so each one merges with the real model and the model stops opening.
+        /// Empty when there are none. A folder the engine is still writing (<c>.semanticus-save-*</c>) is not one.</summary>
+        public static string[] NestedModelRoots(string root)
+        {
+            var found = new System.Collections.Generic.List<string>();
+            if (!IsTmdlRoot(root)) return found.ToArray();
+            void Walk(string dir)
+            {
+                IEnumerable<string> kids;
+                try { kids = Directory.EnumerateDirectories(dir).ToList(); }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { return; }
+                foreach (var kid in kids.OrderBy(k => k, StringComparer.Ordinal))
+                {
+                    if (Path.GetFileName(kid).StartsWith(".semanticus-save-", StringComparison.Ordinal)) continue;
+                    if (IsTmdlRoot(kid)) found.Add(kid); else Walk(kid);
+                }
+            }
+            Walk(root);
+            return found.ToArray();
         }
 
         /// <summary>Mirrors TE2's <c>IsRootTmdlDirectory</c> (which is private in the vendored handler): a directory is

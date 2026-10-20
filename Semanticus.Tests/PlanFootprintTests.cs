@@ -863,6 +863,45 @@ namespace Semanticus.Tests
             Assert.DoesNotContain("Waits for", ti.Sub ?? "");
         }
 
+        // ---- the base-measure rows of different tables (m16/jev-batch) --------------------------------------------------
+
+        private static Footprint SummarizeRow(FootprintInputs x, string table, string column, string measure) =>
+            PlanFootprint.Of("jev.column-summarize.table:" + table, new[]
+            {
+                new ModelPlanChangeLine { Op = "set_summarize_by", Target = "column:" + table + "/" + column, After = "none" },
+                new ModelPlanChangeLine { Op = "create_measure", Target = "measure:" + table + "/" + measure, After = "SUM ( '" + table + "'[" + column + "] )" },
+            }, x);
+
+        [Fact]
+        public void The_base_measure_rows_of_two_tables_do_not_wait_for_each_other_and_a_name_they_both_take_still_orders_them()
+        {
+            var x = new FootprintInputs { Model = new FootprintSnapshot
+            {
+                MeasureRefs = new[] { "measure:Sales/Existing" },
+                ColumnsByTable = { ["Sales"] = new[] { "column:Sales/Amount" }, ["Returns"] = new[] { "column:Returns/Qty" } },
+                MeasuresByTable = { ["Sales"] = new[] { "measure:Sales/Existing" }, ["Returns"] = Array.Empty<string>() },
+            } };
+
+            var sales = SummarizeRow(x, "Sales", "Amount", "Total Amount");
+            var returns = SummarizeRow(x, "Returns", "Qty", "Total Qty");
+            Assert.True(sales.Known && returns.Known);
+            Assert.True(PlanFootprint.Independent(sales, returns), "two tables' base-measure rows chained: a 30-table model ran in 23 waves");
+
+            // Both would make a measure of the same name: a measure's name is unique across the model, so the rows still meet on it.
+            var clash = SummarizeRow(x, "Returns", "Qty", "Total Amount");
+            Assert.False(PlanFootprint.Independent(sales, clash));
+
+            // A row that removes or renames what a base-measure row works on still meets it, on the refs it writes.
+            var rename = Line(x, "rename", "column:Sales/Amount", "Net");
+            Assert.False(PlanFootprint.Independent(sales, rename));
+            var removal = Line(x, "delete", "measure:Sales/Existing");
+            Assert.False(PlanFootprint.Independent(sales, removal), "a delete of an existing measure the row reads must still order against it");
+
+            // The rows of every other Jev family still read the objects facet, which the base-measure rows write: they wait for them.
+            var schema = PlanFootprint.Of("jev.ai-schema.table:Sales", new[] { new ModelPlanChangeLine { Op = "set_ai_data_schema", Target = "column:Sales/Amount", After = "exclude" } }, x);
+            Assert.False(PlanFootprint.Independent(sales, schema));
+        }
+
         // ---- names shared across kinds, and deletes that remove relationships (review round 3, siblings of PW1 to PW3) ----
 
         private static Footprint Line(FootprintInputs x, string op, string target, string after = null, params (string K, string V)[] args) =>

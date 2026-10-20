@@ -70,6 +70,15 @@ namespace Semanticus.Engine
                 char c = text[i];
                 if (c == '"') { int j = i + 1; while (j < n) { if (text[j] == '"') { if (j + 1 < n && text[j + 1] == '"') { j += 2; continue; } break; } j++; } Blank(i, j + 1, j < n ? stringFill : ' '); i = j + 1; continue; }
                 if (c == '\'') { int j = i + 1; while (j < n) { if (text[j] == '\'') { if (j + 1 < n && text[j + 1] == '\'') { j += 2; continue; } break; } j++; } if (maskIdents) Blank(i, j + 1, j < n ? identFill : ' '); i = j + 1; continue; }
+                // A [Column or Measure Name] is a name, not code: "(id)" in [Item Key (id)] is not a call to Key, and "(" in [Rate (%] is not an open bracket.
+                // Only the inside is blanked, so the brackets still balance. ]] is a ] of the name.
+                if (maskIdents && c == '[')
+                {
+                    int j = i + 1;
+                    while (j < n) { if (text[j] == ']') { if (j + 1 < n && text[j + 1] == ']') { j += 2; continue; } break; } j++; }
+                    // A '[' inside means the name swallowed a second reference ('Calc'[A) > 1, 'Calc'[A]): keep the old reading so the slip is still caught.
+                    if (j < n && text.IndexOf('[', i + 1, j - i - 1) < 0) { Blank(i + 1, j, identFill); i = j + 1; continue; }
+                }
                 if (c == '/' && i + 1 < n && text[i + 1] == '/') { int j = i + 2; while (j < n && text[j] != '\n') j++; Blank(i, j); i = j; continue; }
                 if (c == '-' && i + 1 < n && text[i + 1] == '-') { int j = i + 2; while (j < n && text[j] != '\n') j++; Blank(i, j); i = j; continue; }
                 if (c == '/' && i + 1 < n && text[i + 1] == '*') { int j = i + 2; while (j < n && !(text[j] == '*' && j + 1 < n && text[j + 1] == '/')) j++; Blank(i, Math.Min(j + 2, n)); i = j + 2; continue; }

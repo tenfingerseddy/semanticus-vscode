@@ -43,6 +43,8 @@ const STUBS = {
   './plan-head': { PlanHead: ({ slot, drive, run }) => React.createElement('header', { 'data-testid': 'plan-head' }, slot, drive, run), DriveSwitch: () => null, LiveSlot: () => null,
     usePlanGrade: () => ({ grade: null, refresh: async () => null }) },
   './studio/ask-assistant': { askAssistant: async () => ({ ok: true, text: '' }) },
+  './studio/next-line': { nextStore: { setScope: () => {} } },
+  './studio/driver-store': { useDriver: () => ({ assistantConnected: true }) },
   './connection': { useConnection: () => ({ session: { sessionId: 'test' }, context: null }) },
   './pro': {
     useTier: () => stubTier, useFeature: () => (stubTier === 'pro' ? 'granted' : 'denied'),
@@ -1137,14 +1139,15 @@ check('a Ready assistant task keeps its next-check note visible', () => {
   assert.match(html, /class="pw-state-note">when your assistant checks</u);
 });
 // Hero run 19, D16: a Waiting row says who it waits for on the row itself (the full note stays on hover), and a Ready assistant row nobody can take says to ask.
-check('a Waiting row shows who it waits for without a hover, and a row with no assistant says to ask', () => {
+check('a Waiting row shows who it waits for without a hover, in plain words', () => {
   const state = (stateWord, stateNote) => renderToStaticMarkup(React.createElement(Row.StateWord, { item: { id: 'w', doer: 'assistant', stateWord, stateNote } }));
   const waits = state('waiting', 'Waiting for you: Fix 2 best-practice issues. It goes after that task because they change the same things.');
   assert.match(waits, /class="pw-state-note">for you</u);
   assert.match(waits, /title="Waiting for you: Fix 2 best-practice issues/u);
   assert.match(state('waiting', 'Waiting for your assistant: Add synonyms. It goes after that task because they change the same things.'), /class="pw-state-note">for your assistant</u);
-  assert.match(state('waiting', 'Waiting for your assistant. Ask it to run the plan.'), /class="pw-state-note">ask your assistant</u);
-  assert.match(state('ready', 'Ask your assistant to run the plan.'), /class="pw-state-note">ask your assistant</u);
+  // Plain words, never a phrase that reads like a button (UAT K7); the stub has an assistant, so the rows say who they wait for.
+  assert.match(state('waiting', 'Waiting for your assistant. Ask it to run the plan.'), /class="pw-state-note">for your assistant</u);
+  assert.match(state('ready', 'Ask your assistant to run the plan.'), /class="pw-state-note">for your assistant</u);
 });
 // Kane, 13 Oct 2026: "Needs you" beside a greyed Approve on "Add folders and formats to 1 measure in Discount Scenario".
 check('a row never shows a button that cannot be pressed', () => {

@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using Semanticus.Analysis;
 using Semanticus.Engine;
@@ -59,7 +60,8 @@ namespace Semanticus.Tests
             Assert.Contains("remove_safe_objects", AssistantDefaults.For("cleanup/model").Choice);
             Assert.Contains("raise it", AssistantDefaults.For(LocalEngine.CompatItemId).Choice);
             Assert.Contains("generate_date_table", AssistantDefaults.For("datetable/model").Choice);
-            Assert.Contains("save a copy next to it", AssistantDefaults.For("ship/unsaved").Choice);
+            Assert.Contains("save_model and no path", AssistantDefaults.For("ship/unsaved").Choice);
+            Assert.DoesNotContain("save a copy next to it", AssistantDefaults.For("ship/unsaved").Choice);   // 18 Oct: that wording made three model files beside the person's own
             Assert.All(new[] { "proposal/duplicate-measures", "proposal/collisions", "cleanup/model", LocalEngine.CompatItemId, "proposal/synonyms", "ship/unsaved" },
                 id => Assert.DoesNotContain("ask the person first", AssistantDefaults.For(id).Choice.Replace("do not ask first", "")));
         }
@@ -138,6 +140,21 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public void A_waiting_row_the_person_took_never_says_to_ask_the_assistant()
+        {
+            // UAT F17: Who does it > Me moved the row under You, but it still read "Waiting, ask your assistant", because the words went by the
+            // row's natural owner (Who) and ignored the person's choice (Doer). The row keeps its Who; the words follow the Doer.
+            var mine = Waiting(PlanDoers.Assistant, PlanDoers.You);
+            mine.Doer = PlanDoers.You;   // the person's choice, kept as residue; Who stays "asst"
+            Assert.Equal(ModelPlanOwners.Assistant, mine.Who);
+            foreach (var queue in new[] { PlanAssistantQueue.On, PlanAssistantQueue.Paused })
+            {
+                PlanTasks.StampState(mine, null, false, queue, null, () => true);
+                Assert.DoesNotContain("assistant", mine.StateNote ?? "", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        [Fact]
         public void A_ready_assistant_row_with_no_assistant_connected_says_to_ask_it()
         {
             var away = Waiting(PlanDoers.Assistant, PlanDoers.Assistant); away.WaitsFor = Array.Empty<PlanWaitRef>();
@@ -197,6 +214,72 @@ namespace Semanticus.Tests
             var request = given[0];
             Assert.Contains(AssistantDefaults.DoneWhenLead, request.Brief ?? "");
             Assert.Contains(AssistantDefaults.DefaultLead, request.Brief ?? "");
+        }
+
+        // UAT F17 round 2: Who does it > Me survived one engine only. A model with no folder keeps its plan in the engine's memory, so File > Open Folder
+        // (a fresh engine, then one with a folder) brought the row back under the assistant. The person's choice is kept beside the model, in the
+        // per-user home, keyed by the model, and moves into the folder's plan memory when the model gets one.
+        private static async System.Threading.Tasks.Task<LocalEngine> OpenNorthstarAsync(string workspace, bool workspaceIsFolder = true)
+        {
+            var sessions = new SessionManager();
+            var engine = new LocalEngine(sessions, TestEntitlements.Pro, workspace, workspaceIsFolder);
+            await engine.CreateModelAsync("Northstar F17 " + nameof(OpenNorthstarAsync), 1604);
+            await engine.CreateTableAsync("Sales", "human");
+            await engine.CreateColumnAsync("table:Sales", "Amount", "Double", null, "human");
+            await engine.CreateColumnAsync("table:Sales", "CustomerKey", "Int64", null, "human");
+            await engine.CreateMeasureAsync("table:Sales", "Total Sales", "SUM ( Sales[Amount] )", "human");
+            // The model is the published one, whichever engine opens it (the Service identity the UAT used).
+            sessions.Current.LiveOrigin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/F17Home", "NorthstarF17", null, "interactive");
+            return engine;
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task Who_does_it_Me_survives_a_new_engine_and_File_Open_Folder()
+        {
+            var folder = Path.Combine(Path.GetTempPath(), "sem-f17-" + Guid.NewGuid().ToString("N"), "ws");
+            Directory.CreateDirectory(folder);
+            try
+            {
+                var first = await OpenNorthstarAsync(null);
+                var row = (await first.GetModelPlanAsync()).Items
+                    .First(i => i.Who == ModelPlanOwners.Assistant && !PlanTasks.IsTaskId(i.Id) && PlanStateWords.IsOpen(i.StateWord));
+                var taken = await first.SetPlanItemDoerAsync(row.Id, PlanDoers.You, "human");
+                Assert.Equal(PlanDoers.You, taken.Items.Single(i => i.Id == row.Id).Doer);
+
+                // A new engine for the same model, still no folder (a window reload).
+                var second = await OpenNorthstarAsync(null);
+                Assert.Equal(PlanDoers.You, (await second.GetModelPlanAsync()).Items.Single(i => i.Id == row.Id).Doer);
+
+                // The folder is opened: the engine now has somewhere to keep it, and the choice is still there, and stays after another reopen.
+                var third = await OpenNorthstarAsync(folder);
+                Assert.Equal(PlanDoers.You, (await third.GetModelPlanAsync()).Items.Single(i => i.Id == row.Id).Doer);
+                var fourth = await OpenNorthstarAsync(folder);
+                Assert.Equal(PlanDoers.You, (await fourth.GetModelPlanAsync()).Items.Single(i => i.Id == row.Id).Doer);
+            }
+            finally { try { Directory.Delete(Path.GetDirectoryName(folder), true); } catch { /* scratch */ } }
+        }
+
+        // Verifier v2 (UAT F17 in a real window): with no folder open the extension still starts the engine with a workspace, the window's
+        // start folder (extension.ts workspaceDir() falls back to process.cwd()), so the plan is never "nowhere". The choice must survive the
+        // folder the person then opens.
+        [Fact]
+        public async System.Threading.Tasks.Task Who_does_it_Me_survives_File_Open_Folder_when_the_window_started_in_another_folder()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "sem-f17v2-" + Guid.NewGuid().ToString("N"));
+            var start = Path.Combine(root, "start"); var folder = Path.Combine(root, "ws");
+            Directory.CreateDirectory(start); Directory.CreateDirectory(folder);
+            try
+            {
+                // The extension tells the engine no folder is open (SEMANTICUS_NO_FOLDER), so the start folder is not where the plan is kept.
+                var first = await OpenNorthstarAsync(start, workspaceIsFolder: false);
+                var row = (await first.GetModelPlanAsync()).Items
+                    .First(i => i.Who == ModelPlanOwners.Assistant && !PlanTasks.IsTaskId(i.Id) && PlanStateWords.IsOpen(i.StateWord));
+                await first.SetPlanItemDoerAsync(row.Id, PlanDoers.You, "human");
+
+                var opened = await OpenNorthstarAsync(folder);
+                Assert.Equal(PlanDoers.You, (await opened.GetModelPlanAsync()).Items.Single(i => i.Id == row.Id).Doer);
+            }
+            finally { try { Directory.Delete(root, true); } catch { /* scratch */ } }
         }
     }
 }

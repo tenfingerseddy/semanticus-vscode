@@ -496,7 +496,7 @@ namespace Semanticus.Tests
             var a = await rig.Engine.AskDataAsync(new DataAsk { Question = "what share of net sales was the coast" });
             ScriptTaken(a);
             Assert.True(Answered(a), Seen(a));
-            Assert.Contains("share or a percent", a.Assumption ?? "");
+            Assert.Contains("share, a percent or an average", a.Assumption ?? "");
             Assert.Single(Calls(rig));
             Assert.Empty(SecondOpinions(rig));
         }

@@ -8,12 +8,13 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ts = createRequire(root + '/package.json')('typescript');
-const { mergePropDescs, gridSetCalls, fenceOf } = (() => {
+const propSet = (() => {
   const js = ts.transpileModule(readFileSync(resolve(root, 'src', 'propSet.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText;
   const m = { exports: {} };
   new Function('module', 'exports', js)(m, m.exports);
   return m.exports;
 })();
+const { mergePropDescs, gridSetCalls, fenceOf } = propSet;
 
 const P = (name, value, extra = {}) => ({ name, displayName: name, category: 'Basic', description: '', kind: 'string', value, options: [], readOnly: false, ...extra });
 
@@ -51,4 +52,17 @@ test('F3: the format expression and the column data type compare each object\'s 
   const dt = gridSetCalls(['column:T/A', 'measure:T/B', 'column:T/C'], { name: 'DataType', value: 'Int64', expected: null, expectedAll: ['String', 'x', 'Double'], model: 'file:/m/S.bim' });
   assert.deepEqual(dt.map((c) => [c.method, c.args[0], c.args[3]]), [['setColumnDataType', 'column:T/A', 'String'], ['setColumnDataType', 'column:T/C', 'Double'], ['setObjectProperties', ['measure:T/B'], 'human']]);
   assert.deepEqual(dt[2].args[5], ['x']);
+});
+
+// UAT 18 Oct N20: after the assistant renamed NetSalesAmount, Properties still showed the old name with "No properties match" until another object was picked.
+// The change carries the new ref, the old name (before) and the new name (after), so the selection follows the object to its new ref.
+test('N20: an assistant rename moves the grid\'s selection to the renamed ref, and nothing else moves it', () => {
+  const { followRename } = propSet;
+  const rename = { kind: 'update', ref: 'column:Sales/Net Sales Amount', props: ['Name'], before: 'NetSalesAmount', after: 'Net Sales Amount' };
+  assert.deepEqual(followRename(['column:Sales/NetSalesAmount'], [rename]), ['column:Sales/Net Sales Amount']);
+  assert.deepEqual(followRename(['column:Sales/NetSalesAmount', 'measure:Sales/Total'], [rename]), ['column:Sales/Net Sales Amount', 'measure:Sales/Total'], 'a multi-selection keeps its other objects');
+  assert.equal(followRename(['measure:Sales/Total'], [rename]), null, 'another object selected: nothing moves');
+  assert.equal(followRename(['column:Sales/NetSalesAmount'], [{ ...rename, props: ['Description'] }]), null, 'a description change is not a rename');
+  assert.equal(followRename(['column:Sales/NetSalesAmount'], [{ kind: 'update', ref: 'column:Sales/NetSalesAmount', props: ['Name'] }]), null, 'a Name change with no old and new name is left to the next read');
+  assert.deepEqual(followRename(['measure:Sales/Gross/Net'], [{ kind: 'update', ref: 'measure:Sales/Gross-Net', props: ['Name'], before: 'Gross/Net', after: 'Gross-Net' }]), ['measure:Sales/Gross-Net'], 'a slash in the name is part of the name');
 });

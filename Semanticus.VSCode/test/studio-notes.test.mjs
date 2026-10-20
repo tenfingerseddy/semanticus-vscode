@@ -40,6 +40,7 @@ function load(file) {
 }
 const S = load(join(studio, 'notes-store.ts'));
 const G = load(join(studio, 'suggest-model.ts'));
+const F = load(join(studio, 'copilot-follow.ts'));
 
 let failures = 0;
 function check(name, fn) {
@@ -479,6 +480,102 @@ check('the engine\'s current suggestion is read on mount', () => {
   assert.equal(t.snap().suggestion.suggestion.id, 'sg-000000000001');
 });
 
+check('a read of the engine that took the publish step away takes it off the line, and keeps the presses of the steps that stay', () => {
+  const t = setup();
+  const three = suggestion('sg-000000000003', { steps: [
+    { label: 'Hide the old Margin %', prompt: 'Hide it.' }, { label: 'Publish the new words', prompt: 'Publish.' }, { label: 'Run the tests', prompt: 'Run them.' }] });
+  t.store.setSuggestion(three);
+  t.store.markStepAdded(2);
+  t.store.load({ sessionId: 's1', notes: [], suggestion: { ...three, steps: [three.steps[0], three.steps[2]] } });
+  assert.deepEqual(t.snap().suggestion.suggestion.steps.map((s) => s.label), ['Hide the old Margin %', 'Run the tests']);
+  assert.deepEqual(t.snap().suggestion.added, [1], 'the press on Run the tests moves with its step');
+  t.store.load({ sessionId: 's1', notes: [], suggestion: null });
+  assert.equal(t.snap().suggestion, null, 'the engine has nothing left to offer');
+});
+
+// ---- the Copilot test round (UAT 17 Oct: the Studio stayed on Publish for minutes) ----------------------------------------------
+
+check('a call that starts, feeds or ends a round takes the Studio to the Copilot test, also when the engine made no note for it', () => {
+  const free = { mode: 'claudeDrives', state: 'idle', lastPersonInput: null };
+  for (const tool of F.COPILOT_FOLLOW_TOOLS) assert.equal(F.copilotFollowStep({ tool, at: '2026-10-17T10:00:00Z' }, free), 'move', tool);
+  assert.equal(F.copilotFollowStep({ tool: 'get_copilot_view', at: '2026-10-17T10:00:00Z' }, free), 'none', 'a read does not move the screen');
+  assert.equal(F.copilotFollowStep({ tool: 'run_dax', at: '2026-10-17T10:00:00Z' }, free), 'none');
+  assert.equal(F.copilotFollowStep(null, free), 'none');
+  const places = JSON.parse(readFileSync(join(studio, 'places.json'), 'utf8')).places.find((p) => p.id === F.COPILOT_PLACE_ID);
+  assert.ok(places, 'places.json has the Copilot test page');
+  for (const tool of F.COPILOT_FOLLOW_TOOLS) assert.ok(places.tools.includes(tool), `${tool} belongs to the Copilot test page`);
+});
+
+check('a click made before the call does not keep the Studio away from the round; a click after the call does; I drive stays still', () => {
+  const call = { tool: 'get_student_questions', at: '2026-10-17T10:00:10Z' };
+  const at = Date.parse(call.at);
+  assert.equal(F.copilotFollowStep(call, { mode: 'claudeDrives', state: 'personHasWheel', lastPersonInput: at - 3000 }), 'give-wheel-and-move', 'Publish pressed 3 s before the person told the assistant');
+  assert.equal(F.copilotFollowStep(call, { mode: 'claudeDrives', state: 'personHasWheel', lastPersonInput: at + 3000 }), 'none', 'the person looked away after the call');
+  assert.equal(F.copilotFollowStep(call, { mode: 'claudeDrives', state: 'personHasWheel', lastPersonInput: null }), 'none');
+  assert.equal(F.copilotFollowStep(call, { mode: 'iDrive', state: 'idle', lastPersonInput: 1 }), 'none');
+  assert.equal(F.copilotFollowStep(call, { mode: 'claudeDrives', state: 'claudeDriving', lastPersonInput: at - 1 }), 'move');
+});
+
+check('VERIFIER (red): a click DURING a round holds the wheel; the round\'s next call does not pull the person back', () => {
+  // A round is several calls minutes apart: get_student_questions, the student works (30 s or more), then run_interview_batch.
+  // The person starts the round, then clicks to Publish while the student works. That click came after the round's first call,
+  // so it is the person looking away (the rule's own words: "a click after the call still holds it"). The next call of the SAME round must not undo it.
+  const first = Date.parse('2026-10-17T10:00:10Z');
+  const click = first + 15000;                                         // the person goes to Publish 15 s into the round
+  const next = { tool: 'run_interview_batch', at: '2026-10-17T10:00:45Z' };   // the same round's grading call, 20 s after the click
+  const rounds = F.createRoundTracker();
+  const roundStart = rounds.see({ tool: 'get_student_questions', at: new Date(first).toISOString() });
+  assert.equal(rounds.see(next), roundStart, 'the grading call belongs to the same round');
+  assert.equal(F.copilotFollowStep(next, { mode: 'claudeDrives', state: 'personHasWheel', lastPersonInput: click, roundStart }), 'none',
+    'the person clicked away mid-round; the next call of that round took the wheel back and moved the screen');
+  // The run closes the round: the next call opens a new one, so a click before it does not hold the wheel, and a click after it does.
+  const later = { tool: 'get_student_questions', at: '2026-10-17T10:05:00Z' };
+  const next2 = rounds.see(later);
+  assert.ok(next2 > roundStart, 'a call after the run starts a new round');
+  assert.equal(F.copilotFollowStep(later, { mode: 'claudeDrives', state: 'personHasWheel', lastPersonInput: click, roundStart: next2 }), 'give-wheel-and-move');
+  assert.equal(rounds.see({ tool: 'get_copilot_view', at: later.at }), next2, 'a read made while a round is open belongs to it');
+  assert.equal(F.createRoundTracker().see({ tool: 'get_copilot_view', at: later.at }), null, 'a read with no round open is not part of one');
+});
+
+check('VERIFIER2 (red): a long student gap inside one round does not hand the wheel back', () => {
+  // The round tracker closes a round after 5 quiet minutes. The quiet between get_student_questions and run_interview_batch is the
+  // student answering, and a full question bank in batches can take longer than that. The grading call then opens a "new" round
+  // that starts after the person's click, so it takes the wheel back and moves the screen in the middle of the round.
+  const first = Date.parse('2026-10-18T10:00:00Z');
+  const click = first + 20000;                                                   // the person goes to the Plan 20 s into the round
+  const rounds = F.createRoundTracker();
+  rounds.see({ tool: 'get_student_questions', at: new Date(first).toISOString() });
+  const run = { tool: 'run_interview_batch', at: new Date(first + 6 * 60000).toISOString() };   // the grading call, 6 min later
+  const roundStart = rounds.see(run);
+  assert.equal(F.copilotFollowStep(run, { mode: 'claudeDrives', state: 'personHasWheel', lastPersonInput: click, roundStart }), 'none',
+    'the grading call of the same round took the wheel back after a long student gap');
+});
+
+check('VERIFIER2 (red, follow-up): a second run_interview_batch in the same round keeps the person\'s wheel', () => {
+  // The graded answers can go in as two runs. The first run used to close the round, so the second opened a "new" round that started after the person's click.
+  const first = Date.parse('2026-10-18T10:00:00Z');
+  const click = first + 20000;
+  const rounds = F.createRoundTracker();
+  const start = rounds.see({ tool: 'get_student_questions', at: new Date(first).toISOString() });
+  rounds.see({ tool: 'run_interview_batch', at: new Date(first + 60000).toISOString() });
+  const second = { tool: 'run_interview_batch', at: new Date(first + 90000).toISOString() };
+  const roundStart = rounds.see(second);
+  assert.equal(roundStart, start, 'the second run belongs to the first run\'s round');
+  assert.equal(F.copilotFollowStep(second, { mode: 'claudeDrives', state: 'personHasWheel', lastPersonInput: click, roundStart }), 'none');
+});
+
+check('a second grading run more than 5 minutes after the first keeps the person\'s wheel', () => {
+  const first = Date.parse('2026-10-18T10:00:00Z');
+  const click = first + 70000;
+  const rounds = F.createRoundTracker();
+  const start = rounds.see({ tool: 'get_student_questions', at: new Date(first).toISOString() });
+  rounds.see({ tool: 'run_interview_batch', at: new Date(first + 60000).toISOString() });
+  const second = { tool: 'run_interview_batch', at: new Date(first + 7 * 60000).toISOString() };
+  const roundStart = rounds.see(second);
+  assert.equal(roundStart, start, 'the second run, six minutes after the first, is still the same round');
+  assert.equal(F.copilotFollowStep(second, { mode: 'claudeDrives', state: 'personHasWheel', lastPersonInput: click, roundStart }), 'none');
+});
+
 // ---- suggestion copy and limits ----------------------------------------------------------------------------------------
 
 check('the limits are the ones suggest_next enforces', () => {
@@ -630,6 +727,19 @@ check('What I did opens as one calm line, the newest step, and the list is one p
   assert.match(src, /useState\(false\)/, 'the list starts closed');
 });
 
+check('What I did says it in the past once the work is over: no "is checking" after Claude has finished (UAT 18 Oct N21)', () => {
+  const { renderToStaticMarkup } = req('react-dom/server');
+  const React = req('react');
+  const mod = makeLoader({ './studio-notes.css': {} })('studio/what-i-did');
+  const log = [note('Your assistant is checking how ready the model is for AI.')];
+  const draw = (over) => renderToStaticMarkup(React.createElement(mod.WhatIDid, { log, unread: new Set(), over, onShow: () => undefined, onClose: () => undefined }));
+  assert.match(draw(false), /Your assistant is checking how ready/, 'while the assistant works the present tense is true');
+  assert.match(draw(true), /Your assistant was checking how ready the model is for AI\./);
+  assert.doesNotMatch(draw(true), /is checking/);
+  assert.equal(mod.pastSay('Your assistant has fixed 4 findings so far.'), 'Your assistant has fixed 4 findings so far.', 'a count already says what happened');
+  assert.equal(mod.pastSay('AI readiness is now A 91.'), 'AI readiness is now A 91.', 'a fact about the model is not about the work');
+});
+
 check('the shipped copy has no em dash and no "one click"', () => {
   for (const name of readdirSync(studio).filter((f) => /^(notes-|note-strip|what-i-did|suggest|types|studio-notes)/.test(f))) {
     const text = readFileSync(join(studio, name), 'utf8');
@@ -705,6 +815,46 @@ check('the shipped copy has no em dash and no "one click"', () => {
     assert.deepEqual(t.moved, [a.id], 'the dwell only shortens a wait for a DIFFERENT page');
   });
 }
+
+check('VERIFIER (red, v-fix-followups): Undo publish makes the open Studio read the suggestion again, so the card stops saying "Published."', () => {
+  // Live 18 Oct (real VS Code, FrameworkTesting): the person pressed Publish, the card said "Published. Here is what is left.", then Undo publish.
+  // The engine cleared its published mark (a reopened Studio shows the assistant's words and the Publish step again), but the open Studio kept
+  // "Published." because it reads the notes again only after a publish (applyDiff, or a publish activity), never after rollbackPush.
+  const handlers = { activity: [], rpc: [] };
+  let reads = 0;
+  const loaded = makeLoader({
+    react: { useEffect: (fn) => { fn(); }, useSyncExternalStore: () => null },
+    '../bridge': {
+      rpc: (method) => { if (method === 'getStudioNotes') reads++; return Promise.resolve({ notes: [], suggestion: null }); },
+      onActivity: (fn) => { handlers.activity.push(fn); return () => {}; },
+      onRpcObservation: (fn) => { handlers.rpc.push(fn); return () => {}; },
+      onAssistantCall: () => () => {}, onReconnect: () => () => {}, onStudioShow: () => () => {}, onStudioSuggest: () => () => {},
+    },
+    './driver-store': { driverStore: { canMoveScreen: () => false, getSnapshot: () => ({}), subscribe: () => () => {}, noteQueueSize: () => {} } },
+    './notes-nav': { moveScreenTo: () => {} },
+    './notes-store': { createNotesStore: () => ({ load: () => {}, push: () => {}, setSuggestion: () => {}, subscribe: () => () => {}, getSnapshot: () => null }) },
+  })('studio/notes-runtime');
+  loaded.useNotesWire();
+  const before = reads;
+  handlers.rpc.forEach((fn) => fn({ phase: 'end', method: 'rollbackPush', result: { applied: true } }));
+  handlers.activity.forEach((fn) => fn({ kind: 'rollback_push' }));
+  assert.ok(reads > before, 'Undo publish (rollbackPush) landed and the Studio did not read the suggestion again');
+});
+
+check('VERIFIER (red, v2-fix-followups): after Undo publish the re-read puts the Publish step back on the open card', () => {
+  // Live 18 Oct, build 36ca446d: the open Studio re-read getStudioNotes after rollbackPush, and the engine sent the suggestion with its
+  // Publish step again (a reopened Studio showed it), but the open card kept "Published. Here is what is left." with no Publish step.
+  const t = setup();
+  const two = suggestion('sg-000000000007', { say: 'I described the new Geography hierarchy.', steps: [
+    { label: 'Publish the two hierarchies', prompt: 'Publish them.' }, { label: 'Check the hierarchy names', prompt: 'Check them.' }] });
+  t.store.setSuggestion(two);
+  t.store.load({ sessionId: 's1', notes: [], suggestion: { ...two, say: 'Published. Here is what is left.', steps: [two.steps[1]] } });
+  assert.deepEqual(t.snap().suggestion.suggestion.steps.map((s) => s.label), ['Check the hierarchy names'], 'the publish landed');
+  t.store.load({ sessionId: 's1', notes: [], suggestion: two });
+  assert.deepEqual(t.snap().suggestion.suggestion.steps.map((s) => s.label), ['Publish the two hierarchies', 'Check the hierarchy names'],
+    'Undo publish: the engine gave the Publish step back, the open card did not take it');
+  assert.equal(t.snap().suggestion.suggestion.say, 'I described the new Geography hierarchy.');
+});
 
 if (failures) { console.error(`${failures} failed`); process.exit(1); }
 console.log('studio notes: all checks passed');

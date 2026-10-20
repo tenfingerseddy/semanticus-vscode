@@ -638,10 +638,11 @@ namespace Semanticus.Tests
             }
 
             // The batched request (m11/jev-batch) sends the same facts: each column's entry carries its own, and the table's row
-            // count, which every column of the table shares, goes once under table_facts.
+            // count, which every column of the table shares, goes once under table_facts (a map keyed by the table's name, m16/jev-batch).
             var batch = await f.Sessions.Current.ReadAsync(m => ColumnSummarizeFamily.Batches(ColumnSummarizeFamily.Prepare(m, null)).First().Snapshot);
             using var tableFacts = JsonDocument.Parse(JsonSerializer.Serialize(batch["table_facts"]));
-            Assert.True(tableFacts.RootElement.TryGetProperty("table_rows", out _), "the table's row count is not in table_facts");
+            Assert.NotEmpty(tableFacts.RootElement.EnumerateObject());
+            Assert.All(tableFacts.RootElement.EnumerateObject(), t => Assert.True(t.Value.TryGetProperty("table_rows", out _), "the table's row count is not in table_facts of " + t.Name));
             using var entries = JsonDocument.Parse(JsonSerializer.Serialize(batch["columns"]));
             Assert.NotEqual(0, entries.RootElement.GetArrayLength());
             foreach (var entry in entries.RootElement.EnumerateArray())

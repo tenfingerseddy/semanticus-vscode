@@ -73,6 +73,10 @@ namespace Semanticus.Engine
 
             // Read the source schema over TDS (INFORMATION_SCHEMA — no data). Any token/connect failure degrades to
             // Reachable=false with a scrubbed message rather than throwing across the door.
+            // The server comes from the model's own partitions, which are somebody else's words: no token until the host is one the person
+            // trusts, a Microsoft SQL host, or says yes to.
+            var hostRefusal = await SqlHostRefusalAsync(probe.Server, probe.Database, authMode, tenantId, origin, typedByPerson: false).ConfigureAwait(false);
+            if (hostRefusal != null) { probe.Reachable = false; probe.Error = "source unreachable: " + hostRefusal; return probe; }
             try
             {
                 var token = await AcquireSqlTokenAsync(authMode, tenantId, origin, CancellationToken.None).ConfigureAwait(false);

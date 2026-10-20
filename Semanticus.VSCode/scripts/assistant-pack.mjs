@@ -8,6 +8,9 @@ import yazl from 'yazl';
 const extRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.dirname(extRoot);
 export const SKILLS = ['semanticus', 'optimize-dax', 'ai-ready', 'interview-model', 'model-pr', 'distill-workflow', 'curate-knowledge'];
+// Agents ride the Claude Code plugin only (plugins/semanticus/agents/): Claude Code starts them as subagents. Codex and Copilot have no such folder, so the
+// interview-model skill carries the same rules in words for them. copilot-student is the student of the Copilot test: Haiku, no tools.
+export const AGENTS = ['copilot-student'];
 export const publicName = name => name === 'semanticus' ? name : `semanticus-${name}`;
 export const digest = body => createHash('sha256').update(body).digest('hex');
 
@@ -31,6 +34,16 @@ export function prepareAssistantPack({ check = false } = {}) {
     if (body.includes('docs/learning-loop-plan') || body.includes('TASKS.md')) throw new Error(`Internal reference in ${name}`);
     files.set(relative, body);
     skills.push({ name, path: relative, sha256: digest(body) });
+  }
+  const agents = [];
+  const agentRoot = path.join(repoRoot, '.claude', 'agents');
+  for (const name of AGENTS) {
+    const relative = `plugins/semanticus/agents/${name}.md`;
+    const body = fs.readFileSync(hasSources ? path.join(agentRoot, `${name}.md`) : path.join(packRoot, relative), 'utf8').replace(/\r\n/g, '\n');
+    if (!body.startsWith(`---\nname: ${name}\n`) || !body.includes('\ndescription: ') || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(body)) throw new Error(`Invalid customer agent: ${name}`);
+    if (body.includes('docs/learning-loop-plan') || body.includes('TASKS.md')) throw new Error(`Internal reference in agent ${name}`);
+    files.set(relative, body);
+    agents.push({ name, path: relative, sha256: digest(body) });
   }
   const metadata = {
     name: 'semanticus', version,
@@ -59,7 +72,7 @@ export function prepareAssistantPack({ check = false } = {}) {
     name: 'semanticus', owner: { name: 'Semanticus' },
     plugins: [{ name: 'semanticus', source: './plugins/semanticus', description: metadata.description, version }],
   });
-  putJson('manifest.json', { version, skills });
+  putJson('manifest.json', { version, skills, agents });
   files.set('LICENSE', fs.readFileSync(path.join(repoRoot, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n'));
   files.set('README.md', `# Semanticus assistant skills ${version}\n\n` +
     'Seven guides for the Semanticus MCP connection: getting started, DAX optimisation, AI readiness, model interviews, change lists, reusable workflows and model knowledge.\n\n' +
@@ -75,7 +88,7 @@ export function prepareAssistantPack({ check = false } = {}) {
     '## Connect the model\n\n' +
     'These guides use your existing Semanticus MCP server. Keep Semanticus open in VS Code. Connect AI Assistant writes .mcp.json for clients that use that format. For another client, use the same command and arguments in its MCP configuration. The skills do not create another engine, supply a licence, or add AI credentials.\n\n' +
     'The workbench has six areas: Plan, Explore, Edit, Review, Publish and Workflows. The Plan is where you start, and its History records every edit and who made it. The areas are navigation labels for people; MCP tool names do not depend on them. The VS Code view updates when an edit lands, and your assistant sees it on its next call. Keep the editing model, test model and publishing destination distinct because they can differ.\n\n' +
-    'Apply changes the working model as one undoable edit. Save keeps local work or writes a local workflow or spec. Publish sends reviewed model definitions to a chosen live destination after preview and confirmation. Restore returns a live destination to an earlier published version. Publish and Restore do not refresh data, and local Undo does not reverse either remote write.\n\n' +
+    'Apply changes the working model as one undoable edit. Save keeps local work or writes a local workflow or spec. Publish sends reviewed model definitions to a chosen live destination after preview and confirmation. Restore returns a live destination to an earlier published version. Publish and Restore do not refresh data. A publish keeps a restore point: Undo publish on the Publish page returns the published model to it, and `undo_change` only reverses edits to the working copy.\n\n' +
     'For workflow authoring, read get_workflow_document, preview typed changes with preview_workflow_edit, then write a reviewed existing file with edit_workflow_document or create a new project file with save_workflow. Starters, the workflows that come with Semanticus, are read-only; instantiate_workflow_template copies one into the project as your workflow. Use get_workflow_layout and save_workflow_layout for Canvas positions only.\n\n' +
     'Ask: "Use Semanticus to explain this model", "Optimise this measure across customer and product contexts", or "Save this process as a workflow". Skills load when relevant. Essential orientation also comes from MCP, so skills are optional.\n\n' +
     '[Full setup guide](https://semanticus.com.au/docs/assistant-skills)\n');
@@ -88,7 +101,7 @@ export function prepareAssistantPack({ check = false } = {}) {
       fs.writeFileSync(file, body);
     }
   }
-  return { version, packRoot, files, skills };
+  return { version, packRoot, files, skills, agents };
 }
 
 export async function packageAssistantPack() {

@@ -223,4 +223,99 @@ const readable = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"')
   assert.ok(/returnsToCard\(/.test(fr) && /onFirstRunSay\(/.test(fr), 'the card component uses both');
 }
 
+
+// ---- 5. Connect with no folder open, a way out of the card, and a tour that does not trap (1.6) ---------------
+{
+  const F = load(join(root, 'src', 'firstRun.ts'), {});
+  // Which folder: a file model uses its own folder; a live model gets ~/Semanticus/<name>.
+  assert.equal(F.folderForConnect({ kind: 'file', path: '/work/models/Contoso.bim', modelName: 'Contoso' }, '/home/k'), '/work/models', 'a file model: its own folder');
+  assert.equal(F.folderForConnect({ kind: 'file', path: '/work/models/Contoso.SemanticModel', modelName: 'Contoso' }, '/home/k'), '/work/models', 'a model folder: beside it, never inside it');
+  assert.equal(F.folderForConnect({ kind: 'file', path: '/work/models/Contoso.SemanticModel/definition' }, '/home/k'), '/work/models', 'its definition folder too');
+  assert.equal(F.folderForConnect({ kind: 'file', path: '/work/Contoso/definition' }, '/home/k'), '/work', 'a bare definition folder: beside the model folder');
+  assert.equal(F.PENDING_MARKER, '.semanticus/connect-pending');
+  assert.ok(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).activationEvents.includes('workspaceContains:' + F.PENDING_MARKER), 'the folder we open wakes the extension');
+  assert.equal(F.folderForConnect({ kind: 'live', path: '/tmp/snap/x.bim', modelName: 'Contoso Sales' }, '/home/k'), join('/home/k', 'Semanticus', 'Contoso Sales'), 'a live model: a Semanticus folder in the home folder');
+  assert.equal(F.folderForConnect({ kind: 'localDesktop', modelName: 'a/b:c' }, '/home/k'), join('/home/k', 'Semanticus', 'a b c'), 'characters a folder name cannot hold become spaces');
+  assert.equal(F.folderForConnect(undefined, '/home/k'), join('/home/k', 'Semanticus', 'Model'), 'no model: a plain default name');
+  // The tour's demo copy is throwaway: the connection never goes in its internal folder (1.6, verifier v2-fix-r2-start, h022).
+  const demo = { kind: 'file', path: '/home/k/.config/Code/User/globalStorage/semanticus-vscode.semanticus-vscode/learn/plan-20261018-063000', modelName: 'Contoso Shop' };
+  assert.equal(F.folderForConnect(demo, '/home/k'), join('/home/k', 'Semanticus', 'Model'), 'the demo copy: the normal default, not its own folder');
+  assert.equal(F.withoutTourDemo(demo), undefined, 'the demo copy is not a model to carry over a reload');
+  assert.equal(F.withoutTourDemo({ kind: 'file', path: '/work/Contoso.bim' })?.path, '/work/Contoso.bim', 'a real model is kept');
+  assert.equal(F.withoutTourDemo(undefined), undefined);
+
+  // The press: write the file first, then remember, then open the folder.
+  const calls = [];
+  const ok = await F.connectWithoutFolder({
+    folder: async () => '/work/models', writeConnection: async (f) => { calls.push('write ' + f); return { ok: true }; },
+    remember: async (f) => { calls.push('remember ' + f); }, openFolder: async (f) => { calls.push('opened ' + f); },
+  });
+  assert.deepEqual(calls, ['write /work/models', 'remember /work/models', 'opened /work/models'], 'write, remember, open, in that order');
+  assert.equal(ok.ok, true);
+
+  // A failure opens nothing and asks for a folder: never a dead end.
+  const failCalls = [];
+  const bad = await F.connectWithoutFolder({
+    folder: async () => '/ro', writeConnection: async () => ({ ok: false, error: 'Could not write the connection file.' }),
+    remember: async () => { failCalls.push('remember'); }, openFolder: async () => { failCalls.push('open'); },
+  });
+  assert.equal(bad.ok, false); assert.equal(bad.needsFolder, true, 'the card gets a next step');
+  assert.deepEqual(failCalls, [], 'nothing opens when the file was not written');
+  assert.ok(/Could not write/.test(bad.error) && !/—/.test(bad.error), 'a plain line');
+  const none = await F.connectWithoutFolder({ folder: async () => undefined, writeConnection: async () => ({ ok: true }), remember: async () => {}, openFolder: async () => {} });
+  assert.equal(none.needsFolder, true, 'a folder pick that was cancelled still has a next step');
+
+  // The record that crosses the reload: used once, only for its own folder, only while fresh.
+  const store = new Map();
+  const state = { get: (k) => store.get(k), update: async (k, v) => { v === undefined ? store.delete(k) : store.set(k, v); } };
+  const at = new Date(1_000_000).toISOString();
+  await F.writePendingConnect(state, { folder: '/work/models', model: { kind: 'file', path: '/work/models/Contoso.bim' }, at });
+  assert.equal(await F.takePendingConnect(state, '/elsewhere', () => 1_000_000 + 1000, false), undefined, 'another folder never takes it');
+  assert.equal((await F.takePendingConnect(state, '/work/models', () => 1_000_000 + 1000, false))?.model?.path, '/work/models/Contoso.bim', 'its own folder takes it');
+  assert.equal(await F.takePendingConnect(state, '/work/models', () => 1_000_000 + 1000, false), undefined, 'once');
+  await F.writePendingConnect(state, { folder: '/work/models', at });
+  assert.equal(await F.takePendingConnect(state, '/work/models', () => 1_000_000 + 11 * 60 * 1000, false), undefined, 'a stale record is not used');
+  assert.equal(store.has(F.PENDING_CONNECT_KEY), false, 'and it is dropped');
+
+  // The tour: from the card the card does not come back once it has been seen; the chip pulses instead.
+  const G = load(join(webview, 'src', 'firstrun-gate.ts'));
+  const base = { fromCard: true, phase: 'idle', connected: false, open: false };
+  assert.equal(G.returnsToCard({ ...base, seen: true }), false, 'Leave after Show me around: the card does not trap the person');
+  assert.equal(G.pulsesAssistantChip({ ...base, seen: true }), true, 'the Your assistant button pulses instead');
+  assert.equal(G.pulsesAssistantChip({ ...base, seen: true, connected: true }), false, 'not once connected');
+  assert.equal(G.pulsesAssistantChip({ ...base, seen: true, phase: 'running' }), false, 'not while the tour plays');
+  assert.equal(G.pulsesAssistantChip({ ...base, seen: true, fromCard: false }), false, 'not for a tour from Help');
+  assert.equal(G.returnsToCard({ ...base, seen: false }), true, 'a card not yet seen still returns (other cases kept)');
+
+  // The card: a quiet Not now, and a next step after a failed press.
+  const { FirstRunCard } = load(join(webview, 'src', 'firstrun.tsx'));
+  const noop = () => {};
+  const props = { stage: 'choose', mode: 'assistant', onMode: noop, onConnect: noop, onClose: noop, onAround: noop, error: null, note: null };
+  const card = readable(renderToStaticMarkup(h(FirstRunCard, props)));
+  assert.ok(/Not now/.test(card), 'the card has a way out');
+  assert.ok(/Connect Claude Code/.test(card));
+  const needs = readable(renderToStaticMarkup(h(FirstRunCard, { ...props, error: 'Choose a folder.', needsFolder: true, onChooseFolder: noop })));
+  assert.ok(/Choose a folder/.test(needs) && !/Connect Claude Code/.test(needs), 'after a failure the button does the next step');
+  const hand = renderToStaticMarkup(h(FirstRunCard, { ...props, mode: 'hand' }));
+  assert.ok(/data-scrim-closes="true"/.test(hand), 'with By hand chosen, pressing outside the card closes it');
+  assert.ok(!/data-scrim-closes="true"/.test(renderToStaticMarkup(h(FirstRunCard, props))), 'not while the assistant choice is on');
+
+  // The say card of a connect that finished in a reloaded window holds the Pro permission card back, as the choice does.
+  const waiting = load(join(webview, 'src', 'firstrun-gate.ts'), { './bridge': { requestFirstRun: async () => ({ show: false, connected: true, say: true }) } });
+  let released = false;
+  const held = waiting.whenFirstRunClosed().then(() => { released = true; });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(released, false, 'other cards wait while the say card is up');
+  waiting.markFirstRunClosed(); await held;
+  assert.equal(released, true, 'and go once it is closed');
+  const idle = load(join(webview, 'src', 'firstrun-gate.ts'), { './bridge': { requestFirstRun: async () => ({ show: false, connected: true }) } });
+  await idle.whenFirstRunClosed();   // nothing waiting: returns at once
+
+  // The wiring.
+  const ext = readFileSync(join(root, 'src', 'extension.ts'), 'utf8');
+  assert.ok(/connectWithoutFolder\(/.test(ext) && /vscode\.openFolder/.test(ext), 'the host opens a folder for a person with none');
+  assert.ok(/takePendingConnect\(/.test(ext), 'and finishes the connect after the reload');
+  assert.ok(!/fail\('Open a folder first/.test(ext), 'the dead end is gone');
+}
+
 console.log('first-run: choice, one-press connect, tour step and wiring checks passed');

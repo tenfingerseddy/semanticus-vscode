@@ -14,9 +14,8 @@ import { chipOf, countWords, firstWeekOf, jevStateOf, longDate, PLAN_PRICE, proP
 // (pro.tsx useTier), so the page and the header chip can never disagree about whether Pro is on.
 
 const LIVE_ADDS: [string, string][] = [
-  ['Jev tidies your measures and ranks your plan.', 'Each change lands on your Plan for you to keep or drop.'],
-  ['The Plan field:', 'type a task and Semanticus names the page it is done on, asking Jev when the words alone do not say.'],
-  ['Workflows:', 'work you repeat becomes steps the app checks as you go.'],
+  ['Run the plan tidies your measures and puts your plan in order.', 'Each change lands on your Plan for you to keep or drop.'],
+  ['The Plan field:', 'type a task and Semanticus names the page it is done on, and works it out for you when the words alone do not say.'],
 ];
 
 const Icon = {
@@ -114,8 +113,7 @@ function Tally({ tally }: { tally?: TallyW | null }) {
   const t = tally ?? {};
   return <div className="pp-tally" data-testid="trial-tally">
     <div><span className="pp-big">{countWords(t.changesApplied)}</span><span className="pp-lbl">changes applied in {countWords(t.steps)} {t.steps === 1 ? 'step' : 'steps'}</span></div>
-    <div><span className="pp-big">{countWords(t.jevChoices)}</span><span className="pp-lbl">things Jev chose for you</span></div>
-    <div><span className="pp-big">{countWords(t.workflowsRun)}</span><span className="pp-lbl">{t.workflowsRun === 1 ? 'workflow run' : 'workflows run'}</span></div>
+    <div><span className="pp-big">{countWords(t.jevChoices)}</span><span className="pp-lbl">things chosen for you</span></div>
   </div>;
 }
 
@@ -124,7 +122,7 @@ function TrialOffer(p: ProPageViewProps) {
   const err = p.state.trial?.step === 'error' ? p.state.trial.message : undefined;
   return <div className="pp-sheet" data-testid="trial-offer">
     <h2>Try Pro free for 30 days</h2>
-    <p>{p.pendingLabel ? <><b>{p.pendingLabel}</b> is part of Pro. It runs as soon as Pro is on. </> : null}Type your email and Pro turns on in this app. It switches itself off after 30 days.</p>
+    <p>{p.pendingLabel ? <><b>{p.pendingLabel}</b> is part of Pro. It works once Pro is on. </> : null}Type your email and Pro turns on in this app. It switches itself off after 30 days.</p>
     <form className="pp-trialrow" onSubmit={(e) => { e.preventDefault(); if ((p.trialEmail ?? '').trim() && !sending) p.onTrialStart?.(); }}>
       <label htmlFor="trial-email" className="pp-keylabel">Your email</label>
       <div className="pp-keyrow">
@@ -141,7 +139,7 @@ function TrialOffer(p: ProPageViewProps) {
 function TrialWaiting(p: ProPageViewProps) {
   return <div className="pp-waitbox" role="status" data-testid="trial-waiting">
     <div className="pp-l1"><svg className="pp-spin" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" /></svg>Check your email and press the link. This page updates by itself.</div>
-    <div className="pp-l2">{p.state.trial?.email ? <>We sent it to <b>{p.state.trial.email}</b>. </> : null}{p.pendingLabel ? <><b>{p.pendingLabel}</b> runs as soon as Pro is on. </> : null}You can keep working while you wait.</div>
+    <div className="pp-l2">{p.state.trial?.email ? <>We sent it to <b>{p.state.trial.email}</b>. </> : null}{p.pendingLabel ? <><b>{p.pendingLabel}</b> runs once Pro is on. </> : null}You can keep working while you wait.</div>
     <div className="pp-acts"><button type="button" className="sem-btn sem-btn-sm" data-testid="trial-cancel" onClick={p.onTrialCancel}>Cancel</button></div>
   </div>;
 }
@@ -158,8 +156,7 @@ function TrialUsed(p: ProPageViewProps) {
 function WhatDifferent() {
   return <ul className="pp-adds">
     <li><b>Run the plan</b> goes back to one change at a time.</li>
-    <li><b>Jev tidying and ranking</b> and the <b>Plan field</b> switch off.</li>
-    <li><b>Workflows</b> are locked again. The ones you saved stay in your folder.</li>
+    <li><b>Tidying and ordering the plan</b> and the <b>Plan field</b> switch off.</li>
     <li><b>Your models, Plan and every change you made</b> stay exactly as they are. Undo still works.</li>
   </ul>;
 }

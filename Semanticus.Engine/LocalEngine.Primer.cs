@@ -81,7 +81,7 @@ namespace Semanticus.Engine
             if (string.IsNullOrWhiteSpace(identity)) return new PrimerLocus { Live = live };
             var anchor = s?.SourcePath;   // the SAME captured context as the identity — never a second Current read
             var sidecar = !ExperienceStore.IsEphemeralAnchor(anchor) ? LayoutStore.DirFor(anchor)
-                : _workspaceDir == null ? null : Path.Combine(_workspaceDir, LayoutStore.DirName);
+                : NoFileSidecar(s);
             return new PrimerLocus
             {
                 Identity = identity,

@@ -92,6 +92,13 @@ namespace Semanticus.Engine
             ["SetNextStepAsync"] = "The person's suggestion preference: it changes nothing in the model.",
             ["NoteAgentCallAsync"] = "A signal that a call began: it changes nothing in the model.",
             ["SetStudioDriverAsync"] = "The Studio reports its own screen: it writes nothing in the model.",
+            ["QueryNotebookAsync"] = "It keeps or drops rows of the question history beside the model: it changes nothing in the model.",
+            ["RecordQueryRunAsync"] = "A row of the question history beside the model: it changes nothing in the model.",
+            ["NoteQueryRowAsync"] = "A note on a row of the question history beside the model: it changes nothing in the model.",
+            ["GetHostSettingsAsync"] = "A read of the person's personality and sound settings.",
+            ["SetHostSettingsAsync"] = "The person's Studio settings: they change nothing in the model.",
+            ["ReportHostSettingsAsync"] = "The window reports its own settings: it writes nothing in the model.",
+            ["StartTrialAsync"] = "It starts the free Pro month: it changes nothing in the model.",
         };
 
         /// <summary>The Fenced methods a request from the extension's own writer may make with NO model named while a model is open, each with the reason. A method

@@ -47,6 +47,16 @@ namespace Semanticus.Engine
         // The free Pro month's tally, counted on this computer from what really happened: both doors (getTrialTally /
         // get_trial_tally). All zeros when the licence is not a trial token.
         Task<Entitlement.TrialTally> GetTrialTallyAsync();
+        // The window-only settings and the trial start, with an agent door (F-292, F-293). The window owns both; the engine asks it by
+        // notification. ReportHostSettingsAsync is PERSON-ONLY (the window tells the engine what the settings are): no MCP tool.
+        /// <summary>get_personality_settings: the Studio's personality (on or quiet), sounds and volume, as the window last reported them.</summary>
+        Task<HostSettingsView> GetHostSettingsAsync();
+        /// <summary>set_personality_settings: set any of personality, sounds, soundVolume; the window writes the person's VS Code settings.</summary>
+        Task<HostSettingsView> SetHostSettingsAsync(string personality, bool? sounds, int? soundVolume, string origin = "human");
+        /// <summary>The window reports the settings (on connect and on every change).</summary>
+        Task ReportHostSettingsAsync(string personality, bool sounds, int soundVolume);
+        /// <summary>start_trial: ask the window to start the free Pro month for this email. Sends nothing unless the person said yes in chat.</summary>
+        Task<TrialStartResult> StartTrialAsync(string email, bool personSaidYes, string origin = "human");
         // Record verified edits: read + set the human-controlled audit switch (it adds a record; every DAX write is checked anyway).
         Task<VerifiedModeState> GetVerifiedModeAsync();
         Task<VerifiedModeState> SetVerifiedModeAsync(bool on, string origin);
@@ -417,6 +427,14 @@ namespace Semanticus.Engine
         Task<SetResult> DeleteInterviewQuestionAsync(string id, string origin);
         Task<InterviewSeedResult> ListInterviewSeedsAsync(string source, string measure);   // verified answers + the built-in hard-question pack (free, read-only; no fabricated oracle)
 
+        // --- The Copilot test (Kane, 15 Oct 2026): the interview as a test loop. A bank of questions with proven answers, a small student model in the person's
+        //     own assistant, a grade by number for a whole round in one call, the kind of miss named, the misses grouped. The engine never infers (golden rule 1). ---
+        Task<CopilotViewResult> GetCopilotViewAsync();
+        Task<CopilotAddResult> AddInterviewQuestionsAsync(CopilotQuestionIn[] items, string origin);
+        Task<CopilotStudentQuestions> GetStudentQuestionsAsync();
+        Task<CopilotBatchResult> RunInterviewBatchAsync(string roundId, string bankKey, string student, CopilotAnswerIn[] answers, CopilotRoundChange[] changes, string origin);
+        Task<CopilotRoundsView> InterviewRoundsAsync(string round);
+
         // --- Change-Plan engine ("analyse → review → fix everything" / incremental edits) ---
         Task<ChangePlanView> ProposePlanAsync(string scope, bool includeAi, int maxAiItems, string origin);
         // Bulk find & replace as a plan (Phase 3): search hits → rename/set_*/set_dax/set_m items; DAX-reference,
@@ -666,11 +684,25 @@ namespace Semanticus.Engine
         /// <summary>list_data_questions: the open model's question history, newest first. Never the rows.</summary>
         Task<Query.DataQuestionHistory> ListDataQuestionsAsync(int limit = 50);
 
+        /// <summary>query_notebook: the Query notebook and the model's full history of queries, newest first, or one action on a row:
+        /// pin, unpin, close (leave the notebook, stay in the history), reopen (back into the notebook) or remove (delete). Not Pro.</summary>
+        Task<Query.QueryNotebookView> QueryNotebookAsync(string action = "list", string id = null);
+        /// <summary>A query run as written is a row of the notebook too. Returns its id, or null when the model keeps no history.</summary>
+        Task<string> RecordQueryRunAsync(string dax, int rowCount, double elapsedMs, string headline = null, string origin = "human", string replaces = null);
+        /// <summary>The page notes what it knows of a row: its number as shown, the line for a part that could not apply, the times.</summary>
+        Task<bool> NoteQueryRowAsync(string id, QueryRowNote note);
+
         /// <summary>pick_chart_kind: Jev's chart pick for a Queries result (queries.chart_kind), among the kinds the chart
         /// rules leave. OFF until its replay clears the bar: until then, and whenever Jev does not pick, it returns the
         /// rules' pick by "rules" with a note. Sends the words and the result's shape, never rows. Pro (Ask your data).
         /// Never writes to the model.</summary>
         Task<Query.ChartPick> PickChartKindAsync(Query.ChartPickAsk ask);
+
+        /// <summary>pick_check_visuals: Jev's visual pick for every check on the Validation page (checks.visual_kind), in ONE call,
+        /// among the visuals the page's rules leave for each. OFF until its replay clears the bar: until then, and whenever Jev does
+        /// not pick, it returns the rules' pick for every check by "rules" with a note. Sends check names, measure names, status words
+        /// and counts, never a row or a value. Pro (Ask your data). Never writes to the model.</summary>
+        Task<CheckVisualPicks> PickCheckVisualsAsync(CheckVisualAsk ask);
 
         Task<NextAction[]> GetNextActionsAsync();
         Task<AskRouteResult> RouteAskAsync(string text);

@@ -81,7 +81,7 @@ function lower(s) { const t = String(s ?? ''); return t.length > 1 && t === t.to
 /** The shape as the engine's pickChartKind reads it: a date whose order nobody set is a category there too, and the
  *  engine's shape has no `ordered` field to carry. */
 export function engineShape(shape) {
-  return { ...shape, dims: (shape?.dims ?? []).map((d) => ({ name: d.name, isDate: d.isDate && d.ordered !== false, distinct: d.distinct })) };
+  return { ...shape, measureNames: Array.isArray(shape?.measureNames) ? shape.measureNames : undefined, dims: (shape?.dims ?? []).map((d) => ({ name: d.name, isDate: d.isDate && d.ordered !== false, distinct: d.distinct })) };
 }
 
 /** The chart kinds a switcher shows: the ones this result fits, in the switcher's order. A result with no rules (a query typed

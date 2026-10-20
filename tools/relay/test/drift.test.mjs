@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { TEMPLATES } from '../templates.mjs';
+import { TEMPLATES, LIMITS } from '../templates.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const read = (relative) => readFileSync(join(root, relative), 'utf8');
@@ -30,6 +30,8 @@ const ASK_ROUTE_PATH = 'Semanticus.Engine/Plan/AskRoutePoint.cs';
 const DRAFT_BUILDER_PATH = 'Semanticus.Engine/Composer/JevDraftBuilder.cs';
 const QUERY_READER_PATH = 'Semanticus.Engine/Query/JevQueryReader.cs';
 const CLEANUP_PATH = 'Semanticus.Engine/Plan/CleanupSuggest.cs';
+const MISS_PATH = 'Semanticus.Engine/CopilotMissPoint.cs';
+const CHECK_VISUALS_PATH = 'Semanticus.Engine/Testing/JevCheckVisuals.cs';
 
 /** "public const string PlanRank = "plan.rank";" and friends, so a point's name is read the way the C#
  *  reads it rather than by trusting the literal to appear at the use site. */
@@ -90,6 +92,12 @@ const PER_PART_SHAPE = 'query_part';
 // cleanup.suggest is the third: one choice per unused column, named by the column's ref (m11/plan-harm round 5).
 const PER_COLUMN_POINT = 'cleanup.suggest';
 const PER_COLUMN_SHAPE = 'suggest_removal';
+// copilot.misses is the fifth: one choice per practice miss of a Copilot test round, named by the miss's number (1.5.1).
+const PER_MISS_POINT = 'copilot.misses';
+const PER_MISS_SHAPE = 'miss_cause';
+// checks.visual_kind is the fifth: one choice per check on the Validation page, named by the check's id (1.6).
+const PER_CHECK_POINT = 'checks.visual_kind';
+const PER_CHECK_SHAPE = 'check_visual';
 
 test('the parser really read the engine declarations', () => {
     assert.ok(registrySource.includes('DecisionRegistry'), 'the registry source was not read');
@@ -113,7 +121,7 @@ test('each template pins the schema version the engine sends', () => {
 });
 
 test('the fixed-question points accept exactly the questions the engine asks', () => {
-    const fixed = POINTS.filter((p) => p.name !== PER_ITEM_POINT && p.name !== PER_STEP_POINT && p.name !== PER_PART_POINT && p.name !== PER_COLUMN_POINT);
+    const fixed = POINTS.filter((p) => p.name !== PER_ITEM_POINT && p.name !== PER_STEP_POINT && p.name !== PER_PART_POINT && p.name !== PER_COLUMN_POINT && p.name !== PER_MISS_POINT && p.name !== PER_CHECK_POINT);
     assert.ok(fixed.length >= 2, 'expected more than one fixed-question point');
     for (const point of fixed) {
         assert.equal(TEMPLATES[point.name].questionPrefix, undefined,
@@ -218,30 +226,101 @@ test('cleanup.suggest accepts the per-column names the engine builds, as many as
         'the relay question bound must match CleanupSuggest.MaxPerCall exactly');
 });
 
-// m11/jev-batch: the four per-object families ask a table's objects in one request, one question per object, named
-// "<question>:<object ref>". The relay may only take as many as the engine sends in one chunk, so the bound is read off the
-// engine's own ChunkSize and question names rather than typed twice.
+test('copilot.misses accepts the per-miss names the engine builds, as many as it sends in one call', () => {
+    const point = byName.get(PER_MISS_POINT);
+    assert.deepEqual(point.questionShapes, [PER_MISS_SHAPE],
+        'copilot.misses stopped declaring one placeholder shape; re-read the registry before trusting the prefix');
+    assert.ok(registrySource.includes('the question NAMES carry the miss'),
+        'the registry no longer says copilot.misses question names carry the miss');
+
+    const source = read(MISS_PATH);
+    const prefix = /public const string Prefix\s*=\s*"([^"]+)"\s*;/.exec(source);
+    assert.ok(prefix, 'CopilotMissPoint.Prefix is no longer a plain constant');
+    assert.ok(/public static string Q\(int n\)\s*=>\s*Prefix\s*\+/.test(source),
+        'CopilotMissPoint.Q no longer starts every name with Prefix');
+    assert.equal(TEMPLATES[PER_MISS_POINT].questionPrefix, prefix[1]);
+    assert.deepEqual(TEMPLATES[PER_MISS_POINT].questions, []);
+
+    const max = /public const int MaxPerCall\s*=\s*(\d+)\s*;/.exec(source);
+    assert.ok(max, 'CopilotMissPoint.MaxPerCall is no longer a plain constant');
+    assert.equal(TEMPLATES[PER_MISS_POINT].maxQuestions, Number(max[1]),
+        'the relay question bound must match CopilotMissPoint.MaxPerCall exactly');
+});
+
+test('checks.visual_kind accepts the per-check names the engine builds, as many as it sends in one call', () => {
+    const point = byName.get(PER_CHECK_POINT);
+    assert.deepEqual(point.questionShapes, [PER_CHECK_SHAPE],
+        'checks.visual_kind stopped declaring one placeholder shape; re-read the registry before trusting the prefix');
+    const source = read(CHECK_VISUALS_PATH);
+    const prefix = /public const string Prefix\s*=\s*"([^"]+)"\s*;/.exec(source);
+    assert.ok(prefix, 'JevCheckVisuals.Prefix is no longer a plain constant');
+    assert.ok(/public static string Q\(string checkId\)\s*=>\s*Prefix\s*\+/.test(source),
+        'JevCheckVisuals.Q no longer starts every name with Prefix');
+    assert.equal(TEMPLATES[PER_CHECK_POINT].questionPrefix, prefix[1]);
+    assert.deepEqual(TEMPLATES[PER_CHECK_POINT].questions, []);
+    const max = /public const int MaxChecks\s*=\s*(\d+)\s*;/.exec(source);
+    assert.ok(max, 'JevCheckVisuals.MaxChecks is no longer a plain constant');
+    assert.equal(TEMPLATES[PER_CHECK_POINT].maxQuestions, Number(max[1]),
+        'the relay question bound must match JevCheckVisuals.MaxChecks exactly');
+});
+
+// m11/jev-batch, then m16/jev-batch: the four per-object families ask the objects of a whole model in as few requests as Jev's context
+// allows, one question per object (two for a measure), named "<question>:<object ref>". The relay may take as many questions as the engine
+// puts in one request, so the bound is read off the engine's own JevTableBatch.MaxQuestions rather than typed twice.
 const BATCHED_FAMILIES = [
     { point: 'measure.folder_and_format', path: 'Semanticus.Engine/Plan/JevFamilies/MeasuresFamily.cs', perObject: 2 },
     { point: 'column.format', path: 'Semanticus.Engine/Plan/JevFamilies/ColumnFormatFamily.cs', perObject: 1 },
     { point: 'column.summarize', path: 'Semanticus.Engine/Plan/JevFamilies/ColumnSummarizeFamily.cs', perObject: 1 },
     { point: 'ai.schema', path: 'Semanticus.Engine/Plan/JevFamilies/AiSchemaFamily.cs', perObject: 1 },
 ];
+const TABLE_BATCH_PATH = 'Semanticus.Engine/Plan/JevFamilies/JevTableBatch.cs';
 
-test('the batched points take exactly the questions a chunk of a table sends, and no other point takes a batched name', () => {
+test('the batched points take exactly the questions one request of the engine sends, and no other point takes a batched name', () => {
+    const batch = read(TABLE_BATCH_PATH);
+    const maxQuestions = /public const int MaxQuestions\s*=\s*(\d+)\s*;/.exec(batch);
+    assert.ok(maxQuestions, 'JevTableBatch.MaxQuestions is no longer a plain constant');
     for (const family of BATCHED_FAMILIES) {
         const template = TEMPLATES[family.point];
         assert.equal(template.batched, true, family.point + ' must be marked batched');
-        const chunk = /internal const int ChunkSize\s*=\s*(\d+)\s*;/.exec(read(family.path));
-        assert.ok(chunk, family.path + ' no longer declares ChunkSize as a plain constant');
-        assert.equal(template.maxQuestions, Number(chunk[1]) * family.perObject,
-            family.point + ': the relay question bound must be the engine chunk size times the questions each object carries');
+        // A request holds up to the point's own object bound (m16/jev-size); the relay question bound stays the whole-request ceiling.
+        const chunk = /internal const int ChunkSize\s*=\s*JevTableBatch\.(\w+ObjectsPerRequest)\s*;/.exec(read(family.path));
+        assert.ok(chunk, family.path + ' no longer sizes a request by a JevTableBatch.*ObjectsPerRequest bound');
+        const perRequest = new RegExp('public const int ' + chunk[1] + '\\s*=\\s*(\\d+)\\s*;').exec(batch);
+        assert.ok(perRequest, 'JevTableBatch.' + chunk[1] + ' is no longer a plain constant');
+        assert.ok(Number(perRequest[1]) * family.perObject <= Number(maxQuestions[1]),
+            family.point + ': a full request of ' + perRequest[1] + ' objects would carry more questions than JevTableBatch.MaxQuestions');
+        assert.equal(template.maxQuestions, Number(maxQuestions[1]),
+            family.point + ': the relay question bound must be the most questions one engine request carries (JevTableBatch.MaxQuestions)');
         assert.equal(template.questions.length, family.perObject, family.point + ' declares a different number of fixed questions');
     }
     const batched = new Set(BATCHED_FAMILIES.map((f) => f.point));
     for (const name of Object.keys(TEMPLATES)) {
         if (!batched.has(name)) assert.notEqual(TEMPLATES[name].batched, true, name + ' is not batched by the engine');
     }
+});
+
+test('the engine body budget fits inside what the relay accepts, and Jev\'s own context', () => {
+    const batch = read(TABLE_BATCH_PATH);
+    const body = /public const int MaxBodyBytes\s*=\s*([\d_]+)\s*\*\s*(\d+)\s*;/.exec(batch);
+    assert.ok(body, 'JevTableBatch.MaxBodyBytes is no longer "<tokens> * <bytes per token>"');
+    const tokens = Number(body[1].replace(/_/g, ''));
+    const bytes = tokens * Number(body[2]);
+    assert.ok(bytes < LIMITS.maxRequestBytes, 'an engine request of ' + bytes + ' bytes is over the relay request limit');
+    // Jev: 64,000 tokens a request for the state and every question (docs.typesafe.ai/models, 15 Oct 2026); the engine counts 3 bytes a token.
+    assert.ok(tokens <= 48_000, 'the body budget leaves less than a quarter of Jev\'s 64,000 token context as a margin');
+    const snapshot = /public const int MaxSnapshotBytes\s*=\s*(\d+)\s*\*\s*1024\s*;/.exec(batch);
+    assert.ok(snapshot, 'JevTableBatch.MaxSnapshotBytes is no longer "<n> * 1024"');
+    assert.ok(Number(snapshot[1]) * 1024 < LIMITS.maxSnapshotBytes, 'an engine state is over the relay state limit');
+});
+
+test('the relay refuses a too big request in the words the engine reads as "ask a table at a time"', () => {
+    const oracle = read('Semanticus.Engine/Decisions/JevDecisionOracle.cs');
+    const block = /TooBigSentences\s*=\s*\{([^}]*)\}/.exec(oracle);
+    assert.ok(block, 'JevDecisionOracle.TooBigSentences is no longer a plain list');
+    const sentences = [...block[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    const relay = read('tools/relay/templates.mjs') + read('tools/relay/worker.mjs');
+    for (const sentence of sentences) assert.ok(relay.includes("'" + sentence + "'"), 'the relay no longer says: ' + sentence);
+    assert.equal(sentences.length, 3);
 });
 
 test('each batched family builds its question names as "<question>:<object ref>"', () => {

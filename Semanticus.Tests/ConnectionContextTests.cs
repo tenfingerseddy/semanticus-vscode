@@ -335,6 +335,25 @@ namespace Semanticus.Tests
             Assert.Equal("Contoso Fabric Monitoring", context.Publishing.ModelName);
         }
 
+        // Round 2 UAT N22: opening Contoso, a read-only demo, made the footer say "Publish: Contoso Sales" by itself. A model opened
+        // live still publishes back to where it came from, so the target resolves, but it is only IMPLIED until a publish is made.
+        [Fact]
+        public async Task Opening_a_live_model_does_not_set_a_publish_target_until_the_first_publish()
+        {
+            var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            await engine.OpenAsync(TestModels.FindBim());
+            var record = ConnectionRegistry.Remember("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso", "Sales", "Sales", null, "interactive");
+            sessions.Current.LiveOrigin = new LiveOrigin(record.Endpoint, "Sales", null, "interactive");
+
+            var opened = (await engine.ConnectionContextAsync()).Publishing;
+            Assert.True(opened.Available, "a publish still goes back to where the model came from");
+            Assert.True(opened.Implied, "but nothing was chosen, so the footer must not name it as a target");
+
+            LocalEngine.ConfirmPublishTarget(sessions.Current);   // what a landed publish does
+            Assert.False((await engine.ConnectionContextAsync()).Publishing.Implied);
+        }
+
         [Fact]
         public void Live_origin_write_authority_is_compiled_only_into_the_editing_open_paths()
         {

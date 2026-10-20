@@ -113,7 +113,7 @@ function makeWorld(engine = makeEngine(), model = MODEL) {
       };
       return { tree: () => h.result, form: formEl, view, unmount: () => { rt.unmount(); if (fv) rt2.unmount(); } };
     },
-    /** The table mapping form, as Map source on a table row opens it (or New check > Table row count, with no table). */
+    /** The table mapping form, as Choose source on a table row opens it (or New check > Table row count, with no table). */
     openMapping(table) {
       const rt = makeHookRuntime();
       const { TableRowCountForm } = makeLoader(stubs(), rt.React)('tests-authoring.tsx');
@@ -367,7 +367,7 @@ const assistantSaves = async (w, def) => { w.engine.defs = w.engine.defs.map((d)
 // ---- D the table mapping form (the drawer's second guard) ---------------------------------------------------------------
 {
   const entity = (m) => find(m.tree(), (el) => el.type === 'input' && el.props.placeholder === 'orders');
-  const saveMapping = (m) => find(m.tree(), (el) => el.type?.name === 'Footer' && el.props.saveLabel === 'Save mapping').props.onSave();
+  const saveMapping = (m) => find(m.tree(), (el) => el.type?.name === 'Footer' && el.props.saveLabel === 'Save check').props.onSave();
 
   test('D1 mapping: a typed source table survives closing the drawer and a reload, with the mark', async () => {
     const w = makeWorld();
@@ -497,5 +497,33 @@ const assistantSaves = async (w, def) => { w.engine.defs = w.engine.defs.map((d)
     assert.equal(mappingSaves(w).at(-1)[4], 'orders_11', 'the engine took only the earlier name');
     assert.equal(w.held(), 1, 'the later name is still held');
     assert.ok(!w.engine.calls.some((c) => c[0] === 'closed'));
+  });
+}
+
+// ---- G a check against SQL starts on the engine's default tolerance (UAT 18 Oct, round 3, R1) ---------------------------------
+// Zero and zero made Margin % against equal SQL read "differs in 5 of 6 places, up to 0.000000000000018". A new check starts on
+// TolerancePolicy.Default (relative 1e-7, absolute 1e-9); a saved check keeps the numbers it saved, a saved zero included.
+{
+  const sqlForm = (d) => find(d.tree(), (el) => el.type?.name === 'CompareWithSourceForm');
+  test('G1 new check against SQL: the tolerance boxes start on the engine default, and Save sends it', async () => {
+    const w = makeWorld();
+    const d = w.openDrawer({ shape: 'measureReconcile', editing: null }); await flush();
+    assert.equal(sqlForm(d).props.fields.abs, '1e-9');
+    assert.equal(sqlForm(d).props.fields.relPercent, '0.00001', 'typed as a percent: 1e-7 of the value');
+    find(d.view(), (el) => el.type?.name === 'MeasureSelect').props.onChange(TOTAL); await flush();
+    sqlForm(d).props.onFields({ sql: 'SELECT 1', blankPolicy: 'null' }); await flush();
+    find(d.view(), (el) => el.type?.name === 'SqlSourceSelect').props.onChange('s1'); await flush();
+    footerSave(d.view()); await flush();
+    const sent = JSON.parse(saveOf(w).at(-1)[1].paramsJson);
+    assert.equal(sent.toleranceAbsolute, 1e-9, 'the saved check carries the default it showed');
+    assert.equal(sent.toleranceRelative, 1e-7);
+  });
+  test('G2 saved check against SQL: its own numbers stay, a saved zero included', async () => {
+    const w = makeWorld();
+    const zero = againstSql('SELECT 1'); zero.paramsJson = JSON.stringify({ ...JSON.parse(zero.paramsJson), toleranceAbsolute: 0, toleranceRelative: 0 });
+    w.engine.defs = [zero];
+    const d = w.openDrawer({ shape: 'measureReconcile', editing: zero }); await flush();
+    assert.equal(sqlForm(d).props.fields.abs, '0');
+    assert.equal(sqlForm(d).props.fields.relPercent, '0');
   });
 }

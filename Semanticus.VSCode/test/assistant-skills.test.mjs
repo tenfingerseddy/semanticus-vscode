@@ -65,3 +65,52 @@ test('unowned skills survive and corrupt bundled bytes fail before installation'
     assert.equal(fs.existsSync(untouched), false);
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }
 });
+
+// Hero 24 D11: Connect Claude Code put the 7 skills in place but not the student of the Copilot test.
+test('Claude Code gets the copilot-student agent with the skills, updated on update, never over a file the person changed', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'semanticus-agent-install-'));
+  try {
+    const skills = path.join(temp, 'skills'); const agents = path.join(temp, 'agents');
+    const result = installAssistantSkills(pack.packRoot, skills, agents);
+    assert.equal(result.installed.length, 7);
+    const target = path.join(agents, 'copilot-student.md');
+    const shipped = fs.readFileSync(path.join(pack.packRoot, pack.agents[0].path), 'utf8');
+    assert.equal(fs.readFileSync(target, 'utf8'), shipped);
+    assert.deepEqual(result.agentsInstalled, ['copilot-student']);
+    // an earlier Semanticus copy is replaced on update
+    fs.writeFileSync(target, 'Older student');
+    const receiptPath = path.join(agents, '.semanticus-agents.json');
+    const receipt = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
+    receipt.files['copilot-student'] = createHash('sha256').update('Older student').digest('hex');
+    fs.writeFileSync(receiptPath, JSON.stringify(receipt));
+    assert.deepEqual(installAssistantSkills(pack.packRoot, skills, agents).agentsInstalled, ['copilot-student']);
+    assert.equal(fs.readFileSync(target, 'utf8'), shipped);
+    // the person's own change is kept
+    fs.writeFileSync(target, 'My student');
+    assert.deepEqual(installAssistantSkills(pack.packRoot, skills, agents).agentsPreserved, ['copilot-student']);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'My student');
+    // Codex has no agents folder: with none given nothing is written beside the skills
+    const codex = path.join(temp, 'codex');
+    assert.equal(installAssistantSkills(pack.packRoot, codex).agentsInstalled.length, 0);
+    assert.equal(fs.existsSync(path.join(temp, 'agents2')), false);
+  } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+});
+
+test('the skills and the server words never say a publish cannot be undone, and never leave "is it in git" to a guess (UAT 17 Oct)', () => {
+  const repo = path.resolve(root, '..');
+  const texts = {
+    skill: fs.readFileSync(path.join(pack.packRoot, 'plugins/semanticus/skills/semanticus/SKILL.md'), 'utf8'),
+    interview: fs.readFileSync(path.join(pack.packRoot, 'plugins/semanticus/skills/semanticus-interview-model/SKILL.md'), 'utf8'),
+    server: fs.readFileSync(path.join(repo, 'Semanticus.Engine/Program.cs'), 'utf8'),
+    defaults: fs.readFileSync(path.join(repo, 'Semanticus.Engine/Plan/AssistantDefaults.cs'), 'utf8'),
+  };
+  for (const [name, text] of Object.entries(texts)) {
+    assert.ok(!/publish[^.]*(?:cannot|can't|never) (?:be )?(?:undone|take[n]? back)/i.test(text.replace(/never (?:tell the person|say) a publish cannot be undone/gi, '')), `${name} says a publish cannot be undone`);
+    assert.ok(!/only if it is in git|when it is in git or you made a backup/i.test(text), `${name} leaves "in git" to a guess`);
+  }
+  assert.match(texts.skill, /Undo publish/);
+  assert.match(texts.server, /Undo publish/);
+  // fix2-publish-role replaced "read inGit, then choose where to save" with one rule: save_model and no path writes the model's own file.
+  for (const name of ['skill', 'server', 'defaults']) assert.match(texts[name], /save_model and no path/i, `${name} tells the assistant to save with no path`);
+  assert.match(texts.interview, /Publish, then test/);
+});

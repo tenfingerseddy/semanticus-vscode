@@ -586,6 +586,10 @@ namespace Semanticus.Engine
             void CleanupAll() { foreach (var c in cleanups) { try { c(); } catch { } } }
             // The revision the model had when it was read for this push: an edit made while the push ran is not in what was written (hero19 D13).
             var readRevision = _sessions.Current?.Revision ?? -1;
+            // Whether the person had anything unsaved when the press began. A model that was saved stays saved after a publish: the publish's own
+            // record is not their work (UAT 18 Oct: the Plan asked "Save the changes you have made" and the close guard held the model ten minutes).
+            var startSession = _sessions.Current;
+            var savedBefore = startSession != null && await startSession.RunAsync(() => !startSession.HasUnsavedEdits);
             var (ldb, llabel, lclean) = await ResolveModelRefAsync(left ?? new ModelRef { Kind = "session" }, origin);
             cleanups.Add(lclean);
             try
@@ -893,10 +897,13 @@ namespace Semanticus.Engine
                 // source, and nothing was left out, refused or changed during the push: there is nothing more to save, so the footer and the
                 // Plan stop saying unsaved at once (hero19 D13; the same rule as deploy_live above). A part of the changes, or a model that is
                 // not the open session, is still only in the session.
-                if (rep != null && rep.Committed && string.IsNullOrEmpty(rep.Error) && failed.Count == 0 && sess?.LiveOrigin != null
+                var wentWhole = failed.Count == 0
+                    && (selected == null || diff.Items.Where(i => i.Action != "Equal" && !i.CarriedByRename).All(i => selected.Contains(i.Ref)))
+                    && (rep?.Unmatched?.Length ?? 0) == 0 && (rep?.Conflicts?.Length ?? 0) == 0 && (rep?.DeletesRefused?.Length ?? 0) == 0;
+                var markedSaved = false;
+                if (rep != null && rep.Committed && string.IsNullOrEmpty(rep.Error) && sess?.LiveOrigin != null
                     && string.Equals((left ?? new ModelRef { Kind = "session" }).Kind, "session", StringComparison.OrdinalIgnoreCase)
-                    && (selected == null || diff.Items.Where(i => i.Action != "Equal").All(i => selected.Contains(i.Ref)))
-                    && (rep.Unmatched?.Length ?? 0) == 0 && (rep.Conflicts?.Length ?? 0) == 0 && (rep.DeletesRefused?.Length ?? 0) == 0
+                    && (wentWhole || savedBefore)
                     && ShownDestinationRefusal(sess.LiveOrigin.Endpoint, sess.LiveOrigin.Database, right.Endpoint, right.Database) == null)
                 {
                     try
@@ -907,10 +914,13 @@ namespace Semanticus.Engine
                             sess.MarkSavedToDisk(false);
                             return true;
                         });
-                        if (marked) PublishSaveNotification(sess, "save", origin: origin);
+                        if (marked) { PublishSaveNotification(sess, "save", origin: origin); markedSaved = true; }
                     }
                     catch { /* the push went out; a stale "unsaved" is only a label */ }
                 }
+                // A publish that landed changes what the footer says (the publish target is set by it) and, through its own record, what the
+                // model reads as unsaved. The window only re-reads on a change notice, so it is sent whether or not the saved mark above was.
+                if (!markedSaved && rep != null && rep.Committed && sess != null) PublishSaveNotification(sess, "publish", origin: origin);
 
                 // APPLIED is truthful — tied to the deploy: either it committed real change(s), or (nothing was left to
                 // change AND nothing failed) it's a clean, verified no-op. A push where everything the merge claimed

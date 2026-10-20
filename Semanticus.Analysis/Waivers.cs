@@ -18,7 +18,7 @@ namespace Semanticus.Analysis
         public string System { get; set; }      // "bpa" | "air"
         public string RuleId { get; set; }
         public string ObjectRef { get; set; }    // null/empty = rule-level (all instances)
-        public string Reason { get; set; }       // required — a waiver without a reason is a silent suppression
+        public string Reason { get; set; }       // required for a finding; a Validation check ("test") takes an optional note, because the page shows the difference it accepted
         public string By { get; set; }           // origin: "human" | "agent"
         public string When { get; set; }         // ISO-8601 UTC
 
@@ -34,6 +34,16 @@ namespace Semanticus.Analysis
         /// by it; a twin warning that appears later was never seen, so it stays open.</summary>
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string PairedWith { get; set; }
+
+        /// <summary>A Validation check's waiver ("test" system): the exact difference the person accepted, as the engine wrote it (CheckWaivers.Signature).
+        /// The record covers that difference and no other: when the check differs by something else, it differs again.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string Accepted { get; set; }
+
+        /// <summary>Read-side only, never stored (set by the engine's list_waivers): a Validation check's waiver whose accepted difference is the one the
+        /// check shows in the latest run, so the check counts as accepted now. False: a different difference came back and the check differs again.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public bool? InForce { get; set; }
 
         /// <summary>Read-side only, never stored: the record carries a lineage tag and no object in the model has it now (the object was
         /// deleted, or a different object took its name). The person accepted THAT object, so the record is kept but acts on nothing: it

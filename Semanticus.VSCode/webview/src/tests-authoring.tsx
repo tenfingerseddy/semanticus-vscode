@@ -5,9 +5,10 @@ import { draftModel, draftStore, heldDraft } from './drafts';
 import { useConnection } from './connection';
 import { ObjectBrowser, type BrowserNode } from './objectbrowser';
 import {
-  authoringRefusal, limitedEvidenceNote, reconcileSourceFields, sourceAddedSinceAdd, sqlSourceBinding,
-  type SqlSourceBinding,
+  authoringRefusal, defaultSqlSourceId, distinctTitle, guessSumSql, shownNumber, limitedEvidenceNote, reconcileSourceFields, sqlSourceBinding,
+  type LinkLike, type MappingLike, type SqlSourceBinding,
 } from './tests-model';
+import { SqlSourceAddForm, type AddedSource } from './tests-addsource';
 import { useSurfaceEscape } from './surface-escape';
 import { checkTitle } from './askdata-model';
 import { useDaxModelContext } from './daxeditor';
@@ -23,7 +24,7 @@ import { grainWords } from './sortgrain';
 // check. Anything the engine calls Optional is tuning and is safe to collapse.
 //
 // There is no tableRowCount saved-test kind and there must not be one: for a table count the MAPPING is
-// the check, so this drawer writes set_table_source_mapping and Map source on the page opens the same form.
+// the check, so this drawer writes set_table_source_mapping and Choose source on the page opens the same form.
 // ===================================================================================================
 
 export type AuthorShape = 'measureValue' | 'measureReconcile' | 'tableRowCount';
@@ -56,6 +57,7 @@ export interface MeasureValueParamsW {
 export interface SqlSourceW { id: string; name: string; server?: string; database?: string; authMode?: string; tenantId?: string }
 interface TableMappingRowW {
   modelTable: string; source: string; sqlSourceId?: string; sqlSourceName?: string;
+  server?: string; database?: string;
   schema?: string; entity?: string; canCount: boolean; reason?: string | null; editable: boolean;
 }
 interface TableMappingListW { rows: TableMappingRowW[]; note?: string }
@@ -73,6 +75,10 @@ const inp: CSSProperties = { background: 'var(--sem-surface-2)', color: 'var(--s
 // value like 1e-9, and a display unit must never quietly re-round a saved contract.
 const percentText = (fraction: number) => { const percent = fraction * 100; return percent === 0 ? '0' : String(Number(percent.toPrecision(12))); };
 const relativeFraction = (text: string, stored: number) => text === percentText(stored) ? stored : (Number(text) || 0) / 100;
+// A NEW check against SQL starts on the engine's own default (TolerancePolicy.Default: relative 1e-7, absolute 1e-9). Zero and zero made an
+// average or a ratio that agrees to fourteen places read as "differs" (UAT 18 Oct, round 3, R1). A saved check keeps the numbers it saved.
+export const SQL_TOLERANCE_ABSOLUTE = 1e-9;
+export const SQL_TOLERANCE_RELATIVE = 1e-7;
 
 // ---------------------------------------------------------------------------------------------------
 // The drafts (join 11, drafts.ts). What a person typed into a check is THEIR work, so it lives above the
@@ -104,8 +110,8 @@ function fieldsOf(kind: AuthorShape, def: TestDefinitionW | null): TrustedFields
     const p = parseReconcile(def);
     return {
       measureRef: def?.targetRef || p.measureRef || '', picked: null, groupBy: p.groupBy || [], sql: p.sql || '',
-      sqlGrandTotal: p.sqlGrandTotal || '', filterDax: p.filterDax || '', blankPolicy: p.blankPolicy || '',
-      abs: String(p.toleranceAbsolute ?? 0), relPercent: percentText(p.toleranceRelative ?? 0),
+      sqlGrandTotal: p.sqlGrandTotal || '', filterDax: p.filterDax || '', blankPolicy: p.blankPolicy || 'zero',
+      abs: String(p.toleranceAbsolute ?? SQL_TOLERANCE_ABSOLUTE), relPercent: percentText(p.toleranceRelative ?? SQL_TOLERANCE_RELATIVE),
     };
   }
   const p = parseValue(def);
@@ -154,11 +160,14 @@ function HeldDraftBanner({ onKeepMine, onUseNew, disabled }: { onKeepMine: () =>
 
 /** The quiet mark and the one way to drop a draft on purpose (drawn in place, not as a component of its own). */
 function draftRow(show: boolean, onDiscard: () => void, disabled?: boolean, className = 'mb-3') {
-  if (!show) return null;
+  // The row keeps its height whether or not there is a draft: it used to appear after the first keystroke and push the form down, so a number
+  // typed a moment later went into the box that had moved under the cursor (UAT 1.5.104).
   return (
-    <div className={className + ' flex flex-wrap items-center gap-2'}>
-      <DraftMark show />
-      <button type="button" disabled={disabled} onClick={onDiscard} className="sem-btn sem-btn-sm" title="Drop what you typed here and put the form back as it was opened.">Discard draft</button>
+    <div className={className + ' flex flex-wrap items-center gap-2'} style={{ minHeight: 'var(--sem-control-h-sm, 28px)' }} data-testid="draft-row">
+      {show && <>
+        <DraftMark show />
+        <button type="button" disabled={disabled} onClick={onDiscard} className="sem-btn sem-btn-sm" title="Drop what you typed here and put the form back as it was opened.">Discard draft</button>
+      </>}
     </div>
   );
 }
@@ -280,11 +289,17 @@ const KINDS: { shape: AuthorShape; label: string; hint: string }[] = [
 ];
 
 export function AuthorDrawer({
-  shape, editing, focus, table, latestSources, onClose, onSaved, onAddSqlSource, handedFrom,
+  shape, editing, focus, table, latestSources, onClose, onSaved, addSourceOnOpen, addSourceHost, onSourcesChanged, handedFrom,
 }: {
   shape: AuthorShape; editing?: TestDefinitionW | null; focus?: AuthorFocus; table?: string;
   latestSources?: SqlSourceW[] | null;
-  onClose: () => void; onSaved: () => void; onAddSqlSource?: () => void;
+  /** Opens with the add-a-source form showing (New check > Add a SQL source). The drawer owns adding a source, so a caller never passes a handler for it. */
+  addSourceOnOpen?: boolean;
+  /** A host a check named that is not saved: the add-a-source form opens with this server filled in, so one press and a name confirm it. */
+  addSourceHost?: string;
+  /** A source was added from this drawer: the page reads its list again (no check changed, so nothing is marked as changed). */
+  onSourcesChanged?: () => void;
+  onClose: () => void; onSaved: () => void;
   /** Where a handed expression came from, so the drawer says so. Absent means DAX Lab, as before. */
   handedFrom?: 'askdata' | 'queries';
 }) {
@@ -292,13 +307,13 @@ export function AuthorDrawer({
   const [measures, setMeasures] = useState<MeasureRowW[]>([]);
   const [sources, setSources] = useState<SqlSourceW[]>([]);
   const [sourcesLoaded, setSourcesLoaded] = useState(false);
-  // The id the picker should adopt, when the hub came back with exactly one new record.
+  // The source the person just added from this drawer: the picker adopts it, so they are back in the check with it chosen.
   const [adopt, setAdopt] = useState<string | null>(null);
-  // The source list AS IT STOOD when the person chose "Add a SQL source...". Null means they never did,
-  // and nothing may be adopted. This is the P1 fix: the drawer used to compare against its own empty
-  // initial state, so its FIRST load of the list looked like a source appearing while the hub was open,
-  // and one saved source then replaced an existing check's binding (Astra, 2026-09-15).
-  const addBaseline = useRef<string[] | null>(null);
+  // The add-a-source form is part of the drawer, not a trip to Connections, so it works wherever the drawer opens (Query included).
+  const [adding, setAdding] = useState(!!addSourceOnOpen);
+  // What the form starts from: the source the open model is linked to, and which table maps to which source (for a SQL guess).
+  const [linkedSourceId, setLinkedSourceId] = useState<string | null>(null);
+  const [tableRows, setTableRows] = useState<TableMappingRowW[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [tryNote, setTryNote] = useState<string | null>(null);
@@ -375,44 +390,56 @@ export function AuthorDrawer({
   // A saved check is written naming the fields the Save read, and the engine compares them inside its own write (Sol join 6, round 2).
   const before: SaveFence | undefined = editId ? { before: guard.beforeSave, expected: () => testFence(guard.confirmed()?.from), refused: guard.refused } : undefined;
   useEffect(() => { rpc<MeasureRowW[]>('listMeasures').then(setMeasures).catch(() => undefined); }, []);
+  // Where a new check starts: read when the drawer opens, and again when a source is added from it (that source may become the model's own).
+  const readStart = () => {
+    rpc<{ sqlEndpoint?: { sourceId?: string } | null }>('connectionContext').then((c) => setLinkedSourceId(c?.sqlEndpoint?.sourceId ?? null)).catch(() => undefined);
+    rpc<TableMappingListW>('listTableMappings').then((l) => setTableRows(l.rows ?? [])).catch(() => undefined);
+  };
+  useEffect(readStart, []);
   useEffect(() => {
     rpc<SqlSourceW[]>('listSqlSources')
       .then((list) => { setSources(list); setSourcesLoaded(true); })
       .catch(() => { setSources([]); setSourcesLoaded(true); });
   }, []);
-  // The page re-reads the sources when the hub closes and hands the new list down. The drawer stays put
-  // through all of it; only the picker changes, and only when the person went to add a source and exactly
-  // one came back.
+  // The page re-reads the sources when one is saved elsewhere and hands the new list down; the picker only learns the list.
   useEffect(() => {
     if (!latestSources) return;
     setSources(latestSources);
     setSourcesLoaded(true);
-    const baseline = addBaseline.current;
-    if (!baseline) return;
-    setAdopt(sourceAddedSinceAdd(baseline, latestSources.map((s) => s.id)));
-    addBaseline.current = null;
   }, [latestSources]);
   // Escape belongs to whatever is on TOP. Opening Connections from inside a half-finished check and
   // pressing Escape used to close both, throwing the check away to save a source for it.
   useSurfaceEscape(onClose);
-  // Taking the baseline is the FIRST thing that happens when Add is chosen, before the hub can answer.
-  const beginAddSqlSource = () => {
-    addBaseline.current = sources.map((s) => s.id);
-    onAddSqlSource?.();
+  // The form saved a source: it joins the list at once and is chosen in the check. The form closes unless its test failed (it stays for a fix).
+  const sourceAdded = (added: AddedSource, keepOpen: boolean, connected?: string) => {
+    setTryNote(connected ?? null);   // Save and check: the form closes on success, so the drawer says it connected
+    setSources((list) => [...list.filter((x) => x.id !== added.id), { id: added.id, name: added.name }]);
+    setSourcesLoaded(true);
+    setAdopt(added.id);
+    readStart();
+    if (!keepOpen) setAdding(false);
+    onSourcesChanged?.();
   };
+  const beginAddSqlSource = () => setAdding(true);
+  // Which saved source each table is counted against: the one the person chose for it, else the model's own endpoint, else the source whose
+  // server and database its partition reads. That is what lets a plain SUM over a table start as SQL.
+  const sameSource = (r: TableMappingRowW) => sources.find((x) => !!r.server && !!r.database && x.server?.trim().toLowerCase() === r.server.trim().toLowerCase() && x.database?.trim().toLowerCase() === r.database.trim().toLowerCase())?.id;
+  const mappings: MappingLike[] = tableRows.map((r) => ({
+    modelTable: r.modelTable, schema: r.schema, entity: r.entity, canCount: r.canCount,
+    sqlSourceId: r.sqlSourceId || (r.source === 'endpoint' ? linkedSourceId ?? undefined : sameSource(r)),
+  }));
+  const addSource = adding ? <SqlSourceAddForm initialServer={addSourceHost} onAdded={sourceAdded} onCancel={() => setAdding(false)} /> : null;
 
   return (
     <aside className="fixed top-0 right-0 z-20 flex h-full w-[440px] max-w-[100vw] flex-col border-l" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
       <div className="flex items-start justify-between gap-3 border-b px-4 py-3" style={{ borderColor: 'var(--sem-border)' }}>
         <div>
-          <div className="sem-label">{editing?.id ? 'Edit' : table ? 'Map source' : 'New check'}</div>
+          <div className="sem-label">{editing?.id ? 'Edit' : table ? 'Choose source' : 'New check'}</div>
           <h2 className="m-0 mt-1 text-(length:--sem-text-title) font-semibold">{KINDS.find((k) => k.shape === kind)?.label ?? 'New check'}</h2>
         </div>
         <button type="button" onClick={onClose} className="text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>Close</button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-        {err && <div className="mb-3 rounded border px-3 py-2 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-bad)', borderColor: 'var(--sem-bad)' }}>{err}</div>}
-        {tryNote && <div className="sem-inset mb-3 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>{tryNote}</div>}
         {!locked && <KindChooser kind={kind} onPick={pickKind} />}
         {guard.moved && (editId
           ? <EditMovedBanner what="check" theirs={guard.theirs} onKeepMine={keepMine} onUseNew={guard.useNew} disabled={busy} />
@@ -420,9 +447,12 @@ export function AuthorDrawer({
         {draftRow(guard.drafted, discard, busy)}
         {editId && !draft && <div className="sem-inset text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>Loading the check…</div>}
         {draft && kind === 'measureValue' && <TrustedAnswerForm measures={measures} fields={draft.fields as TrustedFields} onFields={onFields} editing={draft.from} handedFrom={handedFrom} busy={busy} setBusy={setBusy} setErr={setErr} setTryNote={setTryNote} onSaved={onSaved} onClose={onClose} before={before} onWritten={ended} />}
-        {draft && kind === 'measureReconcile' && <CompareWithSourceForm measures={measures} fields={draft.fields as SqlFields} onFields={onFields} sources={sources} sourcesLoaded={sourcesLoaded} adopt={adopt} editing={draft.from} focus={focus} busy={busy} setBusy={setBusy} setErr={setErr} setTryNote={setTryNote} onSaved={onSaved} onClose={onClose} onAddSqlSource={beginAddSqlSource} before={before} onWritten={ended} />}
-        {kind === 'tableRowCount' && <TableRowCountForm sources={sources} adopt={adopt} table={table} busy={busy} setBusy={setBusy} setErr={setErr} onSaved={onSaved} onClose={onClose} onAddSqlSource={beginAddSqlSource} />}
+        {draft && kind === 'measureReconcile' && <CompareWithSourceForm measures={measures} fields={draft.fields as SqlFields} onFields={onFields} sources={sources} sourcesLoaded={sourcesLoaded} adopt={adopt} editing={draft.from} focus={focus} busy={busy} setBusy={setBusy} setErr={setErr} setTryNote={setTryNote} onSaved={onSaved} onClose={onClose} onAddSqlSource={beginAddSqlSource} addSource={addSource} linkedSourceId={linkedSourceId} mappings={mappings} before={before} onWritten={ended} />}
+        {kind === 'tableRowCount' && <TableRowCountForm sources={sources} adopt={adopt} table={table} busy={busy} setBusy={setBusy} setErr={setErr} onSaved={onSaved} onClose={onClose} onAddSqlSource={beginAddSqlSource} addSource={addSource} linkedSourceId={linkedSourceId} />}
       </div>
+      {/* The answer to the last press sits under the buttons, outside the scrolling form: a result drawn at the top of a long form was off screen. */}
+      {(err || tryNote) && <div role={err ? 'alert' : 'status'} aria-live="polite" data-testid="author-result" className="border-t px-4 py-2 text-(length:--sem-text-meta)"
+        style={{ borderColor: err ? 'var(--sem-bad)' : 'var(--sem-border)', color: err ? 'var(--sem-bad)' : 'var(--sem-fg)', background: 'var(--sem-surface)' }}>{err ?? tryNote}</div>}
     </aside>
   );
 }
@@ -468,13 +498,21 @@ export function NewCheckMenu({ onPick, onAddSqlSource }: { onPick: (shape: Autho
         style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>New check ▾</button>
       {open && (
         <div role="menu" aria-label="New check" className="absolute left-0 z-20 mt-1 w-[280px] rounded border p-2" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-          {KINDS.map((item) => <Pick key={item.shape} label={item.label} hint={item.hint} drafted={!!held?.has(item.shape)} onClick={() => choose(item.shape)} />)}
-          {/* The SQL sources count and its button left the tool row; the one door is here, last, since a check compares against a source. */}
-          {onAddSqlSource && <Pick label="Add a SQL source" hint="Connect a database to compare against." onClick={() => { onAddSqlSource(); setOpen(false); }} />}
+          <NewCheckChoices held={held} onPick={choose} onAddSqlSource={onAddSqlSource ? () => { onAddSqlSource(); setOpen(false); } : undefined} />
         </div>
       )}
     </div>
   );
+}
+
+/** The ways to start a check, as menu rows. Validation's "..." menu opens the same list in its New check panel. */
+export function NewCheckChoices({ held, onPick, onAddSqlSource }: { held?: Set<AuthorShape> | null; onPick: (shape: AuthorShape) => void; onAddSqlSource?: () => void }) {
+  const drafts = held ?? heldNewKinds();
+  return <>
+    {KINDS.map((item) => <Pick key={item.shape} label={item.label} hint={item.hint} drafted={drafts.has(item.shape)} onClick={() => onPick(item.shape)} />)}
+    {/* The SQL sources count and its button left the tool row; the one door is here, last, since a check compares against a source. */}
+    {onAddSqlSource && <Pick label="Add a SQL source" hint="Connect a database to compare against." onClick={onAddSqlSource} />}
+  </>;
 }
 
 function Pick({ label, hint, drafted, onClick }: { label: string; hint: string; drafted?: boolean; onClick: () => void }) {
@@ -513,7 +551,7 @@ function SaveRequirement({ kind }: { kind: AuthorShape }) {
   return (
     <div className="sem-inset mt-3 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
       {kind === 'tableRowCount'
-        ? 'The mapping is kept in a small file beside this model.'
+        ? 'The chosen source is kept in a small file beside this model.'
         : 'The check is kept in a small file beside this model. Try it now saves nothing.'}
     </div>
   );
@@ -528,21 +566,22 @@ function MeasureSelect({ measures, value, onChange }: { measures: MeasureRowW[];
   );
 }
 
-// Saved once, named, chosen from a list. The last option opens the Connections hub rather than growing a
-// second place to type an endpoint, which is the repeated setup Astra measured in journey B.
-function SqlSourceSelect({ sources, value, onChange, onAdd }: {
-  sources: SqlSourceW[]; value: string; onChange: (id: string) => void; onAdd?: () => void;
+// Saved once, named, chosen from a list. A source is added from the button under the list, in a small form inside this drawer, and saved to
+// the same list Connections shows, so there is still one place the sources live.
+function SqlSourceSelect({ sources, value, onChange, onAdd, addForm }: {
+  sources: SqlSourceW[]; value: string; onChange: (id: string) => void; onAdd?: () => void; addForm?: ReactNode;
 }) {
-  const ADD = '__add__';
+  // Adding a source is a button of its own, never an item in the list. An item in a native list acts the moment the arrow keys move over it,
+  // which opened a form over the check just from moving through the choices (UAT 1.5.104).
   return (
     <>
-      <select value={value} onChange={(e) => { if (e.target.value === ADD) { onAdd?.(); return; } onChange(e.target.value); }}
-        aria-label="SQL source" className="w-full rounded border px-2 py-2 text-(length:--sem-text-meta)" style={inp}>
+      <select value={value} onChange={(e) => onChange(e.target.value)}
+        aria-label="SQL source" className="w-full min-w-0 rounded border px-2 py-2 text-(length:--sem-text-meta)" style={inp}>
         <option value="">Pick a SQL source</option>
         {sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        <option value={ADD}>Add a SQL source…</option>
       </select>
-      {sources.length === 0 && <span className="mt-1 block text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
+      {addForm ?? (onAdd && <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet mt-1" onClick={onAdd} data-testid="check-add-source-open">Add a SQL source…</button>)}
+      {sources.length === 0 && !addForm && <span className="mt-1 block text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
         No SQL sources are saved yet. Add one and every check and table mapping can use it.
       </span>}
     </>
@@ -627,7 +666,9 @@ function Footer({ busy, onTry, onSave, tryLabel = 'Try it now', saveLabel = 'Sav
   busy: boolean; onTry?: () => void; onSave: () => void; tryLabel?: string; saveLabel?: string;
 }) {
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2">
+    // Sticky at the bottom of the scrolling form, so Try it now and Save are in reach whatever the form's length and never slide under the answer.
+    // The form's own padding sits below a sticky bar's edge, so the bar reaches down through it (-bottom-3 here, pb-3 inside) or the fields scrolling by show through under the buttons.
+    <div className="sticky -bottom-3 z-10 -mx-4 -mb-3 mt-3 flex flex-wrap items-center gap-2 px-4 pb-3 pt-2" style={{ background: 'var(--sem-surface)' }}>
       {onTry && <button type="button" disabled={busy} onClick={onTry} className="min-h-7 rounded border px-3 py-1 text-(length:--sem-text-meta)" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>{tryLabel}</button>}
       <button type="button" disabled={busy} onClick={onSave} className="min-h-7 rounded border px-3 py-1 text-(length:--sem-text-meta) font-semibold" style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{saveLabel}</button>
     </div>
@@ -658,7 +699,14 @@ export function TrustedAnswerForm({ measures, fields, onFields, editing, handedF
   const setMeasureRef = (v: string) => onFields({ measureRef: v });
   const setFilterColumn = (v: string) => onFields({ filterColumn: v });
   const setFilterValue = (v: string) => onFields({ filterValue: v });
-  const setExpected = (v: string) => onFields({ expected: v });
+  // The number from a Query answer is the raw ratio (0.5812049141182254). It is SHOWN the way the measure shows it (58.1%) until the person
+  // types, and a typed "58.1%" is understood by the engine (round 2 N11).
+  const model = useDaxModelContext();
+  const measureName = measureRef.replace(/^measure:/, '').replace(/^[^/]*\//, '');
+  const formatString = (model.measures ?? []).find((x) => x.name === measureName)?.formatString;
+  const [typedExpected, setTypedExpected] = useState(false);
+  const setExpected = (v: string) => { setTypedExpected(true); onFields({ expected: v }); };
+  const expectedShown = typedExpected ? expected : shownNumber(expected, formatString);
   const setProvenance = (v: string) => onFields({ provenance: v });
   const setFilterDax = (v: string) => onFields({ filterDax: v });
   const setExpressionDax = (v: string) => onFields({ expressionDax: v });
@@ -687,14 +735,14 @@ export function TrustedAnswerForm({ measures, fields, onFields, editing, handedF
   const title = () => {
     const x = testExpression ? expressionDax : '';
     if (editing?.id && editing.title?.trim() && asks(measureRef, filterColumn, filterValue, filterDax, x, expected) === savedAsks) return editing.title;
-    return checkTitle(measureRef, expected, { expressionDax: x, filterColumn, filterValue, filterDax });
+    return checkTitle(measureRef, expectedShown, { expressionDax: x, filterColumn, filterValue, filterDax });
   };
   const def = (): TestDefinitionW => ({
     ...editing,
     id: editing?.id || '', kind: 'measureValue', title: title(),
     targetRef: measureRef, enabled: editing?.enabled ?? true,
     paramsJson: JSON.stringify({
-      measureRef, expectedValue: expected.trim(), filterColumn: filterColumn.trim() || undefined,
+      measureRef, expectedValue: expectedShown.trim(), filterColumn: filterColumn.trim() || undefined,
       filterValue: filterValue.trim() || undefined, filterDax: filterDax.trim() || undefined,
       expressionDax: testExpression ? (expressionDax.trim() || undefined) : undefined,
       provenance: provenance.trim() || undefined, toleranceAbsolute: Number(abs) || 0, toleranceRelative: relFraction,
@@ -705,12 +753,12 @@ export function TrustedAnswerForm({ measures, fields, onFields, editing, handedF
     <>
       <Field label="Which calculation"><MeasureSelect measures={measures} value={measureRef} onChange={setMeasureRef} /></Field>
       <Field label="The number you trust" hint="Type BLANK if the right answer is no value.">
-        <input value={expected} onChange={(e) => setExpected(e.target.value)} className="min-h-7 w-full rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
+        <input value={expectedShown} onChange={(e) => setExpected(e.target.value)} className="min-h-7 w-full rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
       </Field>
       <Field label="Only where (optional)" hint="Example: Year is 2024.">
         <span className="flex gap-2">
-          <input value={filterColumn} onChange={(e) => setFilterColumn(e.target.value)} placeholder="Column" className="min-h-7 flex-1 rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
-          <input value={filterValue} onChange={(e) => setFilterValue(e.target.value)} placeholder="Value" className="min-h-7 flex-1 rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
+          <input value={filterColumn} onChange={(e) => setFilterColumn(e.target.value)} placeholder="Column" className="min-h-7 min-w-0 flex-1 rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
+          <input value={filterValue} onChange={(e) => setFilterValue(e.target.value)} placeholder="Value" className="min-h-7 min-w-0 flex-1 rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
         </span>
       </Field>
       <Field label="Where this number came from (optional)">
@@ -722,7 +770,7 @@ export function TrustedAnswerForm({ measures, fields, onFields, editing, handedF
           <label className="block text-(length:--sem-text-meta)"><input type="radio" name="whichFormula" checked={!testExpression} onChange={() => setTestExpression(false)} /> Test the measure as saved</label>
           <label className="block text-(length:--sem-text-meta)"><input type="radio" name="whichFormula" checked={testExpression} onChange={() => setTestExpression(true)} /> Test this expression</label>
           <div className="mt-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{handedFrom === 'askdata' || handedFrom === 'queries'
-            ? `This number came from ${handedFrom === 'queries' ? 'your question in Queries' : 'Ask your data'}, with its filters and its row. Test this expression to keep them, or the measure as saved to check its total.`
+            ? `This number came from your question in Query, with its filters and its row. Test this expression to keep them, or the measure as saved to check its total.`
             : 'You changed the formula in DAX Lab. The model still holds the saved one, so say which one this check should ask.'}</div>
           {!handedIsOneCell && <div className="mt-2 rounded border px-2 py-2 text-(length:--sem-text-label)" style={{ borderColor: 'var(--sem-warn)', color: 'var(--sem-warn)' }}>Your DAX Lab query returns a table, not one number. A measure check compares one number, so it cannot ask this as it stands. Leave this check on the measure as saved, or pick Test this expression and replace it with a single value.</div>}
           {testExpression && <textarea value={expressionDax} onChange={(event) => setExpressionDax(event.target.value)} rows={4} spellCheck={false} aria-label="The expression to test" className="mt-2 w-full rounded border px-2 py-1 font-mono text-(length:--sem-text-label)" style={inp} />}
@@ -755,13 +803,17 @@ export function TrustedAnswerForm({ measures, fields, onFields, editing, handedF
 // Compare with source. Everything the engine REQUIRES is visible, and so is the one thing that decides
 // whether a verdict is even reachable.
 // ---------------------------------------------------------------------------------------------------
-export function CompareWithSourceForm({ measures, fields, onFields, sources, sourcesLoaded, adopt, editing, focus, busy, setBusy, setErr, setTryNote, onSaved, onClose, onAddSqlSource, before, onWritten }: {
+export function CompareWithSourceForm({ measures, fields, onFields, sources, sourcesLoaded, adopt, editing, focus, busy, setBusy, setErr, setTryNote, onSaved, onClose, onAddSqlSource, addSource, linkedSourceId, mappings, before, onWritten }: {
   measures: MeasureRowW[];
   /** Every field of the form, held by the drawer (the draft). `editing` is the check they were typed on. */
   fields: SqlFields; onFields: (patch: Partial<SqlFields>) => void;
   sources: SqlSourceW[]; sourcesLoaded: boolean; adopt?: string | null; editing?: TestDefinitionW | null; focus?: AuthorFocus; busy: boolean;
   setBusy: (v: boolean) => void; setErr: (v: string | null) => void; setTryNote: (v: string | null) => void;
   onSaved: () => void; onClose: () => void; onAddSqlSource?: () => void;
+  /** The add-a-source form, when the drawer is showing it in place of the button. */
+  addSource?: ReactNode;
+  /** The source the open model is linked to, and which table maps to which source: where a new check starts. */
+  linkedSourceId?: string | null; mappings?: MappingLike[];
   before?: SaveFence;
   /** The engine took the write, which carried `sent`. False means the fields were edited meanwhile: they stay held and the drawer stays open (R-B). */
   onWritten?: (sent: SqlFields) => boolean | void;
@@ -781,10 +833,21 @@ export function CompareWithSourceForm({ measures, fields, onFields, sources, sou
     available: sources.map((s) => ({ id: s.id, name: s.name })),
     loaded: sourcesLoaded,
   });
-  const sqlSourceId = picked ?? binding.select;
+  // A new check starts on the model's own source (or the only one saved). It is shown, not stored, so it makes no draft; the person's own pick wins.
+  const startSourceId = binding.select || binding.keepsInline ? '' : defaultSqlSourceId(linkedSourceId, sources);
+  const sqlSourceId = picked ?? (binding.select || startSourceId);
   const setSqlSourceId = (id: string) => setPicked(id);
   const setGroupBy = (v: string[]) => onFields({ groupBy: v });
-  const setSql = (v: string) => onFields({ sql: v });
+  const typedSql = useRef(false);   // once the person has touched the box (even to empty it) the guess never comes back over their words
+  const setSql = (v: string) => { typedSql.current = true; onFields({ sql: v }); };
+  // A plain SUM of one column, over a table that maps to this source, starts the SQL as a guess the person can change. Shown, not stored:
+  // once they type anything it is theirs, and until then nothing is a draft.
+  const measureExpression = measures.find((m) => m.ref === measureRef)?.expression;
+  // The groups are part of the guess: the SQL must select them first, in the order chosen, or the check fails on its own defaults.
+  const [links, setLinks] = useState<LinkLike[]>([]);
+  useEffect(() => { rpc<{ relationships?: LinkLike[] }>('getModelGraph').then((g) => setLinks(g.relationships ?? [])).catch(() => setLinks([])); }, []);
+  const guess = sql.trim() === '' && !typedSql.current && !editing?.id ? guessSumSql(measureExpression, mappings ?? [], sqlSourceId, groupBy, links) : null;
+  const sqlText = sql !== '' || typedSql.current ? sql : guess ?? '';
   const setSqlGrandTotal = (v: string) => onFields({ sqlGrandTotal: v });
   const setFilterDax = (v: string) => onFields({ filterDax: v });
   const setBlankPolicy = (v: string) => onFields({ blankPolicy: v });
@@ -794,12 +857,12 @@ export function CompareWithSourceForm({ measures, fields, onFields, sources, sou
   const blankGroup = useRef<HTMLDivElement | null>(null);
   const setAbs = (v: string) => onFields({ abs: v });
   const setRelPercent = (v: string) => onFields({ relPercent: v });
-  const relFraction = relativeFraction(relPercent, initial.toleranceRelative ?? 0);
+  const relFraction = relativeFraction(relPercent, initial.toleranceRelative ?? SQL_TOLERANCE_RELATIVE);
   // Only ever set from a baseline the Add handler captured, so this can no longer fire on a first load.
   useEffect(() => { if (adopt) setPicked(adopt); }, [adopt]);
 
   const params = (): ReconcileParamsW => ({
-    measureRef, sql: sql.trim(), sqlGrandTotal: sqlGrandTotal.trim() || undefined,
+    measureRef, sql: sqlText.trim(), sqlGrandTotal: sqlGrandTotal.trim() || undefined,
     groupBy, filterDax: filterDax.trim() || undefined,
     blankPolicy, toleranceAbsolute: Number(abs) || 0, toleranceRelative: relFraction,
     // The binding travels whichever button sent this, so a payload that names no source and carries an old
@@ -811,9 +874,17 @@ export function CompareWithSourceForm({ measures, fields, onFields, sources, sou
   });
   const def = (): TestDefinitionW => ({
     ...editing,
-    id: editing?.id || '', kind: 'measureReconcile', title: sqlTitleFor(measureRef),
+    id: editing?.id || '', kind: 'measureReconcile', title: sqlTitleFor(measureRef, groupBy),
     targetRef: measureRef, enabled: editing?.enabled ?? true, paramsJson: JSON.stringify(params()),
   });
+  // Two checks of one calculation can differ only in their SQL, so a NEW check takes a name no saved check has (round 2 N15).
+  const nameNew = async (d: TestDefinitionW): Promise<TestDefinitionW> => {
+    if (d.id) return d;
+    try {
+      const saved = ((await rpc<{ definitions?: TestDefinitionW[] }>('listTests')).definitions ?? []).map((x) => x.title ?? '');
+      return { ...d, title: distinctTitle(d.title, saved) };
+    } catch { return d; }
+  };
 
   // Opened from "Choose what a blank means": land on that control rather than the top of the form.
   useEffect(() => {
@@ -841,12 +912,12 @@ export function CompareWithSourceForm({ measures, fields, onFields, sources, sou
     <>
       <Field label="Which calculation"><MeasureSelect measures={measures} value={measureRef} onChange={setMeasureRef} /></Field>
       <Field label="SQL source" hint="Saved once in Connections, then used by any check or table mapping.">
-        <SqlSourceSelect sources={sources} value={sqlSourceId} onChange={setSqlSourceId} onAdd={onAddSqlSource} />
+        <SqlSourceSelect sources={sources} value={sqlSourceId} onChange={setSqlSourceId} onAdd={onAddSqlSource} addForm={addSource} />
         {binding.note && !picked && <span className="mt-1 block text-(length:--sem-text-label)"
           style={{ color: binding.needsReplacement ? 'var(--sem-warn)' : 'var(--sem-muted)' }}>{binding.note}</span>}
       </Field>
-      <Field label="The SQL you accept as the truth">
-        <textarea value={sql} onChange={(e) => setSql(e.target.value)} rows={5} spellCheck={false} className="w-full rounded border px-2 py-1 font-mono text-(length:--sem-text-label)" style={inp} />
+      <Field label="The SQL you accept as the truth" hint={guess ? 'A first guess from the column in this calculation. Change it if your source is different.' : undefined}>
+        <textarea value={sqlText} onChange={(e) => setSql(e.target.value)} rows={5} spellCheck={false} aria-label="The SQL you accept as the truth" className="w-full min-w-0 rounded border px-2 py-1 font-mono text-(length:--sem-text-label)" style={inp} />
       </Field>
       <div className="sem-inset mb-3 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
         Your SQL must use the same filter as the check. Semanticus never rewrites your query, so if the two sides are
@@ -861,7 +932,7 @@ export function CompareWithSourceForm({ measures, fields, onFields, sources, sou
         <div className="mb-1 text-(length:--sem-text-label) font-semibold">Which groups to compare</div>
         <ContextFields value={groupBy} onChange={setGroupBy} />
         {evidenceNote
-          ? <div className="mt-2 rounded border px-2 py-2 text-(length:--sem-text-label)" style={{ borderColor: 'var(--sem-warn)', color: 'var(--sem-warn)' }}>{evidenceNote}</div>
+          ? <div className="mt-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{evidenceNote}</div>
           : <div className="mt-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Fields can come from different tables. The check compares every combination both queries return.</div>}
         {grain && <div className="mt-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }} data-testid="check-grain">{grain}</div>}
       </div>
@@ -870,7 +941,8 @@ export function CompareWithSourceForm({ measures, fields, onFields, sources, sou
         {([['zero', 'Zero'], ['null', 'No value'], ['distinct', 'Its own group']] as const).map(([v, label]) => (
           <label key={v} className="mr-3 text-(length:--sem-text-meta)"><input type="radio" name="blank" checked={blankPolicy === v} onChange={() => { setBlankPolicy(v); setSaveAttempted(false); }} /> {label}</label>
         ))}
-        {!blankPolicy && <div className="mt-1 text-(length:--sem-text-label)" style={{ color: saveAttempted ? 'var(--sem-bad)' : 'var(--sem-muted)' }}>Pick one before you save. There is no sensible default.</div>}
+        {blankPolicy === 'zero' && <div className="mt-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>A blank counts as zero, the usual choice for a total. Change it if it should not.</div>}
+        {!blankPolicy && <div className="mt-1 text-(length:--sem-text-label)" style={{ color: saveAttempted ? 'var(--sem-bad)' : 'var(--sem-muted)' }}>Pick one to continue.</div>}
       </div>
       <QueryTargetNote editing={editing} />
       <Advanced summary="tolerance, a complete DAX filter and a separate grand total query">
@@ -884,26 +956,28 @@ export function CompareWithSourceForm({ measures, fields, onFields, sources, sou
       <SaveRequirement kind="measureReconcile" />
       <Footer busy={busy}
         onTry={() => { if (refusal()) return; void tryDef(def(), setBusy, setErr, setTryNote); }}
-        onSave={() => { if (refusal()) return; void saveDef(def(), setBusy, setErr, onSaved, onClose, before, onWritten && (() => onWritten(fields))); }} />
+        onSave={() => { if (refusal()) return; void nameNew(def()).then((d) => saveDef(d, setBusy, setErr, onSaved, onClose, before, onWritten && (() => onWritten(fields)))); }} />
     </>
   );
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Table row count. ONE identity with Map source on the page: for a table count the mapping IS the check,
+// Table row count. ONE identity with Choose source on the page: for a table count the mapping IS the check,
 // so there is no saved-test kind to send and none is sent.
 // ---------------------------------------------------------------------------------------------------
-export function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr, onSaved, onClose, onAddSqlSource }: {
+export function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr, onSaved, onClose, onAddSqlSource, addSource, linkedSourceId }: {
   sources: SqlSourceW[]; adopt?: string | null; table?: string; busy: boolean;
   setBusy: (v: boolean) => void; setErr: (v: string | null) => void; onSaved: () => void; onClose: () => void;
-  onAddSqlSource?: () => void;
+  onAddSqlSource?: () => void; addSource?: ReactNode;
+  /** The source the open model is linked to: a table with no source of its own starts on it, as a check against SQL does. */
+  linkedSourceId?: string | null;
 }) {
   const [rows, setRows] = useState<TableMappingRowW[]>([]);
   // A mapping the person typed and did not save opens again as typed: by its table, or (New check > Table row count, no table
   // given) on the table that holds one.
   const [modelTable, setModelTable] = useState(() => table || heldMappingTable());
   const [held] = useState(() => (modelTable ? heldDraft<MappingFields>(mappingDraftScope(modelTable)) : undefined));
-  const [sqlSourceId, setSqlSourceId] = useState(held?.value.sqlSourceId ?? '');
+  const [pickedSourceId, setSqlSourceId] = useState(held?.value.sqlSourceId ?? '');
   const [schema, setSchema] = useState(held?.value.schema ?? '');
   const [entity, setEntity] = useState(held?.value.entity ?? '');
   const [loaded, setLoaded] = useState(false);
@@ -916,11 +990,13 @@ export function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr
   // Filling in what the table already has is not a guess: it is the row the engine just sent for it. The guard
   // does it, on first read and whenever the table changes, and keeps it honest when the row moves under the person
   // (UAT-F-S06b-2-007: the drawer kept the old mapping after MCP changed it, and Save wrote the old one back).
+  // A table with no source of its own starts on the model's source (or the only one saved). Shown, not stored: it makes no draft.
+  const sqlSourceId = pickedSourceId || (modelTable ? defaultSqlSourceId(linkedSourceId, sources) : '');
   const mappingOf = (row?: TableMappingRowW) => ({ sqlSourceId: row?.sqlSourceId || '', schema: row?.schema || '', entity: row?.entity || '' });
   const readRow = useRef<TableMappingRowW | undefined>(undefined);   // the row the last Save read: what the stored mapping was when it did
   const guard = useEditBase<MappingFields>({
     current: loaded ? mappingOf(rows.find((r) => r.modelTable === modelTable)) : undefined,
-    draft: { sqlSourceId, schema, entity }, editing: true, scope: modelTable,
+    draft: { sqlSourceId: pickedSourceId, schema, entity }, editing: true, scope: modelTable,
     persist: modelTable ? { scope: mappingDraftScope(modelTable) } : undefined,
     reseed: (v) => { setSqlSourceId(v.sqlSourceId); setSchema(v.schema); setEntity(v.entity); },
     readNow: async () => { const row = ((await rpc<TableMappingListW>('listTableMappings')).rows ?? []).find((r) => r.modelTable === modelTable); readRow.current = row; return mappingOf(row); },
@@ -929,10 +1005,10 @@ export function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr
   const putBack = (v: MappingFields) => { setSqlSourceId(v.sqlSourceId); setSchema(v.schema); setEntity(v.entity); guard.rebase(v); };
   // The engine took the write (or the person removed the mapping): the draft for this table ends now, before the drawer closes.
   // R-B (drafts-sol F5): it ends only the words the save CARRIED. The boxes stay editable while the engine is busy, so what is typed when the answer comes may be newer: then it stays held.
-  const nowRef = useRef({ sqlSourceId, schema, entity }); nowRef.current = { sqlSourceId, schema, entity };
+  const nowRef = useRef({ sqlSourceId: pickedSourceId, schema, entity }); nowRef.current = { sqlSourceId: pickedSourceId, schema, entity };
   const ended = (sent?: MappingFields): boolean => {
     if (sent && !sameValue({ ...nowRef.current, schema: nowRef.current.schema.trim(), entity: nowRef.current.entity.trim() }, sent)) { guard.rebase(sent); return false; }
-    guard.rebase({ sqlSourceId, schema, entity });
+    guard.rebase({ sqlSourceId: pickedSourceId, schema, entity });
     const m = draftModel(); if (m && modelTable) draftStore.clear(m, mappingDraftScope(modelTable));
     return true;
   };
@@ -959,7 +1035,7 @@ export function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr
   };
   const save = async () => {
     if (!modelTable) { setErr('Pick the table to count.'); return; }
-    if (!sqlSourceId) { setErr('Pick the SQL source that holds this table, or add one.'); return; }
+    if (!sqlSourceId) { setErr('Pick the SQL source that holds this table, or add one.'); return; }   // sqlSourceId: the person's pick, else the model's own source
     if (!schema.trim() || !entity.trim()) { setErr('Say which schema and which table in the source to count.'); return; }
     setBusy(true); setErr(null);
     try {
@@ -970,7 +1046,7 @@ export function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr
       const expected = JSON.stringify({ sqlSourceId: was?.sqlSourceId ?? '', schema: was?.schema ?? '', entity: was?.entity ?? '' });
       try { await rpc('setTableSourceMapping', modelTable, sqlSourceId, schema.trim(), entity.trim(), 'human', expected); }
       catch (e) { if (await guard.refused(e)) return; throw e; }
-      const owns = ended({ sqlSourceId, schema: schema.trim(), entity: entity.trim() } as MappingFields);   // what the write carried (the engine was given the trimmed names)
+      const owns = ended({ sqlSourceId: pickedSourceId, schema: schema.trim(), entity: entity.trim() } as MappingFields);   // what the write carried (the engine was given the trimmed names)
       announceTestSuiteChanged(); onSaved(); if (owns) onClose();
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -985,7 +1061,7 @@ export function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr
       </Field>
       {chosen && !chosen.canCount && chosen.reason && <div className="mb-3 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Right now, {chosen.reason}.</div>}
       <Field label="SQL source" hint="Saved once in Connections, then used by any check or table mapping.">
-        <SqlSourceSelect sources={sources} value={sqlSourceId} onChange={setSqlSourceId} onAdd={onAddSqlSource} />
+        <SqlSourceSelect sources={sources} value={sqlSourceId} onChange={setSqlSourceId} onAdd={onAddSqlSource} addForm={addSource} />
       </Field>
       <Field label="Schema" hint="The schema in the source that holds the table.">
         <input value={schema} onChange={(e) => setSchema(e.target.value)} placeholder="sales" className="min-h-7 w-full rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
@@ -1000,11 +1076,11 @@ export function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr
       <SaveRequirement kind="tableRowCount" />
       {guard.moved && <EditMovedBanner what="mapping" theirs={guard.theirs} onKeepMine={guard.keepMine} onUseNew={guard.useNew} disabled={busy} />}
       {draftRow(guard.drafted, discard, busy, 'mt-3')}
-      <Footer busy={busy} onSave={() => void save()} saveLabel="Save mapping" />
+      <Footer busy={busy} onSave={() => void save()} saveLabel="Save check" />
       {chosen?.sqlSourceId && (
         <div className="mt-3 border-t pt-3" style={{ borderColor: 'var(--sem-border)' }}>
           <button type="button" disabled={busy} onClick={removeMapping}
-            className="sem-btn sem-btn-sm">Remove mapping</button>
+            className="sem-btn sem-btn-sm">Remove source</button>
           <span className="mt-1 block text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
             Use the model&apos;s detected source if one exists.
           </span>
@@ -1021,8 +1097,8 @@ async function tryDef(def: TestDefinitionW, setBusy: (v: boolean) => void, setEr
     setTryNote(r.message || r.verdict || 'Tried once. Nothing was saved.');
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    setTryNote(msg.toLowerCase().includes('live') || msg.toLowerCase().includes('connect')
-      ? "Can't try this now: no live model to ask." : msg);
+    // Only the engine's own no-model error means there is nothing to ask; a slow or unreachable source says its own reason.
+    setTryNote(/no open model/i.test(msg) ? "Can't try this now: no live model to ask." : msg);
   } finally { setBusy(false); }
 }
 
@@ -1048,8 +1124,10 @@ function parseReconcile(def?: TestDefinitionW | null): ReconcileParamsW {
   if (!def?.paramsJson) return {};
   try { return JSON.parse(def.paramsJson) as ReconcileParamsW; } catch { return {}; }
 }
-/** A source reconcile's title. A trusted answer's comes from checkTitle, which reads the check itself. */
-function sqlTitleFor(measureRef: string) {
+/** A source reconcile's title. A trusted answer's comes from checkTitle, which reads the check itself. A grouped check says its groups,
+ *  so two checks of one calculation (the total and the one by Brand) never share a title. */
+export function sqlTitleFor(measureRef: string, groupBy: string[] = []) {
   const name = (measureRef || '').split('/').pop()?.replace(/^measure:/, '') || 'Calculation';
-  return `${name} ties to source SQL`;
+  const groups = groupBy.map((g) => (/^column:[^/]+\/(.+)$/.exec(g)?.[1] ?? /\[([^\]]+)\]$/.exec(g)?.[1] ?? g).trim()).filter(Boolean);
+  return `${name}${groups.length ? ' by ' + groups.join(' and ') : ''} ties to source SQL`;
 }

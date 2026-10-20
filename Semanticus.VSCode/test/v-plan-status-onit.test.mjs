@@ -1,4 +1,4 @@
-// Verifier (v-plan-status): "On it" from assistantAtWork must end about 60 s after the assistant's last edit, even when nothing else changes.
+// Verifier (v-plan-status): "On it" from assistantAtWork must end about 45 s after the assistant's last edit, even when nothing else changes.
 // The engine computes the flag at read time (LocalEngine.Plan.cs MarkRowsTheAssistantIsWorking), so the page must read the plan again when the
 // window ends. plan.tsx re-reads only on sessionId/revision/changeNonce/retry and plan/didChange; no timer looks at assistantAtWork.
 import assert from 'node:assert/strict';

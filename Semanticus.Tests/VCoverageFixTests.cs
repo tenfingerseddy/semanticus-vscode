@@ -230,7 +230,9 @@ namespace Semanticus.Tests
             var (bpa1, air1, plan1) = await ReadAsync(e, which + " AFTER");
             await Step("end");
             // The numbers counted by hand from the rows the Plan lists (fix-coverage3; the build before it said 7 of 19 and 12 of 18).
-            var (wantDone, wantAll) = which == "aw" ? (6, 17) : (10, 16);
+            // The gappy model is built in memory, so its list also carries the Save row, which the strip leaves out (hero 26 N9): 16 rows, 15 tasks.
+            // The aw run now ends with unsaved edits too, so its list carries the Save row as well: 17 rows, 16 tasks.
+            var (wantDone, wantAll) = which == "aw" ? (6, 16) : (10, 15);
             if (plan1.Strip?.TasksDone != wantDone || plan1.Strip?.TasksAll != wantAll)
                 problems.Add($"INVARIANT strip: Plan done {plan1.Strip?.TasksDone} of {plan1.Strip?.TasksAll}, counted by hand from the rows {wantDone} of {wantAll}");
             if (!(bpa1.BestPracticeScore > bpa0.BestPracticeScore)) problems.Add($"BPA did not rise: {bpa0.BestPracticeScore} -> {bpa1.BestPracticeScore}");

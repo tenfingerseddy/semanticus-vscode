@@ -17,6 +17,10 @@ namespace Semanticus.Engine.Query
         /// <summary>The question in plain words, for example "net sales by store region for 2025, top 10".</summary>
         public string Question { get; set; }
 
+        /// <summary>The id of a row of the notebook this ask opens again (the page sends it when a person opens a folded row). The row
+        /// is updated in place, with its pin and its place, and no new row is added to the history. Unknown ids add a row as usual.</summary>
+        public string RecordAs { get; set; }
+
         /// <summary>Columns to split the numbers by, as 'Table'[Column], Table[Column] or column:Table/Column.</summary>
         public string[] GroupBy { get; set; }
 
@@ -92,6 +96,10 @@ namespace Semanticus.Engine.Query
 
         public string Outcome { get; set; }
 
+        /// <summary>The id of this question in the model's history (and the notebook), so a page or an assistant can pin, close or
+        /// note it. Null when the model keeps no history.</summary>
+        public string QuestionId { get; set; }
+
         /// <summary>What the answer shows, in one plain sentence: "This shows Net Sales for each Store Region, where Year is
         /// 2025." Built by the engine from the query that runs (StatedReading), the first line of every answer on both
         /// doors. Null when no reading was settled.</summary>
@@ -122,6 +130,12 @@ namespace Semanticus.Engine.Query
         /// were settled carries the parts as they were asked, so it can still be changed and asked again. Null only for
         /// a question in words that was never read into parts.</summary>
         public DataAsk Parts { get; set; }
+
+        /// <summary>Set when the engine's own check named something the reading leaves out of the question (a narrowing, a period, a
+        /// share): one plain line saying what it could not read. A page shows that line and no figure, so a number that answers
+        /// another question is never shown as the answer (UAT 17 Oct, P21). The rows still come back for the table and the
+        /// assistant, whose <see cref="Assumption"/> carries the same line.</summary>
+        public string Flagged { get; set; }
 
         /// <summary>The DAX the engine built, when it got that far.</summary>
         public string Dax { get; set; }

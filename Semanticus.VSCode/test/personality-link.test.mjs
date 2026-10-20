@@ -269,3 +269,27 @@ test('link state: a bpa_scan with no result event ends within seconds of the las
   c.advance(state.QUIET_END_MS + 100);
   assert.equal(w.getSnapshot().state, 'success');
 });
+
+// Hero 24 D8: "RETURNing the favour" and "Removing filters, ALL of them" stayed on the status bar for minutes over an Explain that never finished.
+// Humour is for work that moves. Work with no sign of progress for a while says the plain fact, no joke.
+test('status words: work that has gone quiet says the plain fact, work that moves keeps its verb (hero 24 D8)', () => {
+  const c = clock();
+  const w = state.createLinkWork(c.now, c.schedule);
+  w.call('run_dax');
+  const snap = w.getSnapshot();
+  assert.ok(verbs.VERBS.DAX.includes(link.statusWords(snap, 1, false, 5_000)), 'a young job keeps its verb');
+  assert.equal(link.statusWords(snap, 1, false, verbs.STUCK_MS + 1), verbs.WAITING.DAX, 'a job with no progress for a few seconds says what it waits on');
+  assert.equal(link.statusWords(snap, 1, true, verbs.STUCK_MS - 1), verbs.PLAIN.DAX, 'Quiet is plain from the start');
+  assert.ok(!verbs.VERBS.DAX.includes(link.statusWords(snap, 7, false, 10 * 60_000)));
+  const moving = { ...snap, progress: { done: 3, total: 9 } };
+  assert.ok(verbs.VERBS.DAX.includes(link.statusWords(moving, 1, false, verbs.STUCK_MS + 1)), 'a job that reports progress is not stuck');
+});
+
+test('the wait line names a step the person can see: Jev working in the background on the plan keeps its verb (UAT 17 Oct, "Waiting for Jev to answer 0:15" with nothing on screen)', () => {
+  const base = { state: 'thinking', group: 'Jev', job: 1, startedAt: 0, endedAt: null, progress: null, words: null, error: null };
+  const background = { ...base, who: 'assistant', jev: true };
+  assert.ok(verbs.VERBS.Jev.includes(link.statusWords(background, 1, false, verbs.STUCK_MS + 1)), 'nothing on screen waits, so no wait line');
+  assert.equal(link.statusWords({ ...background, who: 'person' }, 1, false, verbs.STUCK_MS + 1), verbs.WAITING.Jev, 'a press the person made does wait');
+  assert.equal(verbs.WAITING.Jev, 'Waiting for Jev to finish this step');
+  assert.equal(link.statusWords({ ...base, group: 'DAX', who: 'assistant', jev: false }, 1, false, verbs.STUCK_MS + 1), verbs.WAITING.DAX, 'a query that shows as a row still says what it waits on');
+});

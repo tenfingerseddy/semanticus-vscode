@@ -33,6 +33,8 @@ namespace Semanticus.Tests
             _root = Path.Combine(Path.GetTempPath(), "sem-testspeed-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(_root);
             ConnectionRegistry.RootOverride = Path.Combine(_root, "registry");
+            // The checks below name this server inline. A sign-in goes only to a server saved on this machine.
+            SqlSourceRegistry.Save(null, "Fabric", Server, Database, "azcli", null);
         }
 
         public void Dispose()
@@ -340,9 +342,9 @@ namespace Semanticus.Tests
             Assert.Contains("DAX member query", ran[1].Message);       Assert.Contains("dax went wrong", ran[1].Message);
             Assert.Contains("SQL member query", ran[2].Message);       Assert.Contains("sql went wrong", ran[2].Message);
             Assert.Contains("DAX member query", ran[3].Message);       Assert.DoesNotContain("sql went wrong", ran[3].Message);   // the DAX error is reported first
-            Assert.Contains("DAX grand-total query", ran[4].Message);  Assert.Contains("dax went wrong", ran[4].Message);
-            Assert.Contains("SQL grand-total query", ran[5].Message);  Assert.Contains("sql went wrong", ran[5].Message);
-            Assert.Contains("DAX grand-total query", ran[6].Message);  Assert.DoesNotContain("sql went wrong", ran[6].Message);
+            Assert.Contains("DAX total query", ran[4].Message);  Assert.Contains("dax went wrong", ran[4].Message);
+            Assert.Contains("SQL total query", ran[5].Message);  Assert.Contains("sql went wrong", ran[5].Message);
+            Assert.Contains("DAX total query", ran[6].Message);  Assert.DoesNotContain("sql went wrong", ran[6].Message);
         }
 
         // ---- 5. progress while a run goes ------------------------------------------------------------------------

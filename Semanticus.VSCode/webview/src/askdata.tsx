@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { rpc } from './bridge';
-import { useConnection, ConnectBar } from './connection';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ConnectBar } from './connection';
 import { QueryStalenessChip } from './contextbar';
 import { ResultGrid } from './grid';
 import { ExplainInline } from './explainpanel';
@@ -9,16 +8,12 @@ import { axisDims } from './axisorder';
 import { withSortBy } from './daxwells';
 import { chartRulePick } from './chartpick.mjs';
 import { useDaxModelContext } from './daxeditor';
-import { AuthorDrawer } from './tests-authoring';
-import { useClaudeReflection } from './activity';
-import { useLearn, learnActive, learnExamples } from './studio/learn-state';
-import { answerIsFor, useAssistantAnswer } from './studio/answer-store';
+import { learnExamples } from './studio/learn-state';
 import { answerOf } from './studio/tour-model';
 import { useSurfaceEscape } from './surface-escape';
 import { plainDaxError } from './daxErrorText';
 import { isSignInError, SIGN_IN_AGAIN } from './authcopy';
-import { usePersistedState } from './hooks';
-import { AllowButton, useConsentCard } from './consent';
+import { AllowButton } from './consent';
 import {
   HISTORY_METHOD, addFilter, addGroup, addMeasure, askableColumns, checkDraftOf, chipsOf, cleanParts, columnName, columnRef, filterableColumns, filterKind, filterOps, opFor,
   crowdedChart, needsData, outcomeOf, partsAfter, questionLine, pivotConfigOf, removeFilter, removeGroup, removeMeasure, removeSort, removeTop, resultSetOf, rowLabel,
@@ -27,32 +22,10 @@ import {
 } from './askdata-model';
 
 // ===================================================================================================
-// Ask your data (Kane, 26 September 2026; mockup option C in semanticus-jev-query-mockups.html). A question
-// about the model's numbers, built from chips, answered by ONE checked query the engine writes, and kept in a
-// list the person and their assistant share.
-//
-// PRO ONLY. App.tsx renders ProPreview instead of this page on a plan that lacks the askData feature
-// (features.ts), so a free session never mounts this and never calls askData or listDataQuestions.
-//
-// THE WORDS. A typed question is read by Jev into parts (the query.summarize point, on for Pro: Kane kept it on,
-// 28 Sep, and the replays measure it). The reading comes back as the chips, with "Jev read this", so the person sees
-// how the words were taken and can change any part; the change is then sent as parts and read by "you", with no
-// Jev call. When the point is off for this model (or in a build where it is not on yet) the engine says so in one
-// line and the page shows that line as it was written, keeping the chips the person had. Permission is the card's:
-// a question Jev could not read raises the consent card when missing permission is the reason (useConsentCard).
-// Every chip edit works without Jev.
-//
-// WHAT THIS PAGE NEVER DOES: build the question's DAX (the engine's template does), store rows (the history
-// keeps none), or add an engine operation. The one DAX string written here is the single value a saved check
-// asks (askdata-model.ts checkDraftOf).
-//
-// THE AGENT DOOR. An ask from the person's assistant (ask_data on MCP) lands in the same history file. This page
-// reads that list when it opens, after every ask it makes, and when the engine's activity
-// notice for an assistant's ask_data arrives (useClaudeReflection below), so it shows without a refresh.
-//
-// ONE MODEL AT A TIME. The question and the words are kept per model, and everything else on the page (the answer's
-// rows, the list, an open menu or drawer) belongs to the model it was asked of. When the open model changes under
-// the page, all of it is put away and the new model's own question and list are read.
+// The parts of Ask your data that outlived the page (1.6, Kane 15 Oct: Ask your data and Queries became one page, Query, query.tsx).
+// Kept here because the Query page and its question box still use them: the chip menu and its edits, the answer's lines (assumption,
+// other readings, refusals), the Save as a check chooser, the answer body the Learn tour's recorded examples draw, and the history helpers.
+// The page itself is gone. The engine's ask_data method, the history file and the chips are unchanged (askdata-model.ts).
 // ===================================================================================================
 
 export type Menu =
@@ -62,256 +35,10 @@ export type Menu =
 const meta = 'text-(length:--sem-text-meta)';
 const muted = { color: 'var(--sem-muted)' };
 
-export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsumed }: {
-  onOpenQueries: (dax: string, handoff?: QueriesHandoff) => void; onOpenTests: () => void;
-  /** Words handed over from the Plan's field (Open Ask your data). Adopted ONCE and acknowledged, so coming back
-   *  through area memory cannot replay an old question over one the person has since typed. */
-  navWords?: { words: string; nonce: number } | null;
-  onNavConsumed?: (nonce: number) => void;
-}) {
-  const { conn, session, connectXmla, busy: connBusy } = useConnection();
-  const model = useDaxModelContext();
-  const learn = useLearn();
-  // The question and the words survive leaving the page (Studio unmounts a tab), per model. The answer does not:
-  // its rows are the model's data, so coming back shows the question with a Run button instead.
-  const persistKey = session?.sessionId ?? 'no-model';
-  const [parts, setParts] = usePersistedState<DataAsk>('askdata.parts.' + persistKey, cleanParts(null));
-  const [answer, setAnswer] = useState<DataAnswer | null>(null);
-  // The answer on screen is one the assistant asked for (ask_data), not the person's: labelled so, until the person asks.
-  const [byAssistant, setByAssistant] = useState<{ id: string; question: string | null } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [stopped, setStopped] = useState(false);
-  const [history, setHistory] = useState<DataQuestionHistory | null>(null);
-  const [words, setWords] = usePersistedState('askdata.words.' + persistKey, '');
-  const [view, setView] = useState<'table' | 'chart'>('table');
-  const [viz, setViz] = useState<VizType>('bar');
-  const [showDax, setShowDax] = useState(false);
-  const [showError, setShowError] = useState(false);
-  const [menu, setMenu] = useState<Menu | null>(null);
-  const [columns, setColumns] = useState<ColumnInfo[]>([]);
-  const [saving, setSaving] = useState<{ row: number; measure: number } | null>(null);
-  const [draft, setDraft] = useState<CheckDraft | null>(null);
-  const [announce, setAnnounce] = useState('');
-  const [calcGroups, setCalcGroups] = useState<string[]>([]);
-  const gen = useRef(0);
-  const send = useCallback((method: string, ...params: unknown[]) => rpc(method, ...params), []);
-
-  // A list read for one model and answered after the switch to another is dropped, so it never shows under the wrong name.
-  const sessionRef = useRef(persistKey);
-  sessionRef.current = persistKey;
-  const loadHistory = useCallback(() => {
-    const asked = sessionRef.current;
-    rpc<DataQuestionHistory>(HISTORY_METHOD, 50)
-      .then((h) => { if (sessionRef.current === asked) setHistory(h); })
-      .catch((e) => { if (sessionRef.current === asked) setHistory({ questions: [], note: plainDaxError(String((e as Error)?.message ?? e)) }); });
-  }, []);
-  // The open model changed: nothing asked of the last one stays on screen, and a question still running for it lands nowhere.
-  useEffect(() => {
-    gen.current++;
-    setAnswer(null); setByAssistant(null); setBusy(false); setStopped(false); setMenu(null); setSaving(null); setDraft(null); setAnnounce('');
-    setHistory(null);
-    loadHistory();
-  }, [persistKey, loadHistory]);
-  useEffect(() => {
-    rpc<ColumnInfo[]>('listColumns').then(setColumns).catch(() => setColumns([]));
-    rpc<{ tables?: { name: string; isCalculationGroup?: boolean }[] }>('getModelObjects')
-      .then((o) => setCalcGroups((o?.tables ?? []).filter((t) => t.isCalculationGroup).map((t) => t.name)))
-      .catch(() => setCalcGroups([]));
-  }, [session?.sessionId]);
-  // An ask the assistant made on this session, when the host reflects it. Harmless when it never fires.
-  useClaudeReflection('ask_data', () => loadHistory());
-
-  // Words carried in from the Plan's field. They fill the question box and nothing else: the page never asks on
-  // its own, because a query that runs without the person pressing Ask is work they did not ask for.
-  const takenWords = useRef<number | null>(null);
-  useEffect(() => {
-    if (!navWords || takenWords.current === navWords.nonce) return;
-    takenWords.current = navWords.nonce;
-    if (navWords.words.trim()) setWords(navWords.words);
-    onNavConsumed?.(navWords.nonce);
-  }, [navWords, onNavConsumed, setWords]);
-
-  const settle = (sent: DataAsk, a: DataAnswer) => {
-    setAnswer(a);
-    setParts(partsAfter(sent, a));
-    setAnnounce(announcement(a));
-    loadHistory();
-  };
-  // The assistant asked a question (ask_data) and the engine sent the answer here: it becomes the current answer, labelled. It takes the place
-  // of whatever the page showed, and a question the person is waiting on is not cut off (the person's own answer lands over it afterwards).
-  const fromAssistant = useAssistantAnswer();
-  const takenAnswer = useRef<string | null>(null);
-  useEffect(() => {
-    if (!fromAssistant || takenAnswer.current === fromAssistant.id || !answerIsFor(fromAssistant, session?.sessionId)) return;
-    takenAnswer.current = fromAssistant.id;
-    if (busy) return;
-    const a = fromAssistant.answer as DataAnswer;
-    gen.current++;
-    setMenu(null); setSaving(null); setStopped(false); setFromWords(false);
-    setByAssistant({ id: fromAssistant.id, question: fromAssistant.question ?? null });
-    settle(a.parts ?? parts, a);
-  }, [fromAssistant, session?.sessionId]);  // eslint-disable-line react-hooks/exhaustive-deps
-  const ask = async (next: DataAsk) => {
-    const mine = ++gen.current;
-    setByAssistant(null);
-    setMenu(null); setSaving(null); setStopped(false); setBusy(true); setParts(cleanParts(next)); setFromWords(false);
-    setAnnounce('Semanticus is building, checking and running the query.');
-    const a = await runAsk(send, next);
-    if (mine !== gen.current) return;
-    setBusy(false);
-    settle(next, a);
-  };
-  const [fromWords, setFromWords] = useState(false);
-  const askWords = async () => {
-    const q = words.trim();
-    if (!q || busy) return;
-    const mine = ++gen.current;
-    setByAssistant(null);
-    setMenu(null); setSaving(null); setBusy(true); setStopped(false); setFromWords(true);
-    setAnnounce('Jev is reading the question, then Semanticus builds, checks and runs the query.');
-    const a = await runWords(send, q);
-    if (mine !== gen.current) return;
-    setBusy(false);
-    // Jev's reading replaces the chips, even a partial one, so they always show how these words were taken. A
-    // question Jev did not read (switched off, not on yet, no permission) leaves the chips the person had.
-    settle(a.readBy === 'jev' ? cleanParts(null) : parts, a);
-  };
-  // The words were not read and permission may be why: the engine is asked, and only its answer raises the card.
-  useConsentCard(fromWords && !!answer && answer.readBy !== 'jev' && outcomeOf(answer) === 'needs-you', () => void askWords());
-  const stop = () => {
-    gen.current++;
-    void rpc('cancelDax').catch(() => { /* the run still settles on the engine */ });
-    setBusy(false); setStopped(true); setAnnounce('The question was stopped.');
-  };
-  const again = (r: DataQuestionRecord) => {
-    if (r.parts && (r.parts.measures ?? []).length) void ask(r.parts);
-    else if (r.question) { setWords(r.question); void (async () => { const mine = ++gen.current; setByAssistant(null); setBusy(true); const a = await runWords(send, r.question!); if (mine === gen.current) { setBusy(false); settle(parts, a); } })(); }
-  };
-
-  const [showAllHistory, setShowAllHistory] = useState(false);
-  const mergedHistory = mergeRepeats(history?.questions ?? []);
-  const shownHistory = showAllHistory ? mergedHistory : mergedHistory.slice(0, HISTORY_SHOWN);
-  const measuresInModel = model.measures;
-  const outcome = outcomeOf(answer);
-  const canSave = outcome === 'answered' && (answer?.rows ?? []).length > 0;
-  const signIn = session?.liveEndpoint
-    ? () => { void connectXmla(session.liveEndpoint!, session.liveDatabase ?? '', 'interactive', session.currentTenant ?? null).then((r) => { if (r.ok) void ask(parts); }); }
-    : undefined;
-
-  return (
-    <div className="sem-page" data-testid="askdata-page">
-      {/* The strip names the page and the page notes keep the "only reads" fact, so no visible title line. */}
-      <h1 className="sr-only">Ask your data</h1>
-
-      {/* The answer comes first in the page, the history after it, so a window too narrow for two columns shows the answer first (hero19 D14). The rail sits on the left again wherever there are two columns (styles.css). */}
-      <section className="sem-span-9 sem-card sem-stack-gap sem-main-right" aria-label="Your question">
-        <form className="sem-inline" onSubmit={(e) => { e.preventDefault(); void askWords(); }} aria-label="Ask in your own words">
-          <input value={words} onChange={(e) => setWords(e.target.value)} disabled={busy} placeholder="Ask about your numbers, like net sales by region for 2025"
-            aria-label="Ask in your own words" className="sem-field flex-1" />
-          <button type="submit" data-testid="askdata-ask" className="sem-btn sem-btn-primary" disabled={busy || !words.trim()}>Ask</button>
-        </form>
-
-        <div className="relative">
-          <div className="sem-inline flex-wrap" role="group" aria-label="The question, as parts">
-            <span className={meta} style={muted} data-testid={(parts.measures ?? []).length ? undefined : 'askdata-empty'}>{(parts.measures ?? []).length ? 'Read as' : 'or build it yourself:'}</span>
-            {chipsOf(parts).map((c, i) => (
-              <span key={`${c.kind}-${c.index}`} className="sem-inline">
-                {c.kind === 'group' && (parts.groupBy ?? []).indexOf((parts.groupBy ?? [])[c.index]) === 0 && <span className={meta} style={muted}>by</span>}
-                {i > 0 && c.kind === 'measure' && <span className={meta} style={muted}>and</span>}
-                <button type="button" className="sem-btn sem-btn-sm" disabled={busy} data-chip={c.kind} aria-label={c.name}
-                  aria-haspopup="menu" aria-expanded={menu?.chip?.kind === c.kind && menu.chip.index === c.index}
-                  onClick={() => setMenu(menu?.chip?.kind === c.kind && menu.chip.index === c.index ? null : { chip: c, view: 'root' })}>
-                  {c.label} <span aria-hidden="true">▾</span>
-                </button>
-              </span>
-            ))}
-            <button type="button" className="sem-btn sem-btn-sm" disabled={busy} data-chip="add" aria-haspopup="menu"
-              aria-label={(parts.measures ?? []).length ? 'Add to the question' : 'Choose a number to see'}
-              onClick={() => setMenu(menu && !menu.chip ? null : { chip: null, view: (parts.measures ?? []).length ? 'add' : 'add-measure' })}>
-              {(parts.measures ?? []).length ? '+ Add' : '+ Choose a number'}
-            </button>
-          </div>
-          {menu && <ChipMenu menu={menu} parts={parts} measures={measuresInModel.map((m) => m.name)} columns={askableColumns(model.columns, calcGroups)}
-            filterColumns={filterableColumns(askableColumns(columns, calcGroups))} onMenu={setMenu} onClose={() => setMenu(null)} onAsk={(p) => void ask(p)} />}
-        </div>
-
-        {learnActive(learn) && <ExampleAnswers example={learn.tour.example} />}
-
-        {!answer && !busy && !stopped && (parts.measures ?? []).length > 0 && (
-          <div className="sem-inline" data-testid="askdata-idle">
-            <span className={meta} style={muted}>This question has not run since you came back.</span>
-            <button type="button" className="sem-btn sem-btn-sm sem-btn-primary" onClick={() => void ask(parts)}>Run</button>
-          </div>
-        )}
-
-        {busy && (
-          <div className="sem-inline" data-testid="askdata-running">
-            <span className={meta}>Semanticus is building, checking and running the query.</span>
-            <button type="button" className="sem-btn sem-btn-sm" onClick={stop}>Stop</button>
-          </div>
-        )}
-        {stopped && !busy && <div className={meta} style={muted} data-testid="askdata-stopped">The question was stopped. Nothing was kept from it. Change a part or press Run again to ask it again.</div>}
-
-        {answer && !busy && !stopped && byAssistant && (
-          <div className="sem-inline" data-testid="askdata-by-assistant">
-            <span className="sem-doer sem-doer-agent text-(length:--sem-text-label)">Asked by your assistant</span>
-            {byAssistant.question && <span className={meta} style={muted}>{byAssistant.question}</span>}
-          </div>
-        )}
-        {answer && !busy && !stopped && (
-          <AnswerBody answer={answer} parts={parts} connected={!!conn?.connected} view={view} viz={viz} onViz={setViz} showDax={showDax}
-            showError={showError} onShowError={setShowError}
-            onView={setView} onShowDax={setShowDax} onSignIn={signIn} signInBusy={connBusy} onSwitch={(p) => void ask(p)} busy={busy} onAllowed={() => void askWords()}
-            actions={<>
-              {answer.dax && <button type="button" className="sem-btn sem-btn-sm" onClick={() => onOpenQueries(answer.dax!, { parts, answer, words })}>Open in Queries</button>}
-              {canSave && <button type="button" className="sem-btn sem-btn-sm" onClick={() => setSaving(saving ? null : { row: 0, measure: 0 })} aria-expanded={!!saving}>Save as a check</button>}
-            </>} />
-        )}
-
-        {saving && answer && canSave && (
-          <SaveChooser answer={answer} value={saving} onChange={setSaving} onCancel={() => setSaving(null)}
-            onContinue={() => { const d = checkDraftOf(answer, saving.row, saving.measure, measuresInModel); if (d) { setDraft(d); setSaving(null); } }}
-            ready={!!checkDraftOf(answer, saving.row, saving.measure, measuresInModel)} />
-        )}
-
-        <div className="sr-only" aria-live="polite" data-testid="askdata-announce">{announce}</div>
-      </section>
-
-      <aside className="sem-span-3 sem-card sem-stack sem-rail-left" aria-label="Asked before" data-testid="askdata-history">
-        <span className="sem-label">Asked before</span>
-        {history?.note && <div className={meta} style={muted}>{history.note}</div>}
-        {history && !history.note && history.questions.length === 0 && <div className={meta} style={muted}>No questions yet. Each question you or your assistant asks is kept here with the model.</div>}
-        {/* K17 (Kane, 8 and 9 Oct): the list has no scroll bar of its own. It shows the latest few questions, "Show all" opens
-            the rest in place, and the page scrolls. */}
-        <ul className="m-0 p-0 sem-stack" style={{ listStyle: 'none' }} data-testid="askdata-history-list">
-          {shownHistory.map(({ r, times }) => (
-            // The whole row asks again; the button is the keyboard and screen-reader door and shows on hover or focus.
-            <li key={r.id} className={`group sem-stack ${busy ? '' : 'cursor-pointer'}`} data-testid="askdata-history-row" onClick={() => { if (!busy) again(r); }}>
-              <span className={meta}>{unbroken(rowName(r))}</span>
-              <span className="sem-inline">
-                <span className={`sem-doer ${r.origin === 'agent' ? 'sem-doer-agent' : 'sem-doer-you'} text-(length:--sem-text-label)`}>{whoAsked(r)}</span>
-                <span className="text-(length:--sem-text-label)" style={muted}>{when(r.askedAt)}{typeof r.rowCount === 'number' && r.outcome === 'answered' ? `, ${r.rowCount} ${r.rowCount === 1 ? 'row' : 'rows'}` : r.outcome && r.outcome !== 'answered' ? `, ${OUTCOME_WORD[r.outcome] ?? r.outcome}` : ''}{times > 1 ? `, ×${times}` : ''}</span>
-                <button type="button" className="sem-btn sem-btn-sm sem-push opacity-0 group-hover:opacity-100 focus:opacity-100" disabled={busy}
-                  aria-label={`Run again: ${rowName(r)}`}>Run again</button>
-              </span>
-            </li>
-          ))}
-        </ul>
-        {mergedHistory.length > HISTORY_SHOWN && (
-          <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" style={{ alignSelf: 'flex-start' }} aria-expanded={showAllHistory} data-testid="askdata-history-all"
-            onClick={() => setShowAllHistory(!showAllHistory)}>{showAllHistory ? 'Show fewer' : 'Show all'}</button>
-        )}
-      </aside>
-
-      {draft && <AuthorDrawer shape="measureValue" handedFrom="askdata" editing={draft} onClose={() => setDraft(null)} onSaved={() => { setDraft(null); onOpenTests(); }} />}
-    </div>
-  );
-}
-
 /** A history row's name: the engine's reading, else the words asked, else the parts as asked. A question refused
  *  before its parts were settled has neither a reading nor words, so its parts name it (verify-askdata defect 1). */
 /** A date in a history line stays on one line: the hyphens between its digits do not break ("Date before 2025-10-" / "06"). */
-function unbroken(text: string): string { return text.replace(/(\d)-(?=\d)/g, '$1\u2011'); }
+export function unbroken(text: string): string { return text.replace(/(\d)-(?=\d)/g, '$1\u2011'); }
 
 /** The questions the list shows until the person opens the rest (K17). */
 export const HISTORY_SHOWN = 8;
@@ -337,13 +64,14 @@ export function rowName(r: DataQuestionRecord): string {
 /** The line over an answer Jev read from typed words. The chips above it are the reading. */
 export const JEV_READ_THIS = 'Jev read this. Semanticus built and checked the query. Change any part to ask again.';
 
-const OUTCOME_WORD: Record<string, string> = { built: 'built, not run', 'needs-you': 'needs you', refused: 'refused', error: 'did not run' };
+// One word for a question with no number: no data and a redirect both read "no number" (hero 25 H6). The row's own line says why.
+export const OUTCOME_WORD: Record<string, string> = { built: 'built, not run', 'needs-you': 'no number', refused: 'no number', error: 'did not run' };
 
 /** The one plain notice a failed run reads where the engine sent no failed check of its own. The engine's own
  *  words for it are LocalEngine.Query.cs QueryDidNotRunLine; this is the page's stand-in, not a second version. */
 export const QUERY_DID_NOT_RUN = 'The query did not run on the model it was sent to.';
 
-function when(iso: string): string {
+export function when(iso: string): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return '';
   const d = new Date(t);
@@ -510,7 +238,7 @@ export function AnswerBody({ answer, parts, connected, view, viz = 'bar', onViz,
 
 /** The Learn tour's recorded answers (1.4, lane tour). The demo model holds no data to ask, so the tour shows answers recorded on
  *  the same model, tagged Example. It never calls the engine. `example` is the answer the tour step names, if any. */
-function ExampleAnswers({ example }: { example: number | null }) {
+export function ExampleAnswers({ example }: { example: number | null }) {
   const [picked, setPicked] = useState<number | null>(example);
   const [view, setView] = useState<'table' | 'chart'>('table');
   const [showDax, setShowDax] = useState(false);
@@ -519,18 +247,18 @@ function ExampleAnswers({ example }: { example: number | null }) {
   const shown = picked !== null && examples[picked] ? answerOf(examples[picked]) : null;
   const [viz, setViz] = useState<VizType | null>(null);
   return (
-    <div className="st-example" data-testid="askdata-examples">
+    <div className="st-example" data-testid="query-examples">
       <span className={meta} style={muted}>Questions this model can answer:</span>
       <div className="sem-inline flex-wrap">
         {examples.map((a, i) => (
-          <button key={a.question} type="button" className="sem-btn sem-btn-sm" aria-pressed={picked === i} data-testid="askdata-example-pick"
+          <button key={a.question} type="button" className="sem-btn sem-btn-sm" aria-pressed={picked === i} data-testid="query-example-pick"
             onClick={() => { setPicked(i); setViz(null); }}>{a.question}</button>
         ))}
       </div>
       {shown && (
         <>
           <div className="sem-inline">
-            <span className="st-example-tag" data-testid="askdata-example">Example</span>
+            <span className="st-example-tag" data-testid="query-example">Example</span>
             <p className="st-example-line">Example answer. Live answers need your own model.</p>
           </div>
           <AnswerBody answer={shown.answer as DataAnswer} parts={shown.parts as DataAsk} connected view={view} viz={viz ?? shown.viz} onViz={setViz}
@@ -650,7 +378,9 @@ export function ChipMenu({ menu, parts, measures, columns, filterColumns, onMenu
   );
   const f = find.trim().toLowerCase();
   const matchCols = (list: { table: string; name: string }[]) => list.filter((c) => !f || `${c.table} ${c.name}`.toLowerCase().includes(f)).slice(0, 60);
-  const finder = (label: string) => <input className={`sem-field ${meta}`} value={find} onChange={(e) => setFind(e.target.value)} placeholder={label} aria-label={label} />;
+  // Enter takes the top match, the same as pressing it (UAT 18 Oct). Only a match counts: a Sort or Remove line under the list is not one.
+  const finder = (label: string) => <input className={`sem-field ${meta}`} value={find} onChange={(e) => setFind(e.target.value)} placeholder={label} aria-label={label}
+    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); ref.current?.querySelector<HTMLElement>('[data-finder-list] > button:not([disabled])')?.click(); } }} />;
   const colItems = (list: { table: string; name: string }[], act: (ref: string) => void, current?: string) =>
     matchCols(list).map((c) => { const r = columnRef(c.table, c.name); return item(`${c.name} (${c.table})`, () => act(r), r, r === current); });
   const measureItems = (act: (m: string) => void, current?: string) =>
@@ -658,7 +388,7 @@ export function ChipMenu({ menu, parts, measures, columns, filterColumns, onMenu
   // A finder that matched nothing used to show nothing, so a typo and a column the model lacks looked the same
   // (verify-askdata-r2 R6). The list says so instead, in the words the person typed.
   const found = (items: React.ReactNode[], what: 'number' | 'column') => items.length
-    ? <div className="sem-stack">{items}</div>
+    ? <div className="sem-stack" data-finder-list>{items}</div>
     : <span className={meta} style={muted} role="status" data-testid="askdata-finder-empty">{emptyFinderLine(what, find)}</span>;
 
   let body: React.ReactNode = null;

@@ -23,14 +23,11 @@ check('D12: the first AI ready read is tried again, so a reopened model shows it
   assert.match(head, /if \(g\) \{ setGrade\(g\); return; \}/u, 'a read that holds a grade stops the retries');
 });
 
-check('D14: Ask puts the answer before "Asked before" in the page, so a narrow window shows the answer first', () => {
-  const ask = src('askdata.tsx');
-  assert.ok(ask.indexOf('aria-label="Your question"') < ask.indexOf('aria-label="Asked before"'), 'the answer card comes first in the document');
-  assert.match(ask, /sem-main-right/u);
-  assert.match(ask, /sem-rail-left/u);
-  const css = src('styles.css');
-  assert.match(css, /\.sem-page > \.sem-rail-left \{ grid-column: 1 \/ span 3; grid-row: 1; \}/u, 'two columns keep the rail on the left');
-  assert.match(css, /@media \(max-width: 900px\) \{\s*\.sem-page > \.sem-rail-left, \.sem-page > \.sem-main-right \{ grid-row: auto; \}/u, 'one column stacks in document order');
+check('D14: Query opens on the answer, and "Asked before" is a menu, so a narrow window shows the answer first', () => {
+  const page = src('query.tsx');
+  assert.match(src('query-notebook.tsx'), /useState<Tab>\('answer'\)/, 'a row opens on its Answer');
+  assert.doesNotMatch(page, /HistoryCard/, 'Asked before is no longer a card under the answer: it is the clock menu in the question box');
+  assert.match(src('query.css'), /\.sem-card\.qn-book \{ padding: 0; \}/u, 'the notebook is one card in one column, so a narrow window stacks in document order');
 });
 
 check('D15: a bar chart over many rows draws the top few and says so on one line', () => {

@@ -150,16 +150,26 @@ namespace Semanticus.Engine.Decisions
             { "references_measures", ReferencedMeasures(measure) },
         };
 
-        /// <summary>The declared snapshot of one chunk of one table's measures.</summary>
-        public static IReadOnlyDictionary<string, object> BatchSnapshot(TableShare share, IEnumerable<Dictionary<string, object>> entries)
+        /// <summary>The declared snapshot of one request: the entries of measures of one or many tables (each entry names its table), and what
+        /// each table shares (its column names and its sibling measures) in maps keyed by the table's name.</summary>
+        public static IReadOnlyDictionary<string, object> BatchSnapshot(IEnumerable<(string TableName, TableShare Share)> shares, IEnumerable<Dictionary<string, object>> entries)
         {
             var point = DecisionRegistry.Require(DecisionRegistry.MeasureFolderAndFormat);
+            var list = shares.ToList();
+            var tableColumns = new Dictionary<string, object>(StringComparer.Ordinal);
+            var siblings = new Dictionary<string, object>(StringComparer.Ordinal);
+            foreach (var (name, share) in list)
+            {
+                if (tableColumns.ContainsKey(name)) continue;
+                tableColumns[name] = share.TableColumns;
+                siblings[name] = share.SiblingMeasures;
+            }
+            var withTable = entries.Zip(list, (e, s) => (object)new Dictionary<string, object>(e, StringComparer.Ordinal) { ["table"] = s.TableName }).ToList();
             return DecisionSnapshot.Build(point, new[]
             {
-                new KeyValuePair<string, object>("table_name", share.TableName),
-                new KeyValuePair<string, object>("table_columns", share.TableColumns),
-                new KeyValuePair<string, object>("sibling_measures", share.SiblingMeasures),
-                new KeyValuePair<string, object>("measures", entries.Cast<object>().ToList()),
+                new KeyValuePair<string, object>("table_columns", tableColumns),
+                new KeyValuePair<string, object>("sibling_measures", siblings),
+                new KeyValuePair<string, object>("measures", withTable),
             });
         }
 

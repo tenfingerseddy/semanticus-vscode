@@ -54,14 +54,36 @@ namespace Semanticus.Tests
         // same way: question_words and result_shape (split names, date or not, distinct counts, how many numbers and rows).
         // cleanup.suggest (m11/plan-harm round 5, 30 Sep) joined the same version 4 set: still no release carries the registry.
         // next.step (1.5, the Next line, 11 Oct) added five fields and bumped the consent version to 6 in the same change.
-        private const string FrozenFieldFingerprint = "537dda8f5ff23535af72d6e0a49bb5107de75712e4e819936f9a1bd441dad751";
+        // copilot.misses (1.5.1, the Copilot test, 15 Oct) added five fields and kept the consent version at 6 on purpose: it ships off and sends nothing, and consent is checked per point,
+        // so a 1.5.0 record still covers every other point. Bump the version in the change that switches copilot.misses on.
+        // checks.visual_kind (1.6, the Validation page, 15 Oct) joined version 6 with two fields (check_words, check_shapes) and did NOT
+        // bump it: consent is per point (Covers checks the point's own fields), and the point is off in this build, so a person who agreed
+        // under version 6 is not shown the card again. The card is asked once when the point goes live (CheckVisualPickTests).
+        private const string FrozenFieldFingerprint = "acf3a111b5bf09cd257054300cb6ffad2868284912c151ce39d59b4f76f6d640";
 
         [Fact]
         public void The_declared_fields_are_frozen_against_the_consent_version()
         {
             Assert.True(FrozenFieldFingerprint == DecisionRegistry.DeclaredFieldFingerprint,
                 "expected " + FrozenFieldFingerprint + " but the declared fields hash to " + DecisionRegistry.DeclaredFieldFingerprint);
-            Assert.Equal(6, DecisionRegistry.ConsentSchemaVersion);   // 1.5: next.step joined (the Next line, 11 Oct); version 5 shipped, so it bumps
+            Assert.Equal(6, DecisionRegistry.ConsentSchemaVersion);   // 1.5.1: copilot.misses joined (the Copilot test, 15 Oct) and the version stayed 6; 1.5: next.step joined (the Next line, 11 Oct); version 5 shipped, so it bumped
+        }
+
+        /// <summary>1.5.1 (Kane's rule: a guardrail needs real harm). copilot.misses ships off and sends nothing, so a Pro person who agreed in 1.5.0
+        /// must not be asked again for it. Their record is the 1.5.0 field list at version 6: every other point must still work under it, with no new
+        /// ask, and only copilot.misses is not covered (the engine's plain rules answer). When the point is switched on, the version is bumped.</summary>
+        [Fact]
+        public void An_upgrade_from_a_1_5_0_consent_record_keeps_every_existing_point_working_with_no_new_ask()
+        {
+            var old150 = DecisionRegistry.DeclaredFields.Where(f => !f.StartsWith(DecisionRegistry.CopilotMisses + ":", StringComparison.Ordinal)).ToList();
+            Assert.True(old150.Count < DecisionRegistry.DeclaredFields.Count, "copilot.misses declares fields, so the 1.5.0 list is shorter");
+            var record = DecisionConsent.Grant(old150, 6, DateTimeOffset.UtcNow.AddDays(-3), 4, "human");
+
+            Assert.Equal(6, DecisionRegistry.ConsentSchemaVersion);
+            Assert.True(record.Covers(null, DecisionRegistry.ConsentSchemaVersion, out var why), why);   // the card reads as agreed: nothing to show again
+            foreach (var point in DecisionRegistry.Points.Where(x => x.Name != DecisionRegistry.CopilotMisses))
+                Assert.True(record.Covers(point, DecisionRegistry.ConsentSchemaVersion, out var reason), point.Name + " lost its permission: " + reason);
+            Assert.False(record.Covers(DecisionRegistry.Points.First(x => x.Name == DecisionRegistry.CopilotMisses), DecisionRegistry.ConsentSchemaVersion, out _));
         }
 
         /// <summary>F-229. The measure point used to send the formula text, and a formula can carry a value (a

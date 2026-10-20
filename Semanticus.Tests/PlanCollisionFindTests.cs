@@ -1,6 +1,6 @@
-// "Fix 3 names that Copilot reads as the same word" opened Find and replace EMPTY (plan statement check 2, defect 6): the person
-// had to work out which names to type. The row now carries the clashing names in its jump (ModelPlanJump.Find), both doors read them
-// from get_model_plan, and the Studio opens Find and replace with them filled in (webview test: plan-collision-find.test.mjs).
+// The collisions row ("Rename or hide fields with names Copilot confuses") carries the clashing names in its jump (ModelPlanJump.Find), so the
+// assistant reads them from get_model_plan. It points at AI readiness: Find and replace left the Studio in 1.5.1, and the assistant still has
+// search_model and propose_replace.
 
 using System;
 using System.Linq;
@@ -32,12 +32,12 @@ namespace Semanticus.Tests
 
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task The_collisions_row_hands_find_and_replace_every_clashing_name()
+        public async Task The_collisions_row_carries_every_clashing_name_for_the_assistant()
         {
             using var f = await CollidingModelAsync(3);
             var row = (await f.Engine.GetModelPlanAsync()).Items.Single(i => i.Id == "proposal/collisions");
 
-            Assert.Equal("search", row.Jump.Tool);
+            Assert.Equal("readiness", row.Jump.Tool);
             Assert.NotNull(row.Jump.Find);
             foreach (var n in new[] { 1, 2, 3 })
             {
@@ -57,7 +57,7 @@ namespace Semanticus.Tests
 
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task A_long_list_of_clashes_is_capped_for_the_search_box()
+        public async Task A_long_list_of_clashes_is_capped()
         {
             using var f = await CollidingModelAsync(30);   // 60 clashing names
             var row = (await f.Engine.GetModelPlanAsync()).Items.Single(i => i.Id == "proposal/collisions");

@@ -7,7 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const extension = readFileSync(resolve(root, 'src', 'extension.ts'), 'utf8');
 const compare = readFileSync(resolve(root, 'webview', 'src', 'publish-changes.tsx'), 'utf8');
 const preview = readFileSync(resolve(root, 'webview', 'src', 'datapreview.tsx'), 'utf8');
-const lab = readFileSync(resolve(root, 'webview', 'src', 'daxlab.tsx'), 'utf8');
+const lab = readFileSync(resolve(root, 'webview', 'src', 'query.tsx'), 'utf8');
 const authcopy = readFileSync(resolve(root, 'webview', 'src', 'authcopy.ts'), 'utf8');
 
 assert.match(extension, /function withOpenProgress/,

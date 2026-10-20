@@ -35,11 +35,11 @@ namespace Semanticus.Engine
         public static string Q(string columnRef) => Prefix + columnRef;
 
         /// <summary>How many columns one call asks about (the relay's own bound for this point).</summary>
-        public const int MaxPerCall = 40;
+        public const int MaxPerCall = 120;
 
         /// <summary>How many calls one Work it out makes. A cap, not a sample: a column past it stays ticked exactly as the
         /// rule left it, and the person reviews it like every other.</summary>
-        public const int MaxCalls = 3;
+        public const int MaxCalls = 8;
 
         /// <summary>The longest a person waits for Jev on Work it out. Past it the rule's ticks stand.</summary>
         public static readonly TimeSpan Wait = TimeSpan.FromSeconds(8);
@@ -88,10 +88,8 @@ namespace Semanticus.Engine
         {
             var point = DecisionRegistry.Require(DecisionRegistry.CleanupSuggest);
             var calls = new List<(IReadOnlyDictionary<string, object>, IReadOnlyList<DecisionQuestion>, IReadOnlyList<Candidate>)>();
-            foreach (var batch in (candidates ?? Array.Empty<Candidate>()).Take(MaxPerCall * MaxCalls)
-                         .Select((c, i) => (c, i)).GroupBy(x => x.i / MaxPerCall).OrderBy(g => g.Key))
+            (IReadOnlyDictionary<string, object> Snapshot, IReadOnlyList<DecisionQuestion> Questions, IReadOnlyList<Candidate> Asked) Build(IReadOnlyList<Candidate> asked)
             {
-                var asked = batch.Select(x => x.c).ToList();
                 var tables = asked.Select(c => c.Shape).Where(s => s != null)
                     .GroupBy(s => s.Table, StringComparer.OrdinalIgnoreCase).Select(g => g.First())
                     .Select(s => (object)new Dictionary<string, object>(StringComparer.Ordinal)
@@ -122,8 +120,25 @@ namespace Semanticus.Engine
                     "This model is being kept lean, and nothing in it uses the column " + c.Table + "[" + c.Name
                     + "]. Is it clearly a leftover that can be suggested for removal, or is it something somebody may still want?",
                     Options)).ToList();
-                calls.Add((snapshot, questions, asked));
+                return (snapshot, questions, asked);
             }
+            // A call whose state would pass the limit (many tables' shapes) is cut in half, and again while it is still too big, never truncated.
+            IEnumerable<(IReadOnlyDictionary<string, object> Snapshot, IReadOnlyList<DecisionQuestion> Questions, IReadOnlyList<Candidate> Asked)> Fit(IReadOnlyList<Candidate> asked)
+            {
+                var call = Build(asked);
+                var bytes = System.Text.Encoding.UTF8.GetByteCount(DecisionDigest.CanonicalSnapshotJson(call.Snapshot));
+                if (asked.Count > 1 && bytes > JevTableBatch.MaxSnapshotBytes)
+                {
+                    var half = asked.Count / 2;
+                    foreach (var c in Fit(asked.Take(half).ToList())) yield return c;
+                    foreach (var c in Fit(asked.Skip(half).ToList())) yield return c;
+                }
+                else yield return call;
+            }
+            foreach (var batch in (candidates ?? Array.Empty<Candidate>()).Take(MaxPerCall * MaxCalls)
+                         .Select((c, i) => (c, i)).GroupBy(x => x.i / MaxPerCall).OrderBy(g => g.Key))
+                foreach (var call in Fit(batch.Select(x => x.c).ToList()))
+                    calls.Add(call);
             return calls;
         }
 

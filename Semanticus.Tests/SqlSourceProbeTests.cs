@@ -111,6 +111,24 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public async Task A_server_that_cannot_be_reached_says_so_in_one_plain_line_and_keeps_the_driver_words_for_details()
+        {
+            var rec = Save();
+            SqlSourceProbe.TokenForTests = (mode, tenant, ct) => Task.FromResult("fake-token");
+            SqlSourceProbe.QueryForTests = (source, token, ct) => Task.FromResult(new ResultSet
+            {
+                Error = "A connection was successfully established with the server, but then an error occurred during the login process. (provider: TCP Provider, error: 0 - Success)",
+            });
+
+            var result = await SqlSourceProbe.TestAsync(rec, false, CancellationToken.None);
+
+            Assert.False(result.Ok);
+            Assert.Equal($"Could not reach the server {rec.Server}. Check the server name.", result.Note);
+            Assert.Contains("provider: TCP Provider", result.Detail);
+            Assert.DoesNotContain("provider", result.Note);
+        }
+
+        [Fact]
         public async Task An_unexpected_answer_shape_is_not_a_pass()
         {
             var rec = Save();

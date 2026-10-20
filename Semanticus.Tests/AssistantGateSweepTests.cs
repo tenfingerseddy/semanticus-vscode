@@ -176,6 +176,9 @@ namespace Semanticus.Tests
         private static readonly string[] CacheFiles =
         {
             Path.Combine(".semanticus", "plan-memory.json"),
+            // The question history beside the model: run_dax keeps the assistant's own run as a row through RecordQueryRunAsync (hero 25 H1).
+            // It is history, not the model, and the gate stamps the row as the assistant's.
+            Path.Combine(".semanticus", "data-questions.json"),
         };
 
         private static bool IsNamedCache(string relative) =>
@@ -322,7 +325,8 @@ namespace Semanticus.Tests
                 var scratch = Path.Combine(dir, "scratch.out");
                 var gate = AssistantEngine.For(engine);
                 // LabelConnectionAsync is decided by its arguments but has no pass branch: it always holds, or refuses to change an existing label (ConnectionPublicDoorTests).
-                var rows = GateRegistry.All.Where(r => r.Choose != null && r.Method != "LabelConnectionAsync").OrderBy(r => r.Method, StringComparer.Ordinal).ToList();
+                // RunInterviewBatchAsync passes only for a round that already exists on disk, which this sweep has none of; CopilotTestTests proves both branches.
+                var rows = GateRegistry.All.Where(r => r.Choose != null && r.Method != "LabelConnectionAsync" && r.Method != "RunInterviewBatchAsync").OrderBy(r => r.Method, StringComparer.Ordinal).ToList();
                 Assert.True(rows.Count >= 15, "only " + rows.Count + " rows are decided by their arguments");
                 var calls = new List<(GateEntry, MethodInfo, object[])>();
                 var notPass = new List<string>();

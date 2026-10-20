@@ -56,7 +56,7 @@ window.__planCalls = [];
 ${typeof HISTORY_SRC === 'string' ? `window.__ph = (() => { ${HISTORY_SRC}\n return makeHistoryEngine({}); })();` : ''}
 let __plan = makeHeartPlan({ mode: ${JSON.stringify(mode)}, free: ${JSON.stringify(!!free)} });
 if (__plan.orderedBy === 'In value order, highest first.') __plan.orderedBy = 'Tasks with the greatest expected benefit come first.';
-if (${JSON.stringify(mode)} === 'collisions') { const base = JSON.parse(JSON.stringify(__plan.items.find((r) => r.doer === 'you') || __plan.items[0])); __plan.items = [{ ...base, id: 'proposal/collisions', title: 'Fix 3 names that Copilot reads as the same word', sub: 'Group1Key, Group2Key, PRAC_CD', stateWord: 'needs_you', status: 'proposed', jump: { tool: 'search', label: 'Find and replace', find: ['Group1Key', 'Group1 Key', 'PRAC_CD'] } }]; }
+if (${JSON.stringify(mode)} === 'collisions') { const base = JSON.parse(JSON.stringify(__plan.items.find((r) => r.doer === 'you') || __plan.items[0])); __plan.items = [{ ...base, id: 'proposal/collisions', title: 'Fix 3 names that Copilot reads as the same word', sub: 'Group1Key, Group2Key, PRAC_CD', stateWord: 'needs_you', status: 'proposed', jump: { tool: 'readiness', label: 'AI readiness', find: ['Group1Key', 'Group1 Key', 'PRAC_CD'] } }]; }
 const __note = (name, params) => window.__planCalls.push({ call: name, params: params });
 const __person = (name, fn) => (params) => { __note(name, params); __plan = fn(__plan, params); return __plan; };
 let __h; Object.defineProperty(window, '__uishotHarness', { configurable: true,
@@ -139,9 +139,8 @@ const MEASURE = `(() => {
     // Ask your data's own question box, read off that page once a button has opened it (verify-askdata-r6 L2).
     onAskData: !!q('[data-testid="askdata-page"]'),
     askWords: (q('input[aria-label="Ask in your own words"]') || {}).value ?? null,
-    // Find and replace, once a Plan row's Choose has opened it with names filled in (plan statement check 2, item 6).
-    findBox: (q('input[aria-label="Find"]') || {}).value ?? null,
-    findRegexOn: [...document.querySelectorAll('.sem-seg-item')].some((b) => b.textContent.trim() === 'Regular expression' && b.getAttribute('aria-pressed') === 'true'),
+    // The page a Plan row's link opened (Find and replace has no page now: the collisions row opens AI readiness).
+    onReadiness: !!q('.sem-tab[data-tab="readiness"][aria-current="page"]'),
     view: (q('[data-testid="plan-page"]') || {}).dataset?.view ?? null,
     track: (q('[data-testid="plan-page"]') || {}).dataset?.track ?? null,
     grade: text(q('[data-testid="plan-grade"]')),
@@ -757,12 +756,12 @@ await scene('bpa-rows', { mode: 'bparows', expect: (m) => [
 ] });
 await scene('bpa-row-open', { mode: 'bparows', steps: [{ testId: 'plan-row-open-bpafix/model', settle: 900 }], expect: () => [] });
 await scene('words-row-open', { mode: 'bparows', steps: [{ testId: 'plan-row-open-words/model', settle: 900 }], expect: () => [] });
-// Item 6: the collisions row's Choose opens Find and replace with the clashing names filled in, as one pattern, not empty.
+// Item 6 (1.5.1): the collisions row's link opens AI readiness, since Find and replace left the Studio. It is not a dead link.
 await scene('collisions-choose', {
-  mode: 'collisions', steps: [{ testId: 'plan-only-you-toggle' }, { testId: 'plan-row-page', settle: 1500 }], tab: 'plan',
+  mode: 'collisions', steps: [{ testId: 'plan-row-open-proposal/collisions', settle: 900 }, { testId: 'plan-detail-page', settle: 1500 }], tab: 'plan',
   expect: (m) => [
-    ...has(m.findBox === '(?:Group1Key|Group1 Key|PRAC_CD)', `Find box reads ${JSON.stringify(m.findBox)}`),
-    ...has(m.findRegexOn === true, 'the Regular expression switch is not on'),
+    ...has(m.onPlan === false, 'the link did not leave the Plan'),
+    ...has(m.onReadiness === true, 'the link did not land on AI readiness'),
   ],
 });
 await scene('starts', { mode: 'starts', expect: (m) => [
@@ -802,7 +801,7 @@ await scene('alias-history', { tab: 'history', expect: (m) => [
 // the start page is the Plan, and a repeated deep link would clear the picked object as a real navigation does.
 await scene('object-line', { tab: '', extra: '&initialSelection=table:Sales', expect: (m) => [
   ...has(/^Showing Sales/.test(m.showing), `showing "${m.showing}"`),
-  ...has(JSON.stringify(m.objectActions) === JSON.stringify(['Preview data', 'Edit Power Query', 'Show in diagram', 'Lineage', 'Table size', 'Find in this table', 'Add measure', 'History']),
+  ...has(JSON.stringify(m.objectActions) === JSON.stringify(['Preview data', 'Edit Power Query', 'Show in diagram', 'Lineage', 'Table size', 'Add measure', 'History']),
     `object actions ${JSON.stringify(m.objectActions)}`),
 ] });
 // A measure, and its History: the Plan's own History, filtered to that object (contract 11.2).

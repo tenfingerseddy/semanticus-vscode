@@ -56,7 +56,7 @@ const SCENES = [
   { slug: 'start-offer', q: 'coldNav=pro', want: ['Try Pro free for 30 days', 'Start free month', 'Email only. No card.'] },
   { slug: 'start-waiting', q: 'coldNav=pro', run: (p) => startWith(p, 'ana@contoso.com'), want: ['Check your email and press the link. This page updates by itself.'] },
   { slug: 'start-on', q: 'coldNav=pro', run: async (p) => { await startWith(p, 'ana@contoso.com'); await p.evaluate(() => window.__uishotTrialConfirm()); await wait(1200); }, want: ['Your Pro month', 'Pro is on for this computer.'] },
-  { slug: 'locked-offer', q: 'conn=1&live=1&coldNav=plan', run: async (p) => { await p.waitForSelector('[data-testid="plan-unlock"]', { timeout: 8000 }); await click(p, '[data-testid="plan-unlock"]'); await wait(800); }, want: ['Run the plan', 'It runs as soon as Pro is on.'] },
+  { slug: 'locked-offer', q: 'conn=1&live=1&coldNav=plan', run: async (p) => { await p.waitForSelector('[data-testid="plan-unlock"]', { timeout: 8000 }); await click(p, '[data-testid="plan-unlock"]'); await wait(800); }, want: ['Run the plan', 'When Pro is on, Semanticus works out the changes and waits for you to approve them.'] },
   { slug: 'locked-runs', q: 'conn=1&live=1&coldNav=plan', run: async (p) => {
       await p.waitForSelector('[data-testid="plan-unlock"]', { timeout: 8000 }); await click(p, '[data-testid="plan-unlock"]'); await wait(600);
       await startWith(p, 'ana@contoso.com');

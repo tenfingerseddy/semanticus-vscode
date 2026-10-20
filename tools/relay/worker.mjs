@@ -385,7 +385,15 @@ async function settleBoth(env, identityId, id, actual, at, by, cache = null) {
  *  and nothing is released early because every release waits an hour anyway. */
 async function rememberLedger(env, identityId) {
     if (!env.RELAY_KV) return;
-    await env.RELAY_KV.put('led:' + identityId, '1');
+    // Write once per licence, and never let the index fail a decide: on 15 Oct 2026 a put on every decide used up
+    // the free tier's 1,000 writes a day and every request failed. A missed write is retried on the next decide.
+    const key = 'led:' + identityId;
+    try {
+        if (await env.RELAY_KV.get(key) !== null) return;
+        await env.RELAY_KV.put(key, '1');
+    } catch {
+        // The sweep finds this ledger after a later decide writes the key.
+    }
 }
 
 async function ledgerNames(env) {

@@ -10,6 +10,8 @@ using Xunit;
 namespace Semanticus.Tests
 {
     // Verifier probes for the m15/smalls recovery change (older kept copy re-offered).
+    // The restore root is one process-wide setting this class swaps; it runs in the restore-root collection, one after another with the classes that read it.
+    [Collection("restore-root")]
     public sealed class VerifierSmallsRecoveryTests : IDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "smx-vsr-" + Guid.NewGuid().ToString("N"));

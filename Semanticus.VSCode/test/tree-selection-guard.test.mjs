@@ -66,3 +66,13 @@ test('N10: extension.ts routes the tree selection through the guard and the tree
   assert.match(src, /treeSelectionGuard\.classify\(/);
   assert.match(src, /treeSelectionGuard\.noteRefresh\(\)/);
 });
+
+test('after a grid rename the tree redraw that drops the selection leaves the grid on the renamed object', () => {
+  const { gridStaysOnRedraw } = load();
+  assert.equal(typeof gridStaysOnRedraw, 'function', 'the guard names the one redraw the grid ignores');
+  assert.equal(gridStaysOnRedraw('refresh', 0), true, 'a redraw that empties the selection must not send the grid to the model');
+  assert.equal(gridStaysOnRedraw('person', 0), false, 'the person clearing the selection still shows the model');
+  assert.equal(gridStaysOnRedraw('refresh', 1), false, 'a redraw that puts a selection back shows it');
+  const src = readFileSync(new URL('../src/extension.ts', import.meta.url), 'utf8');
+  assert.match(src, /gridStaysOnRedraw\(/);
+});

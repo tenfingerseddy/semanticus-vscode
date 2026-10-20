@@ -2,11 +2,11 @@
 // (the storagecalc.mjs pattern) so the node contract test runs the SAME code the webview ships.
 
 // The Studio surfaces whose in-flight work is PRESERVED across a tab switch (stages 1-2 of tab-state preservation):
-// Lineage (cloud + local report analysis), DAX Lab (query/debug/profile/benchmark/plan/verify), and Storage (scan).
+// Lineage (cloud + local report analysis), Query (query/debug/profile/benchmark/plan/verify), and Storage (scan).
 // Their running ops must surface on the tab bar while another tab is open. M Code and its Profile are intentionally
 // ABSENT: PR #246 defines unmount as a cancellation boundary there, so they own no cross-tab busy affordance and must
 // never be added to this list.
-export const PRESERVED_SURFACES = ['lineage', 'daxlab', 'stats'];
+export const PRESERVED_SURFACES = ['lineage', 'query', 'stats'];
 
 // Given the surfaces currently running an op, the active tab, the active group, and the tab->group map, decide which
 // secondary tabs and which primary group buttons show the subtle busy glyph. Mirrors the existing `unseen` bubbling

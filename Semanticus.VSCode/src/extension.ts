@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { chipHealthFor } from './healthChip';
-import { createTreeSelectionGuard } from './treeSelectionGuard';
+import { createTreeSelectionGuard, gridStaysOnRedraw } from './treeSelectionGuard';
 import { GUARD_SCHEME, GUARD_VIEW_TYPE, UnsavedGuard } from './unsavedGuard';
 import { recoveryMessage, type FileRecovery } from './fileRecoveryText';
 import { healthText, modelItem } from './statusBarText';
@@ -22,10 +22,11 @@ import { analyzeDax, collectVars, extractDaxSymbols, varDefinition, type DaxInde
 import { formatDax } from './daxFormat';
 import { buildDaxHeader, splitDaxHeader, reKeyRef, uniqueName, checkDaxHeader, decideDaxSave, decideRenameRecovery, guardModelMatch, identityToken, pickOpenDaxHref, shouldCloseDaxTab, shouldApplyDaxBuffer, MODEL_SCOPED_KINDS, type PendingRenameRecord } from './daxHeader';
 import { resolveEditDaxNode } from './editDaxTarget';
-import { FencedMessageWriter, withModelIdentity, withPress, personAction, outsideAnyAction, insideAnyAction, actionModelIdentity, fenceIdentity } from './modelFence';
+import { FencedMessageWriter, withModelIdentity, withPress, personAction, rebindAction, outsideAnyAction, insideAnyAction, actionModelIdentity, fenceIdentity } from './modelFence';
 import {
     BillingError,
     CollectGate,
+    type CollectOutcome,
     PRODUCTION_BILLING_URL,
     RENEWAL_CHECK_INTERVAL_MS,
     checkForRenewedToken,
@@ -59,6 +60,11 @@ import {
     trialEmailOf,
     trialEndsWords,
     trialOfferWords,
+    clearPendingClaim,
+    loadPendingClaim,
+    type PendingClaimSlot,
+    resumeTrialClaim,
+    savePendingClaim,
     trialPhaseOf,
 } from './proTrial';
 import {
@@ -90,14 +96,17 @@ import { normFolder, folderParts, folderRef, parentFolderPath, leafFolderName, g
 import { migrateLegacyXmlaEntries, type LegacyRecentXmla } from './legacyXmlaMigration';
 import { getUiChallenge, RpcHandshakeRejectedError, rpcRolePreamble, waitForRpcHandshake } from './rpcAuth';
 import { readGuideFlags, writeGuideFlag } from './guideFlags';
-import { choiceFor, connectAssistant, driveModeFor, markFirstRun, modeAfterConnect, readFirstRun, runFirstRunConnect, writeDriveMode, type FirstRunChoice } from './firstRun';
+import { choiceFor, connectAssistant, connectWithoutFolder, driveModeFor, folderForConnect, folderForDisplay, markFirstRun, modeAfterConnect, readFirstRun, runFirstRunConnect, saveStartFolder, withoutTourDemo, PENDING_MARKER, takeOpenHandoff, takePendingConnect, writeDriveMode, writeMarker, writeOpenHandoff, writePendingConnect, type FirstRunChoice, type NoFolderResult } from './firstRun';
+import { isScratchCopyPath } from './learn';
 import { ConsentAsks } from './consentAsks';
+import { recentModelOffer } from './recentModel';
+import { UNSAVED_BLANK_KEY, freshUnsavedBlanks, noteUnsavedBlank, type UnsavedBlank } from './unsavedBlank';
 import { StudioNotes } from './studioNotes';
-import { attachPersonalitySettings, writePersonalitySetting } from './personalitySettings';
+import { applyHostPersonality, attachPersonalitySettings, personalityReport, watchPersonalityForEngine, writePersonalitySetting } from './personalitySettings';
 import { createLearn, type LearnDeps } from './learnHost';
 import { scriptToResend, type ScriptSource } from './scriptResend';
 import { draftModelKeyOf } from './draftKey';
-import { gridSetCalls, mergePropDescs, type PropDesc } from './propSet';
+import { followRename, gridSetCalls, mergePropDescs, type PropDesc } from './propSet';
 import {
     ENGINE_UPDATED_RESTART,
     ENGINE_UPDATED_TEXT,
@@ -118,7 +127,7 @@ import {
 // of A still names A after B opens (modelFence.ts personAction). Folder nodes take their children's.
 interface TreeNode { ref: string; name: string; kind: string; hasChildren: boolean; displayFolder?: string; model?: string; }
 interface ModelRef { kind: string; path?: string; gitRef?: string; endpoint?: string; database?: string; authMode?: string; tenantId?: string; label?: string; }
-interface ChangeDelta { kind: string; ref: string; props?: string[]; }
+interface ChangeDelta { kind: string; ref: string; props?: string[]; before?: string | null; after?: string | null; }
 interface UndoStateDto { canUndo: boolean; canRedo: boolean; atCheckpoint: boolean; }
 // Mirrors Semanticus.Engine HealthDelta (feature #4): the health movement one commit caused. Pro-only and
 // threshold-suppressed — absent on free, on health-neutral edits, and from pre-feature engines (additive field).
@@ -129,8 +138,8 @@ let saidMayMoveTree = false;
 // Mirrors Semanticus.Engine SessionChangeNotification: a different model became the open one through ANOTHER client
 // (the engine never echoes a swap to the connection that asked for it, which refreshes from its own answer).
 interface SessionChangeNotification { sessionId: string; revision: number; modelName?: string; source?: string; tables: number; measures: number; liveConnected?: boolean; reason: string; }
-interface OpenResult { sessionId: string; revision: number; modelName: string; tables: number; measures: number; source: string; liveConnected?: boolean; account?: string; }
-interface SessionInfo { sessionId?: string; revision: number; modelName?: string; source?: string; hasUnsavedChanges?: boolean; hasUnsavedEdits?: boolean; keepsUnsavedWork?: boolean; diskDiverged?: boolean; tables?: number; measures?: number; liveBound?: boolean; liveEndpoint?: string; liveDatabase?: string; liveConnected?: boolean; liveKind?: string; liveDataSource?: string; currentAccount?: string; currentTenant?: string; modelIdentity?: string; modelLabel?: string; }
+interface OpenResult { sessionId: string; revision: number; modelName: string; tables: number; measures: number; source: string; liveConnected?: boolean; account?: string; note?: string; }
+interface SessionInfo { sessionId?: string; revision: number; modelName?: string; source?: string; hasUnsavedChanges?: boolean; hasUnsavedEdits?: boolean; keepsUnsavedWork?: boolean; diskDiverged?: boolean; keptCopyPath?: string | null; tables?: number; measures?: number; liveBound?: boolean; liveEndpoint?: string; liveDatabase?: string; liveConnected?: boolean; liveKind?: string; liveDataSource?: string; currentAccount?: string; currentTenant?: string; modelIdentity?: string; modelLabel?: string; }
 interface ModelConnectionRecord { id: string; kind: string; endpoint: string; database?: string; modelName?: string; tenantId?: string; authMode?: string; label?: string; workingFolder?: string; publishConnectionId?: string; lastUsedUtc?: string; lastAccount?: string; }
 // One target's silently-probed account (mirrors Engine ConnectionAccountProbe). `account` is who the NEXT open signs in
 // as (the tenant-wide record wins); `previousAccount` names the target's last-used account when it differs ("was <x>").
@@ -176,6 +185,9 @@ const MODEL_REF = 'model:';
 const out = vscode.window.createOutputChannel('Semanticus');
 
 let conn: MessageConnection | undefined;
+/// Why the last start of the engine failed, in a sentence a person can read, while there is no engine. Pages show it
+/// instead of a bare "Engine not connected." (Kane, 17 Oct: a fresh person met that line with no way on). Cleared on a connect.
+let engineFailureReason: string | undefined;
 let connectionEpoch = 0;                              // invalidates a connect attempt when restart/shutdown overtakes it
 let connectInFlight: { epoch: number; promise: Promise<void> } | undefined;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -222,9 +234,15 @@ function isStudioDriveMode(mode: unknown): mode is StudioDriveMode {
 function isStudioDriverState(state: unknown): state is StudioDriverState {
     return state === 'idle' || state === 'claudeDriving' || state === 'personHasWheel';
 }
-function reportStudioDriver(): void {
+// What the engine was last told, so a person typing in the ask box (one input per key) tells it once, not once per key (hero 25 H9).
+// An assistant call still reports every time (force), which is how an engine that restarted hears again.
+let lastReportedDriver = '';
+function reportStudioDriver(force = false): void {
     // Before the Studio has read the saved mode, the host's own default (I drive) is not the person's choice: read it first, or say nothing wrong.
     if (!studioDriveModeLoaded && extCtx) { studioDriveMode = resolveStudioDriveMode(); studioDriveModeLoaded = true; }
+    const key = studioDriveMode + '|' + studioDriverState;
+    if (!force && key === lastReportedDriver) return;
+    lastReportedDriver = key;
     void conn?.sendRequest('setStudioDriver', studioDriveMode, studioDriverState)
         .catch((e: any) => out.appendLine('Studio driver report failed: ' + String(e?.message ?? e)));
 }
@@ -241,14 +259,14 @@ function noteStudioPersonInput(): void {
 function noteStudioAssistantCall(at: string): void {
     const quietGapMs = 8_000;   // driver-store.ts QUIET_GAP_MS
     const started = Date.parse(at);
-    if (!Number.isFinite(started)) { reportStudioDriver(); return; }
+    if (!Number.isFinite(started)) { reportStudioDriver(true); return; }
     const since = Math.max(studioLastAssistantCall ?? -Infinity, studioLastPersonInput ?? -Infinity);
     if (!studioPanel && studioDriveMode === 'claudeDrives' && studioDriverState === 'personHasWheel'
         && studioLastPersonInput !== null && started > studioLastPersonInput && started - since >= quietGapMs) {
         studioDriverState = 'claudeDriving';
     }
     studioLastAssistantCall = Math.max(studioLastAssistantCall ?? -Infinity, started);
-    reportStudioDriver();
+    reportStudioDriver(true);
 }
 // What the assistant says to the Studio (studio/show, studio/suggest, assistant/call): posted at once when the Studio is ready,
 // else held (the last 20) and flushed on 'studioReady'. A note may open a closed Studio, in Claude drives mode only.
@@ -330,6 +348,7 @@ let treeCopyStash: { ref: string; kind: string; name: string; table?: string } |
 let extCtx: vscode.ExtensionContext;                  // module-scoped so secure storage and one-time migrations share the activation context
 
 export async function activate(context: vscode.ExtensionContext) {
+    consentAsks.remember(context.globalState);
     deactivating = false;
     reconnectAttempt = 0;
     cancelScheduledReconnect();
@@ -393,9 +412,11 @@ export async function activate(context: vscode.ExtensionContext) {
     // settings are always reachable without adding a synthetic root node to the native tree.
     treeView.onDidChangeSelection((e) => {
         // A redraw after a model edit (Claude renamed the shown object) drops or re-puts the selection. Only a real click takes the wheel.
-        const byPerson = treeSelectionGuard.classify([...e.selection].map((n) => n.ref)) === 'person' && studioTreeRevealDepth === 0;
+        const kind = treeSelectionGuard.classify([...e.selection].map((n) => n.ref));
+        const byPerson = kind === 'person' && studioTreeRevealDepth === 0;
         lastTreeSelectionBy = byPerson ? 'human' : 'assistant';
         if (byPerson) noteStudioPersonInput();
+        if (gridStaysOnRedraw(kind, e.selection.length)) return;   // a rename in the grid redraws the tree: the grid stays on the renamed object
         const selected = [...e.selection].filter((n) => n.kind !== 'dfolder' && n.kind !== 'modelIdentity');
         void propGrid.showObjects(selected);
         // Selection is context only. It updates Model home's action strip without navigating away from a draft.
@@ -455,6 +476,7 @@ export async function activate(context: vscode.ExtensionContext) {
         registerPersonCommand('semanticus.signInToReconnect', () => signInToReconnect()),
         registerPersonCommand('semanticus.manageConnections', () => openConnectionsManager('setup')),
         registerPersonCommand('semanticus.openStudio', () => openStudio(context)),
+        registerPersonCommand('semanticus.openModelFolder', () => openModelFolderCmd()),
         // Learn Semanticus (1.4 lane tour): the Studio's Learn list asks for these through runHostCommand.
         registerPersonCommand('semanticus.learn.start', (chapter: unknown) => learn.start(chapter)),
         registerPersonCommand('semanticus.learn.end', () => learn.end()),
@@ -535,7 +557,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // Studio jumps: right-click a tree object and land on the Studio tab that owns it (a key discoverability win —
         // the tree is the index, Studio is the workbench). All route through navigateStudio (opens + flushes nav).
         registerPersonCommand('semanticus.showLineage', (n: TreeNode) => { if (n?.ref) navigateStudio(context, 'lineage', n.ref); }),
-        registerPersonCommand('semanticus.tryCalculation', (n?: TreeNode) => { const node = n ?? treeView?.selection[0]; if (node?.ref) navigateStudio(context, 'daxlab', node.ref); }),
+        registerPersonCommand('semanticus.tryCalculation', (n?: TreeNode) => { const node = n ?? treeView?.selection[0]; if (node?.ref) navigateStudio(context, 'query', node.ref); }),
         registerPersonCommand('semanticus.addTestForMeasure', (n?: TreeNode) => { const node = n ?? treeView?.selection[0]; if (node?.ref) navigateStudio(context, 'tests', node.ref); }),
         registerPersonCommand('semanticus.editMCode', (n: TreeNode) => {
             try {
@@ -554,7 +576,6 @@ export async function activate(context: vscode.ExtensionContext) {
         // Ctrl J (composer contract 10.2): the ask box under the header on whatever page is open. A pseudo-tab like
         // 'shortcuts', so it never moves the page; the host binding beats VS Code's own Ctrl J while Studio has focus.
         registerPersonCommand('semanticus.studioAsk', () => navigateStudio(context, 'ask')),
-        registerPersonCommand('semanticus.studioSearch', () => navigateStudio(context, 'search', '')),          // '' = "focus the find box" (no query hand-off)
         registerPersonCommand('semanticus.studioNextTab', () => navigateStudio(context, 'cycle:next')),
         registerPersonCommand('semanticus.studioPrevTab', () => navigateStudio(context, 'cycle:prev')),
         registerPersonCommand('semanticus.studioGoGroup', async (g: string) => {
@@ -567,7 +588,6 @@ export async function activate(context: vscode.ExtensionContext) {
                     { label: 'Edit', key: 'edit' },
                     { label: 'Review', key: 'review' },
                     { label: 'Publish', key: 'publish' },
-                    { label: 'Workflows', key: 'workflows' },
                 ];
                 const pick = await vscode.window.showQuickPick(groups, { title: 'Go to Studio area' });
                 if (!pick) return;
@@ -584,15 +604,14 @@ export async function activate(context: vscode.ExtensionContext) {
                 // refuses any entry here that names a place the strip does not have.
                 const tabs: Array<vscode.QuickPickItem & { key: string }> = [
                     { label: 'Plan', key: 'plan' }, { label: 'Plan: History', key: 'history' }, { label: 'Plan: Pending changes', key: 'optimize' },
-                    { label: 'Plan: Model Spec', key: 'spec' }, { label: 'Data', key: 'data' }, { label: 'Diagram', key: 'diagram' },
-                    { label: 'Lineage', key: 'lineage' }, { label: 'Size', key: 'stats' },
-                    { label: 'Find and replace', key: 'search' }, { label: 'Queries', key: 'daxlab' },
+                    { label: 'Plan: Model Spec', key: 'spec' }, { label: 'Data', key: 'data' }, { label: 'Query', key: 'query' },
+                    { label: 'Diagram', key: 'diagram' }, { label: 'Lineage', key: 'lineage' }, { label: 'Size', key: 'stats' },
                     { label: 'AI instructions', key: 'instructions' }, { label: 'AI instructions: Notes', key: 'knowledge' },
                     { label: 'Advanced modelling', key: 'advmodels' }, { label: 'Power Query', key: 'mcode' },
-                    { label: 'Model quality (BPA)', key: 'bpa' }, { label: 'AI readiness', key: 'readiness' },
+                    { label: 'Model quality (BPA)', key: 'bpa' }, { label: 'AI readiness', key: 'readiness' }, { label: 'Copilot test', key: 'copilottest' },
                     { label: 'Validation', key: 'tests' }, { label: 'Validation: Reports', key: 'evidence' }, { label: 'Docs', key: 'docs' },
                     { label: 'Published', key: 'deploy' },
-                    { label: 'Workflows', key: 'workflows' }, { label: 'Assistant permissions', key: 'permissions' },
+                    { label: 'Assistant permissions', key: 'permissions' },
                 ];
                 const pick = await vscode.window.showQuickPick(tabs, { title: 'Go to Studio tab' });
                 if (!pick) return;
@@ -653,7 +672,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
     ensureMcpLauncher(context);
     await autoHealSemanticusMcpEntry(context);
+    const resumedConnect = await adoptPendingConnect(context);   // a connect that opened this folder: bring its model back first
+    // A folder Semanticus opened (Open this model's folder) brings the model that was open, and the Studio if it was open.
+    // A folder opened by hand gets no marker, so nothing runs here for it.
+    const handed = adoptOpenHandoff(context);
     await connectEngine(context);
+    if (resumedConnect) void finishPendingConnect();
+    else if (handed?.studio) openStudio(context);
 
     // A renewal is minted by the worker, not pushed to us, so a window that is already open would never
     // learn about one. Ask once here and then once a day. Deliberately not awaited: activation must not
@@ -664,8 +689,9 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push({ dispose: () => clearInterval(renewalTimer) });
 }
 
-export function deactivate() {
+export function deactivate(): void {
     deactivating = true;
+    hostSettingsWatch?.dispose();
     switchNotices.settle();   // a closing window leaves no notice waiting for a switch it will never see
     cancelScheduledReconnect();
     connectionEpoch++;
@@ -678,7 +704,7 @@ export function deactivate() {
     // unsaved session a reload is supposed to keep (C4.1). Killing here would also make the engine's grace
     // unreachable, because the grace only starts when the parent dies on its own.
     //
-    // So we leave, and the engine decides. This process dying starts its twenty-second grace: a window that
+    // So we leave, and the engine decides. This process dying starts its eight-second grace: a window that
     // comes back adopts it (adoptEngine, on connect) and the session survives; a window that does not come
     // back leaves an engine that exits by itself. That is what stops the pile of orphans Kane found on
     // 2026-09-21 without breaking reload. Restart Engine still kills outright.
@@ -1431,12 +1457,16 @@ async function ensureEngine(ws: string, context: vscode.ExtensionContext, uiChal
     out.appendLine(`Spawning engine (${engine.kind}): "${spawnCmd}" ${redactArgs(spawnArgs).map(a => `"${a}"`).join(' ')}`);
     // Pipe the engine's own stdout/stderr into this channel so a startup failure is VISIBLE here instead of
     // surfacing only as a 10s timeout. ('error' = spawn couldn't start; 'exit' = engine quit early.)
-    spawned = cp.spawn(spawnCmd, spawnArgs, { windowsHide: true });
+    // With no folder open, ws is only the host's working folder (it holds engine.json): the engine must not save a person's model there.
+    const noFolder = !vscode.workspace.workspaceFolders?.length;
+    spawned = cp.spawn(spawnCmd, spawnArgs, { windowsHide: true, env: noFolder ? { ...process.env, SEMANTICUS_NO_FOLDER: '1' } : process.env });
     spawned.stdin?.end(ownerStdinPayload(uiChallenge, licenseToken));
     spawned.stdout?.on('data', (d) => out.appendLine('  [engine] ' + d.toString().replace(/\s+$/, '')));
     spawned.stderr?.on('data', (d) => out.appendLine('  [engine] ' + d.toString().replace(/\s+$/, '')));
     spawned.on('error', (e) => out.appendLine('Engine spawn error: ' + ((e as Error)?.message ?? e) + '. Is the .NET 8 runtime installed and is dotnet on PATH?'));
-    spawned.on('exit', (code) => out.appendLine(`Engine process exited (code ${code}).`));
+    // An engine that exits at once will never publish a pipe, so the wait below ends at once with that, not after 40 s.
+    let exitedEarly: number | null | undefined;
+    spawned.on('exit', (code) => { exitedEarly = code; out.appendLine(`Engine process exited (code ${code}).`); });
 
     // A cold .NET + TOM start under a full window reload (AV scanning the just-built DLL + every other extension
     // activating) can take far longer than a standalone run (~300ms). Wait generously — 40s — before giving up.
@@ -1444,6 +1474,7 @@ async function ensureEngine(ws: string, context: vscode.ExtensionContext, uiChal
     for (let i = 0; i < 200; i++) {
         await delay(200);
         const info = readEngineInfo(ws);
+        if (exitedEarly !== undefined && !info) throw new Error(`The engine stopped as it started (code ${exitedEarly}).`);
         if (!info) { if (i % 25 === 0) out.appendLine(`  waiting… ${lastReason}`); continue; }
         const reason = await tryConnectPipe(info.pipeName);
         if (reason === null) return info.pipeName;
@@ -1577,6 +1608,29 @@ function cancelScheduledReconnect(): void {
     reconnectTimer = undefined;
 }
 
+/// Plain words for a failed start. A sentence we wrote ourselves is shown as it is; anything else (a timeout, a spawn
+/// error, a stack) is not a sentence for a person, so the page says where the details are.
+function engineFailureSentence(err: unknown): string {
+    const text = String((err as { message?: unknown })?.message ?? err ?? '').trim();
+    if (/^(Another VS Code window|Your assistant has unsaved)/.test(text) || text === ASSISTANT_UNSAVED_SAME) return text;
+    if (/^The engine stopped as it started/.test(text)) return text + ' Restart the engine, or open Show details for the reason.';
+    return 'Semanticus could not start its engine. Restart the engine, or open Show details for the reason.';
+}
+
+/// How long a page waits for an engine that is starting before the host calls it not connected.
+const ENGINE_WAIT_MS = 20_000;
+
+/// A page asked the engine something while the host holds no connection. A start or a retry is usually running, so run
+/// one now (cutting the back-off short) and wait for it, up to ENGINE_WAIT_MS, before answering. A person who pressed a
+/// button on a cold window gets the answer, not "Engine not connected." (Kane, 17 Oct).
+async function waitForEngine(): Promise<MessageConnection | undefined> {
+    if (conn) return conn;
+    if (!extCtx || deactivating) return undefined;
+    cancelScheduledReconnect();
+    await Promise.race([connectEngine(extCtx, true).catch(() => undefined), delay(ENGINE_WAIT_MS)]);
+    return conn;
+}
+
 function scheduleEngineReconnect(context: vscode.ExtensionContext): void {
     if (deactivating || reconnectTimer) return;
     const waitMs = Math.min(750 * Math.pow(2, reconnectAttempt++), 10_000);
@@ -1699,7 +1753,7 @@ async function saveOlderBuildThenSwitch(context: vscode.ExtensionContext): Promi
 /// Claim the engine on the other end of this connection for THIS extension host.
 ///
 /// Reloading a window restarts the extension host, so the engine's parent dies. The engine does not exit on
-/// that: it holds the session open for its grace (ParentLifetime, twenty seconds) and waits to be adopted.
+/// that: it holds the session open for its grace (ParentLifetime, eight seconds) and waits to be adopted.
 /// This call inside that window is what makes the reload survivable, which is the C4.1 promise that a reload
 /// must not throw unsaved work away. An engine we just spawned is already watching us, and re-adopting the
 /// same pid is harmless, so this runs on every connect rather than only on a reattach.
@@ -1833,7 +1887,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         const live = connected;
         guardEngineRequests(connected, (method) => { void handleOutdatedEngine(context, live, method); });
         conn = connected;
-        reportStudioDriver();   // a new engine starts from its own defaults (Claude drives, idle): tell it who has the wheel now
+        reportStudioDriver(true);   // a new engine starts from its own defaults (Claude drives, idle): tell it who has the wheel now
         tree.attach(connected);
         daxFs.attach(connected);
         await migrateLegacyXmlaHistory();
@@ -1848,6 +1902,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
                 if (saidMayMoveTree && refs[0]) void revealAssistantRefInTree(refs[0]);
             }
             scheduleDaxSymbolRebuild();   // keep DAX IntelliSense in sync with renames/creates/deletes
+            propGrid.followRename(n.deltas ?? []);   // a renamed selected object keeps its place on the grid (UAT 18 Oct N20)
             void propGrid.refresh();   // live-update the property grid when the selected object changes (incl. agent edits)
             for (const d of n.deltas ?? []) {
                 daxFs.signalChanged(d.ref, n.origin !== 'human' || !!n.replay, { sessionId: n.sessionId, revision: n.revision });
@@ -1867,6 +1922,14 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
             void refreshProAccount(extCtx);
         });
         void refreshTrialStatus();
+        void resumePendingTrial(extCtx);   // a free-month claim left by an earlier window (F-290)
+        // The assistant's doors to what only this window can do (F-292, F-293). The engine asks; the window does it the way the person's own click does.
+        connected.onNotification('host/settings', (v: unknown) => { void applyHostPersonality(v as any).catch(() => undefined); });
+        connected.onNotification('host/startTrial', (v: { email?: string } | undefined) => { void beginTrial(extCtx, v?.email); });
+        hostSettingsWatch?.dispose();
+        hostSettingsWatch = watchPersonalityForEngine(() => {
+            void conn?.sendRequest('reportHostSettings', ...personalityReport()).catch(() => undefined);
+        });
         // A model swap made through another door (the assistant's create_model, open_model, open_live, open_local,
         // prepare_working_copy or a History restore). A swap is not an edit, so no model/didChange announces it: without
         // this the window kept showing the old model until the new one was edited. The same wiring a local open runs.
@@ -1879,6 +1942,12 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
             out.appendLine(`sessionDidChange reason=${n.reason} session=${n.sessionId} model=${n.modelName ?? ''}`);
             if (n.sessionId) autoOpenedSessionId = n.sessionId;
             void bindGridAndTree(n.modelName, tree, 'otherDoor').catch((e: any) => out.appendLine('Refreshing after a model swap failed: ' + (e?.message ?? e)));
+        });
+        // The one question the engine asks the person: a model names a SQL server nobody has saved. Yes lets the sign-in go there; closing the box is a no.
+        connected.onRequest('askSqlHost', async (host: string): Promise<boolean> => {
+            const yes = 'Yes', no = 'No';
+            const pick = await vscode.window.showInformationMessage(`This model reads from ${host}. Send your sign-in there?`, { modal: true }, yes, no);
+            return pick === yes;
         });
         // The change plan broadcasts separately so the Studio Optimize tab updates live as the plan
         // is proposed/filled/applied (by the human OR the user's Claude on the same session).
@@ -1980,9 +2049,9 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         if (deactivating || epoch !== connectionEpoch) return;
         if (conn === connected) conn = undefined;
         try { connected?.dispose(); } catch { /* already closed */ }
+        postToPanels({ type: 'engineState', connected: false, reason: (engineFailureReason = engineFailureSentence(err)) });   // the pages say why, not a bare "not connected"
         setStatusPlain('$(error) Semanticus: engine error');
         out.appendLine('Engine connection failed: ' + (err?.stack ?? err));
-        postToPanels({ type: 'engineState', connected: false });
         if (err instanceof OlderOwnerUnsavedError) { if (!quiet) void offerSaveForOlderOwner(context, err.pipeName); }   // not broken: offer Save
         else if (!quiet) vscode.window.showErrorMessage('Semanticus could not start its engine. See the Semanticus output channel. ' + (err?.message ?? err));
         scheduleEngineReconnect(context);
@@ -2004,6 +2073,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
     else await propGrid.clear();
     tree.refresh();
     postToPanels({ type: 'reconnected' });   // settle + re-read on BOTH the Studio panel and the standalone Connections hub
+    engineFailureReason = undefined;
     postToPanels({ type: 'engineState', connected: true });
     void rebuildDaxSymbols();   // seed DAX IntelliSense for the just-opened model
     reconnectAttempt = 0;
@@ -2035,10 +2105,18 @@ class SignInRequiredError extends Error {
 async function reopenLastModel(context: vscode.ExtensionContext, connected: MessageConnection,
                                opts: { restarted: boolean }): Promise<SessionInfo | undefined> {
     const configured = vscode.workspace.getConfiguration('semanticus').get<string>('modelPath');
-    const target = readLastModel(context) ?? (configured ? { kind: 'file' as const, path: configured } : undefined);
+    let target = readLastModel(context) ?? (configured ? { kind: 'file' as const, path: configured } : undefined);
+    // A new blank model that was open has no file to reopen. Its kept changes are offered below, not reported as a missing file.
+    if (target?.kind === 'file' && !target.path) target = undefined;
     if (!target) {
         setStatusPlain('$(database) Semanticus: no model. Run "Open Model…"');
         setHasModelContext(false);
+        // A window with no folder remembers nothing of its own, but the saved connections know which model was used last.
+        // Offer it in one press (round 2 UAT N25). An offer, not an open: nothing starts a sign-in by itself.
+        const records = (await connected.sendRequest<ModelConnectionRecord[]>('listConnections').catch(() => [])) ?? [];
+        const offer = recentModelOffer(records, !!vscode.workspace.workspaceFolders?.length);
+        if (offer) setPendingReconnect(offer, false, true);
+        void offerUnsavedBlank();
         return undefined;
     }
     const liveTarget = (target.kind === 'live' || target.kind === 'localDesktop') && !!target.endpoint;
@@ -2128,12 +2206,20 @@ async function reopenLastModel(context: vscode.ExtensionContext, connected: Mess
 
 /// The model that is the current one but is waiting for the person to sign in (a published model on a cold start).
 /// Posted to Studio, shown in the Model view and the status bar, and ended by whatever opens a live session.
-function setPendingReconnect(target?: LastModel, openedFromCachedCopy = false): void {
+function setPendingReconnect(target?: LastModel, openedFromCachedCopy = false, offer = false): void {
     pendingReconnect = target;
+    pendingIsOffer = !!target && offer;
     const name = target ? (target.modelName || target.database || 'your model') : undefined;
-    void vscode.commands.executeCommand('setContext', 'semanticus.reconnect', !!target);
-    postToPanels({ type: 'reconnectPending', name: name ?? null });
+    void vscode.commands.executeCommand('setContext', 'semanticus.reconnect', !!target && !offer);
+    void vscode.commands.executeCommand('setContext', 'semanticus.recentOffer', !!target && offer);
+    postToPanels({ type: 'reconnectPending', name: name ?? null, offer: pendingIsOffer });
     if (!target) return;
+    if (offer) {
+        // The last model, offered in one press. No notice: it is a place to start, not news.
+        setStatusPlain(`$(database) Open ${name}`);
+        status.command = 'semanticus.signInToReconnect';
+        return;
+    }
     // The model item's shape (r1 min4: the name, no product word), with what to do; a click signs in.
     setStatusPlain(`$(database) ${name}, sign in to reconnect`);
     status.command = 'semanticus.signInToReconnect';
@@ -2186,6 +2272,12 @@ async function openLiveTarget(connected: MessageConnection, target: LastModel, d
         false, null, false, null, 'human', discard, silentOnly);
 }
 
+/// The last model when it was a file: the offer to a window with no folder reopens it by its path.
+async function openFileTarget(connected: MessageConnection, target: LastModel, discard: boolean): Promise<void> {
+    if (!target.path || !fs.existsSync(target.path)) throw new ReopenMissingError(target.path || target.modelName || 'the last model');
+    await connected.sendRequest<OpenResult>('open', target.path, discard);
+}
+
 /// The "Sign in" action on the notice.
 ///
 /// A notification is not a moment, it is a thing that sits on screen. By the time this runs the person may
@@ -2201,7 +2293,7 @@ async function signInAndReopen(connected: MessageConnection, target: LastModel):
     try {
         await vscode.window.withProgress(
             { location: vscode.ProgressLocation.Notification, title: `Semanticus: opening ${target.modelName || target.database || 'your model'}…` },
-            () => openLiveTarget(connected, target, discard));
+            () => target.kind === 'file' ? openFileTarget(connected, target, discard) : openLiveTarget(connected, target, discard));
     } catch (err: unknown) {
         out.appendLine('Signing in to reopen the last model failed: ' + String((err as { stack?: string })?.stack ?? err));
         vscode.window.showWarningMessage('That model still could not be opened: ' + reopenFailureReason(err) + '. Open a model to continue.');
@@ -2265,6 +2357,8 @@ let modelDiskWatcher: vscode.Disposable | undefined;
 let diskChangedStatus: vscode.StatusBarItem;   // shown while the files on disk differ from what the model loaded
 /// The remembered published model that is waiting for a sign-in (see setPendingReconnect).
 let pendingReconnect: LastModel | undefined;
+/// True when that model is the last one used, offered to a window with no folder, rather than one waiting for a sign-in.
+let pendingIsOffer = false;
 
 /// WHAT was open, not just where its bytes were. A model opened from a running Power BI Desktop or a published
 /// workspace reports a `source` under the engine's own snapshot root (LiveModelExport.TempRoot), which is a TEMP
@@ -2419,7 +2513,7 @@ async function pickFirstSaveDestination(modelName?: string): Promise<{ path: str
     const safe = (modelName || 'model').replace(/[^\w.-]+/g, '_') || 'model';
     if (kind.id === 'file') {
         const picked = await vscode.window.showSaveDialog({
-            defaultUri: folder ? vscode.Uri.joinPath(folder, safe + '.bim') : vscode.Uri.file(safe + '.bim'),
+            defaultUri: folder ? vscode.Uri.joinPath(folder, safe + '.bim') : vscode.Uri.file(path.join(saveStartFolder(os.homedir(), fs.existsSync), safe + '.bim')),
             saveLabel: 'Save model',
             filters: { 'Semantic models': ['bim'] },
         });
@@ -2468,6 +2562,13 @@ async function warnIfDiskDiverged(): Promise<void> {
         ? 'This model has unsaved changes, and the files on disk also changed. Saving now would replace the files on disk. Press to reload from disk.'
         : 'The files on disk changed. This model still shows what was loaded. Saving now would replace the files on disk. Press to reload from disk.';
     diskChangedStatus.show();
+}
+
+// Whether the open model is the tour's throwaway demo copy. Outside the Studio relay, whose own engine calls all go through its rpc branch.
+async function scratchCopyOpen(): Promise<boolean> {
+    if (!conn) return false;
+    const info = await conn.sendRequest<SessionInfo>('sessionInfo').catch(() => undefined);
+    return isScratchCopyPath(info?.source);
 }
 
 async function reloadFromDiskCmd(): Promise<void> {
@@ -3291,18 +3392,12 @@ async function handleProPageMessage(context: vscode.ExtensionContext, msg: any):
         case 'manage':
             await manageSubscriptionCmd(context);
             return;
-        case 'trialStart': {
-            const email = trialEmailOf(msg.email);
-            if (!email) { setProPage({ ...proPage, trial: { step: 'error', message: 'That email address does not look right. Check it and try again.' } }); return; }
-            if (licenseInteractiveFlowActive || proPage.trial?.step === 'waiting' || proPage.trial?.step === 'sending') return;
-            licenseInteractiveFlowActive = true;
-            licenseConflictPromptedKey = undefined;
-            try { await startTrialFlow(context, email); }
-            finally { licenseInteractiveFlowActive = false; }
+        case 'trialStart':
+            await beginTrial(context, msg.email);
             return;
-        }
         case 'trialCancel':
             trialCollectionInFlight?.cancel();
+            void clearPendingClaim(trialClaimSlot(context));   // the person walked away: nothing to pick up on the next start
             setProPage({ ...proPage, trial: undefined });
             return;
         case 'remove': {
@@ -3328,19 +3423,34 @@ async function handleProPageMessage(context: vscode.ExtensionContext, msg: any):
 
 // ===================================================================================================
 // The free Pro month (Kane, 11 Oct 2026; trial mockup option B). The protocol is in proTrial.ts (no vscode).
-// Starting it is a person action on the Pro page: it needs an email the person types. The licence that comes
+// Starting it needs an email: typed on the Pro page, or given by the assistant (start_trial) once the person said yes in chat. The licence that comes
 // back goes through applyLicenseToken, the same path as a key and a purchase. The assistant reads the state
-// (get_entitlement carries isTrial, trialEndsAt, trialDaysLeft, trialEnded) and never starts a trial.
+// (get_entitlement carries isTrial, trialEndsAt, trialDaysLeft, trialEnded) and starts a trial only through start_trial.
 // ===================================================================================================
 
 let trialStatus: vscode.StatusBarItem | undefined;
+/// Tells the engine the person's personality settings on connect and on every change (get_personality_settings reads them).
+let hostSettingsWatch: vscode.Disposable | undefined;
 let trialCollectionInFlight: CollectGate | undefined;
 /// Changes the person applied by hand in this window, for the one-time offer's own count.
 let handChangesThisWindow = 0;
 const TRIAL_OFFERED_KEY = 'semanticus.trialOffered';
 const TRIAL_USED_KEY = 'semanticus.trialUsed';
 const TRIAL_END_SEEN_KEY = 'semanticus.trialEndSeen';
+const TRIAL_CLAIM_KEY = 'semanticus.trialPendingClaim';
 let trialOfferShowing = false;
+
+/// Start the free month for an email. The Pro page's button and the assistant's start_trial (host/startTrial) both land here (F-293),
+/// so there is one flow. The assistant's door has the person's yes in chat before it gets this far.
+async function beginTrial(context: vscode.ExtensionContext, rawEmail: unknown): Promise<void> {
+    const email = trialEmailOf(rawEmail);
+    if (!email) { setProPage({ ...proPage, trial: { step: 'error', message: 'That email address does not look right. Check it and try again.' } }); return; }
+    if (licenseInteractiveFlowActive || proPage.trial?.step === 'waiting' || proPage.trial?.step === 'sending') return;
+    licenseInteractiveFlowActive = true;
+    licenseConflictPromptedKey = undefined;
+    try { await startTrialFlow(context, email); }
+    finally { licenseInteractiveFlowActive = false; }
+}
 
 async function startTrialFlow(context: vscode.ExtensionContext, email: string): Promise<void> {
     const nonce = newTrialNonce();
@@ -3359,6 +3469,38 @@ async function startTrialFlow(context: vscode.ExtensionContext, email: string): 
         setProPage({ ...proPage, trial: { step: 'used', email } });
         return;
     }
+    // The email is out. Keep the claim so a reload before the press does not lose it (F-290).
+    await savePendingClaim(trialClaimSlot(context), { nonce, email, startedAt: Date.now() });
+    await waitForTrialLicence(context, email, (gate) => collectTrialToken({ base: billingBaseUrl(), nonce, gate }));
+}
+
+/// Where the pending claim is kept: secret storage, because the nonce is what collects the licence.
+function trialClaimSlot(context: vscode.ExtensionContext): PendingClaimSlot {
+    return {
+        get: async () => { try { return await context.secrets.get(TRIAL_CLAIM_KEY); } catch { return undefined; } },
+        set: async (v) => { try { await context.secrets.store(TRIAL_CLAIM_KEY, v); } catch { /* no keychain: the claim lives for this window only, as before */ } },
+        delete: async () => { try { await context.secrets.delete(TRIAL_CLAIM_KEY); } catch { /* nothing to forget */ } },
+    };
+}
+
+/// A claim left by an earlier window (the person closed or reloaded VS Code after the email went out): wait for it again.
+async function resumePendingTrial(context: vscode.ExtensionContext): Promise<void> {
+    if (trialCollectionInFlight || licenseInteractiveFlowActive) return;
+    const slot = trialClaimSlot(context);
+    const claim = await loadPendingClaim(slot);
+    if (!claim) return;
+    licenseInteractiveFlowActive = true;
+    licenseConflictPromptedKey = undefined;
+    try {
+        await waitForTrialLicence(context, claim.email, async (gate) => {
+            const resumed = await resumeTrialClaim(slot, { base: billingBaseUrl(), gate });
+            return resumed.kind === 'none' ? { kind: 'cancelled' } : resumed;
+        });
+    } finally { licenseInteractiveFlowActive = false; }
+}
+
+/// The wait for the press and what follows it, for a fresh start and for a resumed claim alike.
+async function waitForTrialLicence(context: vscode.ExtensionContext, email: string, collect: (gate: CollectGate) => Promise<CollectOutcome>): Promise<void> {
     // The snapshot is taken before the wait, as for a purchase: a licence change that lands meanwhile wins.
     const canStore = await canUseSecretStorage(context);
     const opened = await openLicenseSnapshot(context, canStore);
@@ -3366,10 +3508,11 @@ async function startTrialFlow(context: vscode.ExtensionContext, email: string): 
     trialCollectionInFlight = gate;
     setProPage({ ...proPage, trial: { step: 'waiting', email } });
     let outcome;
-    try { outcome = await collectTrialToken({ base: billingBaseUrl(), nonce, gate }); }
+    try { outcome = await collect(gate); }
     finally { if (trialCollectionInFlight === gate) trialCollectionInFlight = undefined; }
 
     if (outcome.kind === 'token') {
+        await clearPendingClaim(trialClaimSlot(context));
         await context.globalState.update(TRIAL_USED_KEY, true);
         if (await applyLicenseToken(context, outcome.token.trim(), opened, canStore)) {
             await reverifyAfterLicenseChange(context, async () => {
@@ -3384,6 +3527,7 @@ async function startTrialFlow(context: vscode.ExtensionContext, email: string): 
         return;
     }
     if (outcome.kind === 'cancelled') return;
+    if (outcome.kind === 'gone') await clearPendingClaim(trialClaimSlot(context));
     setProPage({ ...proPage, trial: { step: 'error', email, message: outcome.kind === 'timeout'
         ? 'The link in the email was not pressed in 15 minutes. Start again to get a new email.'
         : outcome.kind === 'gone' ? 'That free month was already turned on. Check the Pro page on the computer you used.'
@@ -4211,11 +4355,6 @@ async function findInModelCmd(context: vscode.ExtensionContext) {
     qp.placeholder = 'Find in model: names, descriptions, DAX expressions…';
     qp.matchOnDescription = true;
     qp.matchOnDetail = true;
-    // The quick-pick is the fast launcher; the Studio "Search" tab is the full find/replace surface. This button
-    // hands the current query off to it (the panel has replace, facets, regex/whole-word, and the reference-safe rename).
-    const toSearchTab: vscode.QuickInputButton = { iconPath: new vscode.ThemeIcon('replace-all'), tooltip: 'Open in Search & Replace' };
-    qp.buttons = [toSearchTab];
-    qp.onDidTriggerButton((b) => { if (b === toSearchTab) { const q = qp.value.trim(); qp.hide(); navigateStudio(context, 'search', q || undefined); } });
     let seq = 0;
     qp.onDidChangeValue(async (val) => {
         const q = val.trim();
@@ -5448,6 +5587,7 @@ function setStatusFromInfo(info?: SessionInfo): void {
     clearDaxHeaderDocsOnSwap(info?.sessionId);
     renderSyncChip(info);
     renderPublishChip(info);
+    noteBlank(info);
     // The tree's identity row reads the SAME SessionInfo the status bar does, so the two can never disagree
     // about which model is open. The full path stays available as the row's tooltip; the row shows the file name.
     tree?.setIdentity(info?.sessionId ? {
@@ -5487,6 +5627,50 @@ async function offerFileRecovery(info: SessionInfo & { fileRecovery?: FileRecove
     } catch (e) { vscode.window.showErrorMessage('The kept changes could not be restored. ' + String((e as Error).message || e)); }
 }
 
+// ---- a new blank model's kept changes -------------------------------------------------------------------------------------------
+// The engine keeps a blank model's unsaved changes under its name (Session.FileRecovery.cs). The host remembers which names have some
+// (src/unsavedBlank.ts), so a window that opens with no model can offer them back and Open model can list them.
+function noteBlank(info?: SessionInfo): void {
+    if (!extCtx || !info?.sessionId) return;
+    const before = extCtx.globalState.get<UnsavedBlank[]>(UNSAVED_BLANK_KEY) ?? [];
+    const after = noteUnsavedBlank(before, info);
+    if (after !== before) void extCtx.globalState.update(UNSAVED_BLANK_KEY, after);
+}
+
+function keptBlanks(): UnsavedBlank[] {
+    return extCtx ? freshUnsavedBlanks(extCtx.globalState.get<UnsavedBlank[]>(UNSAVED_BLANK_KEY)) : [];
+}
+
+/// Makes a model of that name again: the engine offers the changes it kept, and one press restores them. Nothing is lost if none are there.
+async function openUnsavedBlank(name: string): Promise<boolean> {
+    if (!conn || !extCtx) return false;
+    const connection = conn;
+    // One person's action: the engine's model fence wants every write to name the model it is for. The new model is named for the restore.
+    const info = await runPersonAction([], async () => {
+        await connection.sendRequest('createModel', name, 1604, false);
+        const made = await connection.sendRequest<SessionInfo & { fileRecovery?: FileRecovery }>('sessionInfo');
+        if (made.fileRecovery && made.sessionId) await rebindAction(made.modelIdentity, () => connection.sendRequest('resolveFileRecovery', made.sessionId, true));
+        return made;
+    }) as (SessionInfo & { fileRecovery?: FileRecovery }) | undefined;
+    if (!info) return false;
+    if (info.fileRecovery && info.sessionId) { /* restored above */ }
+    else {
+        void extCtx.globalState.update(UNSAVED_BLANK_KEY, keptBlanks().filter((x) => x.name !== name));
+        void vscode.window.showWarningMessage(`Semanticus no longer has the unsaved changes to ${name}. A new blank model is open instead.`);
+    }
+    await refreshStatus(); tree.refresh();
+    if (!studioPanel) openStudio(extCtx);
+    return true;
+}
+
+/// A window that opens with no model and has kept changes to a new blank model says so, once, with the one button that brings them back.
+async function offerUnsavedBlank(): Promise<void> {
+    const first = keptBlanks()[0];
+    if (!first) return;
+    const pick = await vscode.window.showInformationMessage(`Semanticus kept your unsaved changes to ${first.name}.`, 'Open it', 'Not now');
+    if (pick === 'Open it') await openUnsavedBlank(first.name).catch((e) => vscode.window.showErrorMessage('Could not open it: ' + String((e as Error)?.message ?? e)));
+}
+
 // The ONE model item (r1 min4, V1 and V2): the model's name, with the editing-versus-querying verdict folded in. It was
 // two items, the long model text and a separate sync chip. Now it warns, with a tint and a warning icon, only when we can
 // PROVE a divergence (a live query connection with unsaved edits, the exact case where query results omit your staged
@@ -5516,6 +5700,7 @@ async function refreshSyncChip(): Promise<void> {
         const info = await conn.sendRequest<SessionInfo>('sessionInfo');
         renderSyncChip(info);
         renderPublishChip(info);
+        noteBlank(info);
         // An edit flips hasUnsavedChanges and reaches the UI down THIS path, not through setStatusFromInfo, so
         // the identity row's unsaved dot is refreshed from the same fetch the chips use. Without this line the
         // dot only ever appeared on a model open.
@@ -5537,9 +5722,10 @@ async function refreshStatus(): Promise<SessionInfo | undefined> {
 // "Choose account for this open"; "Add published model" routes to the hub's Add view. A typed endpoint is NOT
 // interpreted here (endpoints belong only in Add). Built on createQuickPick so each row can carry per-row buttons.
 async function quickOpenModelCommand(tree: ModelTreeProvider) {
-    if (!conn) { vscode.window.showWarningMessage('Semanticus engine not connected.'); return; }
+    if (!conn) await waitForEngine();   // a start that is running answers first (Kane, 17 Oct)
+    if (!conn) { warnNoEngine(); return; }
     const connection = conn;
-    type OpenPick = vscode.QuickPickItem & { id?: 'newModel' | 'file' | 'typedPath' | 'discoverLocal' | 'newXmla' | 'manage'; record?: ModelConnectionRecord };
+    type OpenPick = vscode.QuickPickItem & { id?: 'newModel' | 'file' | 'typedPath' | 'discoverLocal' | 'newXmla' | 'manage' | 'unsavedBlank'; record?: ModelConnectionRecord; blankName?: string };
     const known = (await connection.sendRequest<ModelConnectionRecord[]>('listConnections').catch(() => [])) ?? [];
     // One cheap silent probe (a local MSAL-record read on the engine) fills in the account for rows connected before we
     // began capturing it — so "as <account>" is honest even for older targets, and absent means "account unknown".
@@ -5585,6 +5771,11 @@ async function quickOpenModelCommand(tree: ModelTreeProvider) {
         { id: 'typedPath', label: '$(edit) Type a local path…', detail: 'Enter a .bim, TMDL folder, or Power BI project path' },
         { id: 'discoverLocal', label: '$(vm) Find a running local model…', detail: 'Discover a running local model and open it' },
     ];
+    const kept = keptBlanks();
+    if (kept.length) {
+        items.push({ label: 'Unsaved new models', kind: vscode.QuickPickItemKind.Separator });
+        items.push(...kept.map((k): OpenPick => ({ id: 'unsavedBlank', blankName: k.name, label: `$(new-file) ${k.name}`, description: 'unsaved changes kept', detail: 'Opens a new blank model and brings its changes back' })));
+    }
     if (files.length) {
         items.push({ label: 'Local files and projects', kind: vscode.QuickPickItemKind.Separator });
         items.push(...files.map((r): OpenPick => ({ record: r, label: `$(file) ${r.modelName || path.basename(r.endpoint)}`, description: 'local', detail: r.endpoint, buttons: [manageBtn] })));
@@ -5632,6 +5823,12 @@ async function quickOpenModelCommand(tree: ModelTreeProvider) {
         if (!pick) return;
         if (pick.id === 'manage') { await openConnectionsManager(); return; }
         if (pick.id === 'newXmla') { await openConnectionsManager('add'); return; }   // typed endpoints live only in the hub's Add view
+        if (pick.id === 'unsavedBlank' && pick.blankName) {
+            const decided = await confirmUnsavedWork('Opening it replaces the model that is open now.');
+            if (decided === 'cancel' || (decided === 'save' && !await saveCommand())) return;
+            await openUnsavedBlank(pick.blankName);
+            return;
+        }
         if (pick.id === 'newModel') {
             const name = await vscode.window.showInputBox({
                 title: 'Create a new model', prompt: 'Model name', placeHolder: 'Sales analytics', ignoreFocusOut: true,
@@ -5677,10 +5874,17 @@ async function queryFromRemembered(r: ModelConnectionRecord): Promise<void> {
 }
 
 // Shared post-open wiring: announce, retarget the property grid, refresh the tree/status/IntelliSense, wake Studio.
+// The engine's one plain line when an open had something to say (a copy saved inside the model folder was left out). Every open path shows it.
+function showOpenNote(note: string | undefined): void {
+    if (note) vscode.window.showInformationMessage(note);
+}
+
 async function finishOpen(r: OpenResult | undefined, tree: ModelTreeProvider): Promise<void> {
     if (!r) return;
     const account = r.account ? ` · as ${r.account}` : '';
-    vscode.window.showInformationMessage(`Opened ${r.modelName}: ${r.tables} tables, ${r.measures} measures${r.liveConnected ? ' · live' : ''}${account}.`);
+    // The engine's one plain line when the open had something to say (a copy saved inside the model folder was left out); both doors show it.
+    const note = r.note ? ` ${r.note}` : '';
+    vscode.window.showInformationMessage(`Opened ${r.modelName}: ${r.tables} tables, ${r.measures} measures${r.liveConnected ? ' · live' : ''}${account}.${note}`);
     await bindGridAndTree(r.modelName, tree);
 }
 
@@ -5732,7 +5936,9 @@ async function closeDaxTabsForRef(ref: string): Promise<void> {
 async function openConnectionsManager(section: 'open' | 'setup' | 'accounts' | 'history' | 'add' | 'sqlsources' | 'createsql' | 'create' = 'open'): Promise<void> {
     // Guard BEFORE creating/revealing any panel: with no engine every hub RPC would error, so refuse honestly (parity
     // with Quick Open Model's warning) rather than open a dead hub.
-    if (!conn) { vscode.window.showWarningMessage('Semanticus engine not connected.'); return; }
+    // A cold window is still starting its engine: wait for it, then open. Only an engine that cannot start is refused, and the reason is said.
+    if (!conn) await waitForEngine();
+    if (!conn) { warnNoEngine(); return; }
     if (studioPanel) {
         studioPanel.reveal(vscode.ViewColumn.Active);
         pendingOpenConnections = section;
@@ -6018,7 +6224,8 @@ async function saveCommand(overwrite = false): Promise<boolean> {
         // model a file, so the descriptor is re-derived from the session and a live model stays live.
         await rememberLastModel(await conn.sendRequest<SessionInfo>('sessionInfo').catch(() => undefined));
         watchModelDisk(r.path);
-        vscode.window.setStatusBarMessage('Saved', 4000);
+        // A live model's save goes to a lasting place, not in place: the engine's sentence says where (the same as the first save above).
+        vscode.window.setStatusBarMessage(r.note ? r.note : 'Saved', r.note ? 8000 : 4000);
         return true;
     } catch (e: any) {
         const msg = String(e?.message ?? e);
@@ -6287,10 +6494,11 @@ function refreshAiConnectStatus(): void {
 /// Writes the folder's connection file. `quiet` is the first-run press: a failure comes back as text for the
 /// card to show instead of an error toast, and nothing else is shown. The Replace question for a different
 /// existing entry stays in both: it would overwrite something the person wrote.
-async function writeMcpConnection(quiet: boolean): Promise<{ ok: boolean; error?: string; target?: string }> {
+async function writeMcpConnection(quiet: boolean, folder?: string): Promise<{ ok: boolean; error?: string; target?: string }> {
     const fail = (message: string, ...items: string[]): Thenable<string | undefined> | undefined => quiet ? undefined : vscode.window.showErrorMessage(message, ...items);
-    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!ws) { fail('Open a folder first. Semanticus writes the connection for your assistant into your open folder.'); return { ok: false, error: 'Open a folder first. Semanticus writes the connection for your assistant into your open folder.' }; }
+    const ws = folder ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    // No folder is open: the callers (the card, the header, the palette) go through connectWithNoFolder, which names a folder first.
+    if (!ws) return { ok: false, error: 'Semanticus needs a folder to keep the connection in.' };
 
     // Resolve the engine the SAME way ensureEngine() launches it (dev DLL → dotnet, else the bundled exe).
     let engine: ResolvedEngine;
@@ -6342,6 +6550,16 @@ async function writeMcpConnection(quiet: boolean): Promise<{ ok: boolean; error?
 async function connectClaudeCodeCmd(): Promise<void> {
     if (!extCtx) return;
     const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!ws) {   // no folder open: pick one for the person, open it, and finish after the window reloads
+        let result = await connectWithNoFolder(false);
+        while (!result.ok && result.needsFolder) {
+            const pick = await vscode.window.showErrorMessage(result.error ?? 'Semanticus could not connect your assistant.', 'Choose a folder');
+            if (pick !== 'Choose a folder') return;
+            result = await connectWithNoFolder(true);
+        }
+        if (!result.ok && result.error) void vscode.window.showErrorMessage(result.error);
+        return;
+    }
     const wasWired = hasSemanticusMcpEntry(ws);
     await connectAssistant({
         writeConnection: () => writeMcpConnection(false),
@@ -6356,6 +6574,88 @@ async function connectClaudeCodeCmd(): Promise<void> {
 
 /// Asks the Studio to draw the say card. A Studio that is closed is opened and told once it is ready.
 let pendingFirstRunSay: { note?: string } | null = null;
+
+/// Connect with no folder open. VS Code reloads the window when it goes from no folder to one, so this writes the
+/// connection file, remembers the open model and the Studio in globalState, and opens the folder. The reload then
+/// reopens the model and the Studio (resumePendingConnect) and finishes the connect there.
+async function connectWithNoFolder(pickFolder: boolean): Promise<NoFolderResult> {
+    if (!extCtx || !conn) return { ok: false, error: 'Semanticus is not ready yet. Try again in a moment.' };
+    const info = await conn.sendRequest<SessionInfo>('sessionInfo').catch(() => undefined);
+    // The tour's demo copy is not the person's model: no folder is made from it and it does not come back after the reload.
+    const model = withoutTourDemo(describeSession(info, extCtx.workspaceState.get<LastModel>(LAST_MODEL_KEY)));
+    // Opening a folder starts a new engine in the new folder. Unsaved edits are the one thing that would not come with it.
+    const unsaved = await confirmUnsavedWork('Semanticus opens a folder for your assistant, and unsaved changes do not carry over.');
+    if (unsaved === 'cancel') return { ok: false, error: 'Nothing was connected. Save or discard your changes, then press Connect again.' };
+    if (unsaved === 'save' && !await saveCommand()) return { ok: false, error: 'The model was not saved, so nothing was connected. Save it, then press Connect again.' };
+    return connectWithoutFolder({
+        folder: async () => {
+            if (!pickFolder) return folderForConnect(model, os.homedir());
+            const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Use this folder', defaultUri: vscode.Uri.file(os.homedir()) });
+            return picked?.[0]?.fsPath;
+        },
+        writeConnection: async (folder) => {
+            try { fs.mkdirSync(folder, { recursive: true }); } catch (e: any) { return { ok: false, error: `Could not make the folder ${folder}.` }; }
+            return writeMcpConnection(true, folder);
+        },
+        remember: async (folder) => {
+            // The marker wakes the extension in the folder we are about to open (package.json activationEvents).
+            try { writeMarker(path.join(folder, PENDING_MARKER), 'connecting\n'); } catch { /* the reload still finishes when the person opens the Semanticus view */ }
+            await writePendingConnect(extCtx!.globalState, { folder, model, at: new Date().toISOString(), asked: consentAsks.snapshot() });
+        },
+        openFolder: async (folder) => { await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(folder), { forceReuseWindow: true }); },
+    });
+}
+
+/// The other half, after the reload: bring the model back through the remembered-model record. Runs before the engine connects.
+async function adoptPendingConnect(context: vscode.ExtensionContext): Promise<boolean> {
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (folder) { try { fs.unlinkSync(path.join(folder, PENDING_MARKER)); } catch { /* no marker here */ } }
+    const pending = await takePendingConnect(context.globalState, folder);
+    if (!pending) return false;
+    if (pending.model && !readLastModel(context)) writeLastModel(pending.model);
+    consentAsks.seed(pending.asked);   // the Pro card asked before this reload: it does not ask again
+    return true;
+}
+
+/// A folder Semanticus opened (Open this model's folder): the marker it left in this folder wakes the extension, and this machine's own record for the folder brings back the model that was open. A folder that
+/// already has its own remembered model keeps it. Nothing else ever writes the marker, so a folder opened by hand takes nothing.
+function adoptOpenHandoff(context: vscode.ExtensionContext): { studio: boolean } | undefined {
+    const rec = takeOpenHandoff(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, Date.now, context.globalState);
+    if (!rec?.model) return undefined;
+    if (!readLastModel(context)) writeLastModel(rec.model);
+    consentAsks.seed(rec.asked);   // the Pro card asked before this reload: it does not ask again
+    return { studio: rec.studio };
+}
+
+/// The press that opens the open model's folder in this window, for a person whose VS Code has no folder (or another one). The model, the Studio and
+/// the Pro card's memory go with it through a marker in that folder. Unsaved changes do not carry over a reload, so they are asked about first.
+async function openModelFolderCmd(): Promise<void> {
+    if (!extCtx) return;
+    const readModel = async () => conn ? describeSession(await conn.sendRequest<SessionInfo>('sessionInfo').catch(() => undefined), extCtx!.workspaceState.get<LastModel>(LAST_MODEL_KEY)) : undefined;
+    let model = withoutTourDemo(await readModel());
+    let folder: string | undefined;
+    if (model) {
+        const unsaved = await confirmUnsavedWork('Semanticus opens the folder in this window, and unsaved changes do not carry over.');
+        if (unsaved === 'cancel') return;
+        if (unsaved === 'save' && !await saveCommand()) return;
+        model = withoutTourDemo(await readModel()) ?? model;   // a model that was just saved has a path now, so its folder is beside that file
+        folder = folderForConnect(model, os.homedir());
+    } else {
+        const picked = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Open this folder', defaultUri: vscode.Uri.file(os.homedir()) });
+        folder = picked?.[0]?.fsPath;
+    }
+    if (!folder) return;
+    try { fs.mkdirSync(folder, { recursive: true }); } catch { void vscode.window.showWarningMessage(`Could not make the folder ${folder}.`); return; }
+    await writeOpenHandoff(extCtx.globalState, folder, { model, studio: !!studioPanel, asked: consentAsks.snapshot() });
+    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(folder), { forceReuseWindow: true });
+}
+
+/// And once the engine is up: the skill, the mode, and the Studio with the say card, the same finish as a press with a folder open.
+async function finishPendingConnect(): Promise<void> {
+    const skill = await installClaudeCodeSkill();
+    await finishFirstRun('assistant');
+    postFirstRunSay(skill.ok ? undefined : `The skill did not install: ${skill.error ?? 'unknown reason'}. Use Install or Update Assistant Skills to try again.`);
+}
 function postFirstRunSay(note?: string): void {
     if (studioPanel && studioReady) { try { studioPanel.webview.postMessage({ type: 'firstRunSay', note }); } catch { /* disposing */ } return; }
     pendingFirstRunSay = { note };
@@ -6379,7 +6679,7 @@ async function finishFirstRun(choice: FirstRunChoice): Promise<void> {
 
 /// Installs the Semanticus skill for Claude Code (all projects), the same installer the skills command runs, with no picker.
 async function installClaudeCodeSkill(): Promise<{ ok: boolean; error?: string }> {
-    try { installAssistantSkills(path.join(extCtx.extensionPath, 'assistant-pack'), path.join(os.homedir(), '.claude', 'skills')); return { ok: true }; }
+    try { installAssistantSkills(path.join(extCtx.extensionPath, 'assistant-pack'), path.join(os.homedir(), '.claude', 'skills'), path.join(os.homedir(), '.claude', 'agents')); return { ok: true }; }
     catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
 }
 
@@ -6396,9 +6696,10 @@ async function installAssistantSkillsCmd(): Promise<void> {
         return;
     }
     try {
-        const result = installAssistantSkills(path.join(extCtx.extensionPath, 'assistant-pack'), path.join(os.homedir(), selected.folder, 'skills'));
+        const result = installAssistantSkills(path.join(extCtx.extensionPath, 'assistant-pack'), path.join(os.homedir(), selected.folder, 'skills'),
+            selected.folder === '.claude' ? path.join(os.homedir(), '.claude', 'agents') : undefined);
         const preserved = result.preserved.length ? ` Kept your customised files: ${result.preserved.join(', ')}.` : '';
-        await vscode.window.showInformationMessage(`Semanticus ${result.version}: installed or updated ${result.installed.length} skills for ${selected.label}.${preserved} Refresh or restart your assistant if they do not appear.`);
+        await vscode.window.showInformationMessage(`Semanticus ${result.version}: installed or updated ${result.installed.length} skills${result.agentsInstalled.length ? ` and ${result.agentsInstalled.length} helper` : ''} for ${selected.label}.${preserved} Refresh or restart your assistant if they do not appear.`);
     } catch (e: any) {
         await vscode.window.showErrorMessage(`Could not install Semanticus skills: ${e?.message ?? e}`);
     }
@@ -6408,7 +6709,10 @@ async function installAssistantSkillsCmd(): Promise<void> {
 // Every action invokes a typed engine op (origin='human'), so the human UI and the user's Claude
 // drive the SAME ops on one live session — and each change broadcasts model/didChange both ways.
 
-function warnNoEngine() { vscode.window.showWarningMessage('Semanticus engine not connected.'); }
+function warnNoEngine() {
+    void vscode.window.showWarningMessage(engineFailureReason ?? 'Semanticus engine not connected.', 'Restart engine')
+        .then((pick) => { if (pick === 'Restart engine') void vscode.commands.executeCommand('semanticus.restartEngine'); });
+}
 
 /// The objects an action should operate on, multi-select-aware: the live selection when several are
 /// selected, else the right-clicked node (VS Code passes the clicked item + the selection array).
@@ -7519,6 +7823,11 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
         await this.push();
     }
     async clear(): Promise<void> { this.refs = []; this.names = []; await this.push(); }
+    /// A rename of a selected object, by any writer, moves the selection to the object's new ref: the old ref no longer names anything, and the grid read "No properties match".
+    followRename(deltas: ChangeDelta[]): void {
+        const next = followRename(this.refs, deltas);
+        if (next) this.refs = next;   // the names are read again from the object itself by the push that follows
+    }
     async refresh(): Promise<void> { if (this.refs.length) await this.push(); }
 
     /// F2 rename lands here: ask the grid to put the caret in its Name row (text selected, type-over ready).
@@ -7696,6 +8005,7 @@ function learnDeps(context: vscode.ExtensionContext): LearnDeps {
         },
         forget: () => forgetLastModel(),
         currentSessionId: () => currentSessionId,
+        currentModelName: () => lastModelName,
         postToStudio: async (message) => {
             if (!studioPanel) openStudio(context);
             for (let waited = 0; !(studioPanel && studioReady) && waited < 5000; waited += 100) await new Promise((r) => setTimeout(r, 100));
@@ -7776,6 +8086,7 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
                 const opened = await openFromFile();
                 if (opened) {
                     await bindGridAndTree(opened.modelName, tree);
+                    showOpenNote(opened.note);
                 }
             } catch (e: any) { vscode.window.showErrorMessage('Open failed: ' + (e?.message ?? e)); }
             return;
@@ -7802,7 +8113,7 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             let selected: vscode.Uri | undefined;
             if (msg.mode === 'save') {
                 selected = await vscode.window.showSaveDialog({
-                    defaultUri: folder ? vscode.Uri.joinPath(folder, safeName) : vscode.Uri.file(safeName),
+                    defaultUri: folder ? vscode.Uri.joinPath(folder, safeName) : vscode.Uri.file(path.join(saveStartFolder(os.homedir(), fs.existsSync), safeName)),
                     saveLabel: 'Save Model Spec', filters: { 'Model Spec': ['json'] },
                 });
                 if (selected) {
@@ -7861,9 +8172,9 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             // to wait on, and one that never hears back simply stays at 100%.
             try { panel.webview.postMessage({ type: 'studioZoom', level: extCtx?.workspaceState.get<number>(STUDIO_ZOOM_KEY) ?? 100 }); } catch { /* disposing */ }
             // A panel that mounts while the engine is already down never saw the transition, so answer it here.
-            try { panel.webview.postMessage({ type: 'engineState', connected: !!conn }); } catch { /* disposing */ }
+            try { panel.webview.postMessage({ type: 'engineState', connected: !!conn, reason: conn ? undefined : engineFailureReason }); } catch { /* disposing */ }
             // Likewise a model that is waiting for a sign-in: the page shows its name, not "Open a model to begin".
-            try { panel.webview.postMessage({ type: 'reconnectPending', name: pendingReconnect ? (pendingReconnect.modelName || pendingReconnect.database || 'your model') : null }); } catch { /* disposing */ }
+            try { panel.webview.postMessage({ type: 'reconnectPending', name: pendingReconnect ? (pendingReconnect.modelName || pendingReconnect.database || 'your model') : null, offer: pendingIsOffer }); } catch { /* disposing */ }
             if (!isStandalone) {
             studioReady = true; flushNav(); flushOpenConnections(); studioNotes.flush();
             const selected = [...(treeView?.selection ?? [])].filter((n) => n.kind !== 'dfolder');
@@ -7887,12 +8198,16 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
         if (msg?.type === 'getFirstRun') {
             const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
             const state = extCtx ? readFirstRun(extCtx.globalState, hasSemanticusMcpEntry(ws)) : null;
-            try { panel.webview.postMessage({ type: 'firstRun', id: msg.id, ...(state ?? { unavailable: true }) }); } catch { /* disposing */ }
+            // A say card that is waiting for this Studio travels with the answer, so the page holds its other cards until it is closed.
+            const say = pendingFirstRunSay ? { say: true, note: pendingFirstRunSay.note } : {};
+            const folder = ws ? { folder: folderForDisplay(ws, os.homedir()), folderPath: ws } : {};   // the card says where to open Claude Code
+            try { panel.webview.postMessage({ type: 'firstRun', id: msg.id, ...(state ?? { unavailable: true }), ...say, ...folder }); } catch { /* disposing */ }
             return;
         }
         if (msg?.type === 'firstRunConnect') {
             void (async () => {
-                const result = extCtx ? await runFirstRunConnect({
+                const noFolder = !vscode.workspace.workspaceFolders?.[0];
+                const result = extCtx && noFolder ? await connectWithNoFolder(msg.pickFolder === true) : extCtx ? await runFirstRunConnect({
                     writeConnection: () => writeMcpConnection(true),
                     installSkill: installClaudeCodeSkill,
                     markDone: () => finishFirstRun('assistant'),
@@ -7903,13 +8218,19 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
         }
         if (msg?.type === 'firstRunClose') { void finishFirstRun(choiceFor(msg.mode)); return; }
         // Whether the Pro permission card may ask about a model now (src/consentAsks.ts). One memory for every panel.
+        // The tour's throwaway demo copy is never asked about, and that is not recorded as an ask: leaving the tour with no earlier model
+        // keeps the copy open, and "Let Pro decide" for it would guard nothing the person chose.
         if (msg?.type === 'claimConsentAsk') {
-            try { panel.webview.postMessage({ type: 'consentAsk', id: msg.id, ask: consentAsks.claim(msg.scope) }); } catch { /* disposing */ }
+            void (async () => {
+                const demoOpen = await scratchCopyOpen();
+                try { panel.webview.postMessage({ type: 'consentAsk', id: msg.id, ask: !demoOpen && consentAsks.claim(msg.scope) }); } catch { /* disposing */ }
+            })();
             return;
         }
         // Diagram drop: hand over (and consume) the tables stashed when the user started dragging from the Model tree.
         if (msg?.type === 'requestDropTables') { panel.webview.postMessage({ type: 'dropTables', id: msg.id, tables: dragTablesStash }); dragTablesStash = []; return; }
         if (msg?.type !== 'rpc') return;
+        if (!conn) { await waitForEngine(); }   // a start or retry that is running answers first; only then is the engine called away
         if (!conn) { panel.webview.postMessage({ type: 'rpcResult', id: msg.id, error: 'Engine not connected.' }); return; }
         const caller = conn;
         try {
@@ -7936,6 +8257,7 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             // open (the Pro permission card): 'restore', not 'person'.
             const swapBy = msg.method === 'restoreHistoryCheckpoint' ? 'restore' : 'person';
             if (modelSwapped) {
+                if (msg.method === 'open') showOpenNote(result?.note);   // a hub recent row, or any page's open
                 try { await propGrid.showModel(result?.context?.editing?.modelName ?? result?.modelName ?? result?.destination?.name ?? 'Model'); } catch { }
                 tree.refresh();
                 const swapped = await refreshStatus();
@@ -8239,7 +8561,7 @@ async function exportDocToFile(msg: any): Promise<void> {
         const successLabel = typeof msg?.successLabel === 'string' && msg.successLabel.trim() ? msg.successLabel.trim() : 'Documentation';
         const safeName = String(msg?.suggestedName ?? 'documentation').replace(/[^\w.-]+/g, '_').replace(/^[.]+/, '') || 'documentation';
         const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
-        const defaultUri = folder ? vscode.Uri.joinPath(folder, `${safeName}.${ext}`) : vscode.Uri.file(`${safeName}.${ext}`);
+        const defaultUri = folder ? vscode.Uri.joinPath(folder, `${safeName}.${ext}`) : vscode.Uri.file(path.join(saveStartFolder(os.homedir(), fs.existsSync), `${safeName}.${ext}`));
         const target = await vscode.window.showSaveDialog({
             defaultUri,
             saveLabel,

@@ -564,10 +564,9 @@ namespace Semanticus.Engine
 
                 case ReconcileStatus.InsufficientCoverage:
                     // (3) The whole reason this component exists: a matching total is NOT a pass. Name the trap.
-                    return "Insufficient coverage: the grand total reconciles but no member-level cell was verified. "
-                         + "A matching total alone cannot rule out the blank-row trap - an invalid relationship can "
-                         + "reparent rows onto the blank member while the total still ties. Add per-member cells to verify."
-                         + (unverifiable > 0 ? $" ({unverifiable} unverifiable.)" : "");
+                    return "The totals match, but only the overall total was compared. A difference inside a group would not show. "
+                         + "Add a group to compare."
+                         + (unverifiable > 0 ? $" ({unverifiable} could not be checked.)" : "");
 
                 case ReconcileStatus.Reconciled:
                     if (unverifiable > 0)

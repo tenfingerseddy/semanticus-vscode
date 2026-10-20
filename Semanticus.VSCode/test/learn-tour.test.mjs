@@ -146,8 +146,6 @@ function rig({ canMove = true } = {}) {
   const pushed = [];
   const state = { canMove };
   const player = M.createTourPlayer({
-    setTimer: (fn, ms) => { const id = next++; timers.set(id, { fn, at: t + ms }); return id; },
-    clearTimer: (id) => { timers.delete(id); },
     push: (note) => pushed.push(note),
     canMove: () => state.canMove,
     places,
@@ -178,21 +176,23 @@ const chapterOf = (id) => readJson(join(learnDir, `${id}.json`));
   assert.equal(first.place, 'plan');
   assert.equal(first.how, places.find((p) => p.id === 'plan').how, 'how comes from the place map when the script says null');
   assert.equal(first.at, '2026-10-10T09:00:00.000Z');
-  // "read": the next step waits the note's read time, not a tick less.
-  const read = notes.readTimeMs(first.say);
-  r.advance(read - 1); assert.equal(r.pushed.length, 1);
-  r.advance(1); assert.equal(r.pushed.length, 2, 'the second step plays after the read time');
-  // a press step with a set time waits that time, which is never shorter than the read time.
-  const pressStep = chapter.steps[2];
-  assert.equal(r.pushed[2] ?? null, null);
-  r.advance(notes.readTimeMs(chapter.steps[1].say));
+  // A step stays until the person presses Next. It never moves on by itself, however long the reader takes.
+  r.advance(120_000);
+  assert.equal(r.pushed.length, 1, 'the first step is still on screen after a long wait');
+  assert.equal(r.timers.size, 0, 'the player sets no timer');
+  r.player.next();
+  assert.equal(r.pushed.length, 2, 'one Next moves exactly one step');
+  r.advance(120_000);
+  assert.equal(r.pushed.length, 2, 'and the second step stays too');
+  assert.equal(r.player.getSnapshot().index, 1);
+  r.player.next();
   assert.equal(r.pushed.length, 3);
   assert.equal(r.pushed[2].press, 'run-plan');
-  assert.equal(M.waitMs(pressStep), Math.max(pressStep.wait.ms, notes.readTimeMs(pressStep.say)));
-  // run to the end.
-  r.advance(60_000);
+  // run to the end with Next.
+  for (let i = 3; i < chapter.steps.length; i++) r.player.next();
   assert.equal(r.pushed.length, chapter.steps.length, 'every step played once');
   assert.deepEqual(r.pushed.map((n) => n.id), chapter.steps.map((_, i) => `tour-plan-${i + 1}`));
+  r.player.next();
   const done = r.player.getSnapshot();
   assert.equal(done.status, 'done');
   assert.equal(r.timers.size, 0, 'no timer is left running');
@@ -204,9 +204,9 @@ const chapterOf = (id) => readJson(join(learnDir, `${id}.json`));
   const chapter = chapterOf('ask');
   r.player.start(chapter, 's');
   assert.equal(r.player.getSnapshot().example, null);
-  r.advance(notes.readTimeMs(chapter.steps[0].say));
+  r.player.next();
   assert.equal(r.player.getSnapshot().example, 0);
-  r.advance(60_000);
+  while (r.player.getSnapshot().status === 'playing') r.player.next();
   assert.equal(r.player.getSnapshot().example, 2);
   r.player.stop();
   assert.equal(r.player.getSnapshot().example, null, 'leaving clears the example');
@@ -354,11 +354,21 @@ const chapterOf = (id) => readJson(join(learnDir, `${id}.json`));
   assert.match(help, /section: i === 0 \? 'Learn Semanticus' : undefined/, 'Help lists the chapters under one heading');
   assert.match(help, /run: \(\) => startTour\(c\.id\)/);
 
-  const ask = readFileSync(join(root, 'webview', 'src', 'askdata.tsx'), 'utf8');
-  assert.match(ask, /data-testid="askdata-example">Example</, 'the Example tag');
-  assert.ok(ask.includes('Example answer. Live answers need your own model.'), 'the line under the tag');
-  assert.equal((ask.match(/<ExampleAnswers /g) || []).length, 1, 'one block on the Ask page');
-  assert.ok(!/\brpc\b|\bsend\(/.test(ask.slice(ask.indexOf('function ExampleAnswers'), ask.indexOf('export function OtherReadings'))), 'the example never calls the engine');
+  const ask = readFileSync(join(root, 'webview', 'src', 'query.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  const examples = readFileSync(join(root, 'webview', 'src', 'askdata.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(examples, /data-testid="query-example">Example</, 'the Example tag');
+  assert.ok(examples.includes('Example answer. Live answers need your own model.'), 'the line under the tag');
+  // Two places hold it: a row's body, and the notebook itself when the page has no row (Pro: asking is granted, so nothing is in the notebook,
+  // and every Query step of the tour showed the empty page, UAT 18 Oct round 2).
+  assert.equal((ask.match(/<ExampleAnswers /g) || []).length, 2, 'the row body and the empty notebook');
+  const bookFrom = ask.indexOf('function Book(');
+  const bookTo = ask.indexOf('\n}\n', bookFrom);
+  assert.ok(bookFrom >= 0 && bookTo > bookFrom, 'the notebook is a function the test can find');
+  assert.match(ask.slice(bookFrom, bookTo), /learnActive\(q\.learn\)[^\n]*<ExampleAnswers example=\{q\.learn\.tour\.example\} \/>/, 'an empty notebook in the tour shows the recorded example');
+  const exFrom = examples.indexOf('function ExampleAnswers');
+  assert.ok(exFrom >= 0, 'the example block is a function the test can find');
+  const exTo = examples.indexOf('\nexport function ', exFrom + 30);
+  assert.ok(!/\brpc\b|\bsend\(/.test(examples.slice(exFrom, exTo < 0 ? undefined : exTo)), 'the example never calls the engine');
 
   const tour = readFileSync(join(studio, 'tour.tsx'), 'utf8');
   assert.match(tour, /export \{ startTour \} from '\.\/learn-state'/, 'firstrun calls startTour(chapterId)');
@@ -383,6 +393,23 @@ const chapterOf = (id) => readJson(join(learnDir, `${id}.json`));
 
   // The tour's own copy, as the Studio shows it.
   cleanWords('tour.tsx', tour.replace(/\/\/.*$/gm, ''));
+}
+
+// A step that waits for Next keeps its words on screen (v-fix-tour-polish, 18 Oct). The tour pushes each step into the one notes store, and
+// that store clears a read note once the work goes quiet. With no timer in the player, a slow reader would be left with "step 1 of 5" and no words.
+{
+  let t = 0; let seq = 0; const timers = new Map();
+  const setTimer = (fn, ms) => { const id = ++seq; timers.set(id, { at: t + ms, fn }); return id; };
+  const clearTimer = (id) => { timers.delete(id); };
+  const advance = (ms) => { const end = t + ms; for (;;) { const d = [...timers.entries()].filter(([, v]) => v.at <= end).sort((a, b) => a[1].at - b[1].at)[0]; if (!d) break; timers.delete(d[0]); t = d[1].at; d[1].fn(); } t = end; };
+  const driver = { canMoveScreen: () => true, snapshot: () => ({ resumeVersion: 0, lastAssistantCall: null }), subscribe: () => () => {}, reportQueue: () => {} };
+  const store = notes.createNotesStore({ driver, moveTo: () => {}, setTimer, clearTimer });
+  const player = M.createTourPlayer({ push: (n) => store.push(n), canMove: () => true, places, now: () => new Date(Date.UTC(2026, 9, 10, 9, 0, 0)) });
+  player.start(chapterOf('plan'), 'sess-words');
+  assert.equal(store.getSnapshot().current?.id, 'tour-plan-1', 'the first step is in the strip');
+  advance(30_000);
+  assert.equal(player.getSnapshot().index, 0, 'the step still waits for Next');
+  assert.equal(store.getSnapshot().current?.id, 'tour-plan-1', 'and its words are still on screen while it waits');
 }
 
 console.log('learn tour: scripts, answers, player, scratch copy, demo files and wiring all hold');

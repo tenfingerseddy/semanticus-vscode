@@ -1,4 +1,4 @@
-# Semanticus assistant skills 1.5.0
+# Semanticus assistant skills 1.6.0
 
 Seven guides for the Semanticus MCP connection: getting started, DAX optimisation, AI readiness, model interviews, change lists, reusable workflows and model knowledge.
 
@@ -36,7 +36,7 @@ These guides use your existing Semanticus MCP server. Keep Semanticus open in VS
 
 The workbench has six areas: Plan, Explore, Edit, Review, Publish and Workflows. The Plan is where you start, and its History records every edit and who made it. The areas are navigation labels for people; MCP tool names do not depend on them. The VS Code view updates when an edit lands, and your assistant sees it on its next call. Keep the editing model, test model and publishing destination distinct because they can differ.
 
-Apply changes the working model as one undoable edit. Save keeps local work or writes a local workflow or spec. Publish sends reviewed model definitions to a chosen live destination after preview and confirmation. Restore returns a live destination to an earlier published version. Publish and Restore do not refresh data, and local Undo does not reverse either remote write.
+Apply changes the working model as one undoable edit. Save keeps local work or writes a local workflow or spec. Publish sends reviewed model definitions to a chosen live destination after preview and confirmation. Restore returns a live destination to an earlier published version. Publish and Restore do not refresh data. A publish keeps a restore point: Undo publish on the Publish page returns the published model to it, and `undo_change` only reverses edits to the working copy.
 
 For workflow authoring, read get_workflow_document, preview typed changes with preview_workflow_edit, then write a reviewed existing file with edit_workflow_document or create a new project file with save_workflow. Starters, the workflows that come with Semanticus, are read-only; instantiate_workflow_template copies one into the project as your workflow. Use get_workflow_layout and save_workflow_layout for Canvas positions only.
 

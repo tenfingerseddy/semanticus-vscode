@@ -40,6 +40,9 @@ namespace Semanticus.Engine
         public long TotalMs { get; set; }
         public long SeMs { get; set; }
         public int SeQueries { get; set; }
+        /// <summary>True for the run that was traced (it carries the storage split). The others are timed on the wall clock alone: a trace
+        /// costs seconds to set up on a service model, and one per run made a 70 ms query take a minute to measure (UAT 17 Oct).</summary>
+        public bool Profiled { get; set; }
     }
 
     /// <summary>DAX-Studio-style cold/warm benchmark: N cold runs (SE cache cleared before each) + N warm runs,
@@ -210,46 +213,63 @@ namespace Semanticus.Engine
             var traceAvailable = false;
             var rowCount = 0;
 
+            // A traced run costs seconds to set up (a trace session), so a fast query is never traced: its runs are timed on the wall clock, which
+            // is what the person waits for, and "Fast, nothing to fix" needs no split. Once a run takes FastMs or more, ONE run of the set is traced
+            // for the storage split, and a run of 2 s or more cuts the rest to three. (UAT 17 Oct: five traced runs made a 70 ms query take a minute.)
+            var count = runs;
+            var tracedCold = false; var tracedWarm = false;
+
             // COLD set first (clear before each so each run is genuinely cold); its last run leaves the cache WARM.
             if (clearForCold)
             {
                 var canClear = true;   // once a clear fails, stop hammering the endpoint with doomed clears
-                for (var i = 0; i < runs; i++)
+                var slowSeen = false;
+                for (var i = 0; i < count; i++)
                 {
                     if (canClear)
                     {
                         var cc = await DaxCache.ClearAsync(live);
                         if (!cc.Cleared) { canClear = false; clearAvailable = false; }   // not truly cold (recorded, not fatal)
                     }
-                    var t = await DaxTrace.ProfileAsync(live, query);
-                    if (!string.IsNullOrEmpty(t.Error)) return new ColdWarmBenchmark { Error = t.Error, Runs = i };
-                    traceAvailable |= t.TraceAvailable; rowCount = t.RowCount;
-                    var total = CredibleTotalMs(t);
-                    coldTotal.Add(total); coldSe.Add(t.SeMs);
-                    detail.Add(new ColdWarmRun { Index = i + 1, Cold = true, TotalMs = total, SeMs = t.SeMs, SeQueries = t.SeQueries });
+                    var trace = slowSeen && !tracedCold;
+                    var run = await MeasuredRunAsync(live, query, trace);
+                    if (!string.IsNullOrEmpty(run.Error)) return new ColdWarmBenchmark { Error = run.Error, Runs = i };
+                    traceAvailable |= run.TraceAvailable; rowCount = run.RowCount; tracedCold |= run.Profiled;
+                    coldTotal.Add(run.TotalMs); if (run.Profiled) coldSe.Add(run.SeMs);
+                    detail.Add(new ColdWarmRun { Index = i + 1, Cold = true, TotalMs = run.TotalMs, SeMs = run.SeMs, SeQueries = run.SeQueries, Profiled = run.Profiled });
+                    if (run.TotalMs >= FastMs) slowSeen = true;
+                    if (run.TotalMs >= SlowRunMs) count = Math.Min(count, 3);
                 }
             }
 
             // WARM set (no clear): the cache is warm from the cold runs (or from the first warm run if cold was skipped).
-            for (var i = 0; i < runs; i++)
             {
-                var t = await DaxTrace.ProfileAsync(live, query);
-                if (!string.IsNullOrEmpty(t.Error)) return new ColdWarmBenchmark { Error = t.Error, Runs = runs + i };
-                traceAvailable |= t.TraceAvailable; rowCount = t.RowCount;
-                var total = CredibleTotalMs(t);
-                warmTotal.Add(total); warmSe.Add(t.SeMs);
-                detail.Add(new ColdWarmRun { Index = i + 1, Cold = false, TotalMs = total, SeMs = t.SeMs, SeQueries = t.SeQueries });
+                var slowSeen = false;
+                for (var i = 0; i < count; i++)
+                {
+                    var trace = slowSeen && !tracedWarm;
+                    var run = await MeasuredRunAsync(live, query, trace);
+                    if (!string.IsNullOrEmpty(run.Error)) return new ColdWarmBenchmark { Error = run.Error, Runs = runs + i };
+                    traceAvailable |= run.TraceAvailable; rowCount = run.RowCount; tracedWarm |= run.Profiled;
+                    warmTotal.Add(run.TotalMs); if (run.Profiled) warmSe.Add(run.SeMs);
+                    detail.Add(new ColdWarmRun { Index = i + 1, Cold = false, TotalMs = run.TotalMs, SeMs = run.SeMs, SeQueries = run.SeQueries, Profiled = run.Profiled });
+                    if (run.TotalMs >= FastMs) slowSeen = true;
+                    if (run.TotalMs >= SlowRunMs) count = Math.Min(count, 3);
+                }
             }
+            // A query too fast to trace was timed on the wall clock alone: say so in one plain line, never as a missing trace.
+            var wallOnly = !traceAvailable && !tracedCold && !tracedWarm && coldTotal.Concat(warmTotal).All(t => t < FastMs);
 
             var baseNote = !clearForCold ? "Warm-only: the cache was not cleared (cold runs skipped)."
                          : !clearAvailable ? "Cache could not be cleared (needs local Power BI Desktop or an admin XMLA endpoint): the 'cold' runs are not truly cold; treat cold ≈ warm."
-                         : !traceAvailable ? "Server timings unavailable: totals are wall-clock; the SE split is 0."
+                         : !traceAvailable && !wallOnly ? "Server timings unavailable: totals are wall-clock; the SE split is 0."
                          : null;
+            if (wallOnly) baseNote = JoinNotes(baseNote, "Fast query: timed on the wall clock, which is what you wait for. No trace was needed.");
             var seAllZero = coldSe.Concat(warmSe).All(x => x == 0);
             var cred = TimingCredibilityNote(coldTotal.Concat(warmTotal), seAllZero, traceAvailable);
             return new ColdWarmBenchmark
             {
-                Runs = runs,
+                Runs = count,
                 CacheClearAvailable = clearForCold && clearAvailable,
                 TraceAvailable = traceAvailable,
                 ColdTotal = Stats(coldTotal), WarmTotal = Stats(warmTotal),
@@ -258,6 +278,31 @@ namespace Semanticus.Engine
                 RowCount = rowCount,
                 Note = JoinNotes(baseNote, cred),
             };
+        }
+
+        /// <summary>A run this slow is enough, with two more, to say how steady a query is: the rest of the runs are cut to three.</summary>
+        internal const long SlowRunMs = 2000;
+
+        /// <summary>A query that answers in under this many milliseconds is fast (the page's FAST_MS): nothing to say about where the time went, so no trace.</summary>
+        internal const long FastMs = 100;
+
+        private sealed class MeasuredRun
+        {
+            public long TotalMs, SeMs; public int SeQueries, RowCount; public bool TraceAvailable, Profiled; public string Error;
+        }
+
+        /// <summary>One run: traced (storage split, seconds to set up) or timed on the wall clock alone (the query's own cost).</summary>
+        private static async Task<MeasuredRun> MeasuredRunAsync(LiveConnection live, string query, bool traced)
+        {
+            if (traced)
+            {
+                var t = await DaxTrace.ProfileAsync(live, query);
+                if (!string.IsNullOrEmpty(t.Error)) return new MeasuredRun { Error = t.Error };
+                return new MeasuredRun { TotalMs = CredibleTotalMs(t), SeMs = t.SeMs, SeQueries = t.SeQueries, RowCount = t.RowCount, TraceAvailable = t.TraceAvailable, Profiled = true };
+            }
+            var r = await live.ExecuteAsync(query, 1, 120);   // maxRows 1: the trace's own run does the same, so the two are comparable
+            if (!string.IsNullOrEmpty(r.Error)) return new MeasuredRun { Error = r.Error };
+            return new MeasuredRun { TotalMs = r.ElapsedMs, RowCount = r.RowCount };
         }
 
         /// <summary>Wall-clock wait when we have it. A 0 ms server Duration is not a round trip.</summary>

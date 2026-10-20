@@ -7,6 +7,146 @@ All notable changes to Semanticus are recorded here. The format follows
 > with what verification. [`PLAN.md`](docs/PLAN.md) is the forward roadmap (what's next, not what shipped);
 > the per-commit narrative that used to live in PLAN's "Shipped & verified" section now lives here.
 
+## [Unreleased]
+
+## [1.6.0] - 2026-10-19
+
+You can now ask your model a question in plain words and keep the answer. You can check a number against SQL or a number you trust, and keep a note when you accept a difference. You can see how Copilot answers your model, and what to fix. This release is about those three things, and about Publish telling the truth.
+
+### The Query notebook
+
+- Explore > Query is a notebook. One box asks in plain words. Each question is one row, newest at the top, folded to a line with its number and its time.
+- An open row shows its number, how it was read in one line, and one picture of the answer. A word that could not apply is always said.
+- DAX, Table, Speed, Steps, Compare, Save and Explain open when you want them, in one place under the row. DAX holds the query as written, where you edit it and run it.
+- Pin a row to keep it at the top, close it to take it off the page, or remove it. The clock in the box opens the history of this model.
+- Time all measures the speed of the rows you pick, one at a time, with progress.
+- Your assistant uses the same notebook with the query_notebook tool. A query it runs is a row of its own and never replaces a row you own.
+- Ask your data and Queries are gone as separate pages. The notebook is free. Only the plain-words box is Pro.
+
+### Validation
+
+- Review > Validation answers four questions: do the numbers match the source, did my changes move anything, do the trusted answers still hold, is the data whole.
+- Each check is one card. It shows the number from the model and the number from the source side by side, and a picture that fits the result.
+- A check against SQL can be added in the card. A source that cannot be reached says so in one plain line.
+- Waive a check that differs, with a note if you like. The card then reads "Accepted difference. By you on 18 Oct." with your note and the difference still shown. It counts as accepted, never as a pass, and Undo waive takes it back.
+- A waiver covers only the difference you accepted. If the trusted number changes, the check comes back as differs.
+
+### The Copilot test
+
+- Review > Copilot test shows how Copilot will answer your model.
+- Your assistant writes questions in the words a person would use. Each has a reference answer that the engine runs and keeps.
+- A small model answers every question from only what Copilot sees: visible tables, columns and measures with their descriptions, the relationships and the AI instructions. It sees no data.
+- The engine grades each answer by its number. It names the kind of miss, such as a wrong field, a wrong filter or a wrong number. A check it cannot make is never counted as right or wrong.
+- The misses are grouped into a few causes. Your assistant proposes changes to descriptions, other names and AI instructions as Plan rows, applies them as one undoable step, and runs the test again. Each change says how many misses it fixed.
+- Every fifth question is held back. Its score shows beside the main score, so a model that only learns the questions cannot look good.
+
+### Explain this number
+
+- "What makes it up" splits a number by the column that explains it. A column that leaves most of the number as "everything else" is never shown.
+- A row, Split by, lists the other columns that also explain most of the number. One press splits by another column.
+- When no single column explains most of a number, the card says so.
+- A number from one row is that number. An answer of many rows asks once which row you mean.
+
+### Publish
+
+- One press sends a rename with every measure, relationship, role and hierarchy that uses it. A renamed relationship is the same relationship, not a new one.
+- The page tells the truth before the press and after it. It lists no false "new" row and no false "remove it there" row, and after the press it says "Nothing to publish".
+- Your notes on roles, partitions, perspectives, cultures, expressions, calculation groups and KPIs go with the push, so what you see on the page matches the service.
+- Publish then test: when you have an edit that is not published, the Copilot test page offers one press that publishes, then queues the test.
+- Undo publish still takes the push back, and it now says so when something stays behind.
+
+### Saving and closing
+
+- Your assistant saves to the model's own file. A save with no path goes where the model lives.
+- A copy of a live model goes to the folder you connected, or to ~/Semanticus, and the answer names the path. It never lands in a temporary folder.
+- A save into the folder that holds the open model, or over other models' files, is refused before anything is written. The answer names a place that works.
+- Closing VS Code no longer waits for work you already saved or published. The engine leaves in about 10 seconds.
+
+### Fixes
+
+- A check that matches in total reads Pass. The counts in the headline add up to the checks you have.
+- A new check against SQL starts on a small default tolerance.
+- A measure that is a percent is shown and compared as a percent.
+- Compare never says "44 of 30". The row keeps the one speed it measured.
+- A query worked out from your words keeps its own fields and DAX. A check opened from a row reads that row's DAX.
+- A quick query says "Fast: 75 ms. Nothing to fix." and keeps the detail behind a press.
+- A closed sign-in window ends the wait with Try again.
+- Connect works with no folder open. The tour waits for Next and never closes your model.
+- Handing a step to your assistant no longer takes the wheel from you. You keep the wheel for a whole Copilot test round.
+- With no assistant connected, the Plan says so and offers Connect your assistant.
+- A renamed hierarchy plus a new one under its old name publishes in one press.
+- Work kept in a copy of a live model survives Save, a reload and a restart.
+- Unsaved live work is kept when the engine leaves, and the next open of that model offers it back.
+- Find and replace has left the Studio. Your assistant keeps search_model, propose_replace and replace_in_object.
+- Jev asks its questions in batches, so the plan builds faster on a big model.
+- A failed start of the free Pro month no longer spends it, and a trial you started is picked up when VS Code starts again.
+
+### Explain this number: the split that explains it (1.6, from Kane's hands-on of 1.5.104)
+- "What makes it up" no longer splits a number by a column that leaves most of it unexplained (five cities, then "everything else" at 85%). The engine tries the columns of the related tables, prefers a column with few values (2 to 12), then the one whose top parts cover the most of the total, and breaks a tie by the model's order (the next level of a pinned date level first). A split whose "everything else" holds more than half is never shown; when none qualifies the card says "No single column explains most of this number."
+- A row "Split by" on the card lists the other columns that also explain most of the number, the chosen one on. One press splits by that column. `explain_value` returns the same list as `contributors.alternatives`, and its `decomposeBy` takes the same choice.
+- From the real-user UAT (P24, F33): Explain no longer explains row one on its own choice. An answer of one number is that number; an answer of many rows asks once which, with the first rows to press. Two columns of one name say their table ("Customer City", "Store City"). The query text of a source sits behind "Show the query text". The card has no inner scroll box.
+- Layout: the card has no heading of its own inside the Query view (the number is the first line, so nothing is clipped), the parts sit on one grid so the bars end on the same line and the amount and share fit at 1090 and 1440, "everything else" is drawn quieter.
+
+### Fixes from hero run 25 (test build 1.5.101)
+- A query the assistant runs with `run_dax` is a row of its own in the Query notebook. It is never drawn into, or saved as the figure of, a row the person owns. Run on a row runs the DAX its DAX view shows, and a measure the assistant points the Studio at opens a new draft instead of replacing the open row's DAX.
+- Turning Pro on no longer applies changes. The press that asked for Pro is worked out, and the person approves it.
+- A hand query with several columns names the column it shows. Chips of another question are not drawn beside a hand query. A hand query with a split is drawn like any other answer.
+- Time all counts a row as timed with any measured run, says why a row could not be timed, and its "Timed N of N" line clears by itself.
+- The Copilot student is told to quote table names. Validation, Explain and Query wording and layout fixes. The host tells the engine who has the wheel once, not once per key.
+
+### The Query notebook (1.6, Kane picked option C on 16 Oct 2026)
+Explore > Query is a notebook. One box asks in plain words; its prompt never asks anyone to paste DAX. Each question is one row in a column, newest at the top,
+folded to a line with its number and its time. The open row shows its number, how it was read in one line (a word that could not apply is always said, and a
+folded row carries a mark for it), and one visual. DAX, Table, Speed, Steps, Compare, Save and Explain open on demand in one place under the row; the DAX view
+holds the fields and the query as written, where it is edited and run. A row can be closed (it leaves the notebook and stays in the history), pinned (it stays at the
+top and is still there after a reopen) or removed. The clock in the box opens the full history of this model, newest first: remove a question, pin it, or bring
+it back. Time all measures speed (first run, then repeat runs) for Selected rows, Pinned rows or All rows, one query at a time, with progress and one compact result
+per row. The notebook is kept by the engine beside the model (the question history file, with a pinned and an open flag on each row), so the assistant has the same
+door: the `query_notebook` tool (list, pin, unpin, close, reopen, remove) and the `queryNotebook`, `recordQueryRun` and `noteQueryRow` calls. It is free on every
+tier: a query run as written is a row too. Replaces the card stack of the 15 Oct page. `tools/uishot/query-drive.mjs` drives it; its measures are in the lane report.
+
+### The Query page (1.6, Kane picked option B on 15 Oct 2026)
+Ask your data and Queries are one page, Explore > Query. A bar switches between Words, Build and DAX. Under it, rows of two cards on one 12-column
+grid: Answer and DAX, Result and Speed, Explain this number and Where the time went, Compare a rewrite and Steps, Asked before and Save as a check.
+The answer comes first and always says how it was read (a part with no data in the model is said in words, and no total is shown in its place).
+Every card and every part opens by default and has a fold. The page is free; only the words box is Pro.
+A shared visual set (total card, bars, line, variance bars, dumbbell, bullet, slope, small multiples, sparkline table, table, waterfall, heat table)
+draws the answer: the rules narrow it to the visuals that can draw the result, Jev may pick one (`queries.chart_kind`, schema 2, one call for each
+answer, still off until its replay clears its bar), and every other visual that fits is one press. The old routes, places, help, the Learn tour and
+the ask box all land on Query. The Edit area now opens on AI instructions. The consent version stays at 6: the point sends the same kinds of names it did.
+
+### The Copilot test: the model interview comes back as a test loop (Kane, 15 Oct 2026)
+New page Review > Copilot test (option A of the three mocked on 15 Oct). Your assistant writes a bank of questions in the words a person would use, each with a
+reference DAX that the engine runs and keeps as the proven right answer. A small student model (Haiku 5.5 by default) answers them from only what Copilot sees
+(`get_copilot_view`: visible tables, columns and measures with descriptions, formats and other names, the relationships and the AI instructions; no hidden
+objects, no data, no formulas). The engine grades a whole round by number in one call (`run_interview_batch`) and names the kind of miss: wrong field, wrong
+filter, wrong number, said no when it could answer, answered when it should say no, DAX failed, or could not check (never counted as right or wrong). The
+misses are grouped into a few causes in one step: Jev picks the cause when the new `copilot.misses` point is on and sure (it ships OFF, behind the replay
+bar; the consent version stays 6, so nobody agrees again for it), plain rules otherwise. Your assistant proposes changes to the AI instructions, descriptions and other names as Plan rows, applies them
+as one undoable step, and runs the round again; each change says how many misses it fixed. Every fifth question is held back: its score shows beside the
+bank's, and its questions' misses are never returned to the assistant, so a score that only learns the bank cannot pass as right. A round asks the person once, when
+it is made, never per question or per group of answers.
+New tools: `get_copilot_view`, `add_interview_questions`, `get_student_questions`, `run_interview_batch`, `interview_rounds` (407 tools). New agent file
+`copilot-student` (Claude Code, model `claude-haiku-5-5`, no tools) in the assistant pack, and the `interview-model` skill is now the loop, with the way to run the student
+in Claude Code, Codex and Claude Desktop. PLAN.md records the 8 Oct decision that hid the old card as amended.
+
+### 1.5.1 fixes (15 Oct 2026)
+Jev now asks its questions in batches and names each one, so the plan builds and runs faster on a big model.
+The Find and replace page has left the Studio; the assistant tools for search and replace stay.
+The relay now writes its licence index once per licence instead of on every call.
+
+### Find and replace leaves the Studio (Kane, 15 Oct 2026)
+The Find and replace page is gone from the Edit area, which now opens on Queries. A person who wants to replace a word across the model asks their
+assistant, which still has `search_model`, `propose_replace` and `replace_in_object`, or uses VS Code search over the saved TMDL and DAX files.
+The Model tree's Ctrl+F "Find in Model" quick pick stays. The Plan's "names" and "collisions" rows now open AI readiness, `show_in_studio` no longer
+lists the `edit/find` place, the ask box no longer routes "rename" to a page, and an old link to the page lands on Queries.
+
+### Trial fixes (F-289 to F-293, T297)
+A failed mint or arm no longer spends the person's one free month: the worker takes its lock, arms the claim, and only then marks the email used,
+and it lets the lock go when the arm fails, so the same link works on a retry. A pending trial claim is kept in secret storage and picked up when
+VS Code starts again. A failed `claude mcp add` on an update puts the old Claude Code entry back. The assistant can read and set personality,
+sounds and volume (`get_personality_settings`, `set_personality_settings`) and start the free Pro month (`start_trial`, only after the person's yes in chat).
+
 ## [1.5.0] - 2026-10-15
 
 ### A new model gets created, the assistant uses the saved sign-in, and the page shows the steps (hero20 D7 and D8, 13 Oct 2026)

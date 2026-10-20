@@ -1,3 +1,4 @@
+import { unsavedWord } from './footer-words';
 import { useEffect, useState } from 'react';
 import { useConnection, type ModelConnectionContext, type SessionInfo } from './connection';
 import type { ConnectionStatus } from './wire';
@@ -136,7 +137,10 @@ export function ContextBar({ onConnections }: { onConnections: (section?: HubVie
   const editMain = editing?.modelName || s.modelName || 'Model';
   const queryMain = querying?.available ? (querying.modelName || querying.database || shortEndpoint(querying.source) || 'Connected model') : 'Not connected';
   const querySub = querying?.available ? (querying.kind === 'localDesktop' || querying.kind === 'local' ? 'local running model' : 'published model') : 'tests and queries unavailable';
-  const publishMain = publishing?.available ? (publishing.modelName || publishing.database || 'Published model') : 'Not linked';
+  // A model opened live publishes back to where it came from, but opening it chose nothing: the footer names a target only once
+  // one was chosen or published to (round 2 UAT N22).
+  const publishSet = !!publishing?.available && !publishing.implied;
+  const publishMain = publishSet ? (publishing!.modelName || publishing!.database || 'Published model') : publishing?.available ? 'Not set yet' : 'Not linked';
   const v = syncVerdict(s, conn);
   const warn = v.tone === 'warn';
   // Folded, the pill carries the Tests fact so nothing about the session becomes unreadable at a narrow width.
@@ -150,7 +154,7 @@ export function ContextBar({ onConnections }: { onConnections: (section?: HubVie
     <div className="studio-contextbar" style={{ minHeight: 34 }}>
       <button type="button" data-testid="connections-editing" onClick={() => onConnections('open')} title={`Editing ${editMain}. Choose what to edit.`} className={segment}>
         <span className="connection-value" title={editing?.source}>{editMain}</span>
-        {(s.hasUnsavedEdits ?? s.hasUnsavedChanges) && <span className="sem-chip sem-chip-warn connection-unsaved">unsaved</span>}
+        {(s.hasUnsavedEdits ?? s.hasUnsavedChanges) && <span className="sem-chip sem-chip-warn connection-unsaved" title={s.keptCopyPath ? `A copy is kept at ${s.keptCopyPath}. The service is not changed until you publish.` : undefined}>{unsavedWord(s)}</span>}
       </button>
       <span className="connection-separator" aria-hidden="true">→</span>
       <button type="button" data-testid="connections-querying" onClick={() => onConnections('setup')} title={`Tests and queries use ${queryMain} (${querySub}). Choose the model.`} className={segment}>
@@ -160,7 +164,7 @@ export function ContextBar({ onConnections }: { onConnections: (section?: HubVie
       <span className="connection-separator" aria-hidden="true">→</span>
       <button type="button" data-testid="connections-publishing" onClick={() => onConnections('setup')} title="Choose the live model that will receive published changes" className={segment}>
         <span className="connection-kicker">Publish:</span>
-        <span className={publishing?.available ? 'connection-value' : 'connection-value connection-value-none'}>{publishMain}</span>
+        <span className={publishSet ? 'connection-value' : 'connection-value connection-value-none'}>{publishMain}</span>
       </button>
       {/* The Plan page's notes, as one quiet word (1.5). */}
       <PlanNotes />

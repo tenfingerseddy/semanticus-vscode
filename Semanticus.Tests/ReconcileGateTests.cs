@@ -124,6 +124,7 @@ namespace Semanticus.Tests
         {
             // open preset: QueryData allowed on every label. The gate does NOT refuse; the run proceeds to the live
             // check and honestly reports "not connected" — proving Allow is not the blocker.
+            SqlSourceRegistry.Save(null, "Cloud", CloudEp, "DS", "serviceprincipal", null);   // a sign-in goes only to a saved server
             var r = await Run("open", "agent");
             Assert.False(r.PolicyRefused);
             Assert.Equal(ReconcileStatus.InsufficientCoverage, r.Status);

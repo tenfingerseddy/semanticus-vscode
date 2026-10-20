@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 
@@ -28,6 +30,20 @@ namespace Semanticus.Engine
         {
             var path = PathWitness.Real(Path.GetFullPath(source));
             return OperatingSystem.IsWindows() ? path.ToUpperInvariant() : path;
+        }
+        /// <summary>The name a new blank model's kept copy goes by: a path under the store that no model file can have, so it never meets a real one.</summary>
+        internal static string UntitledSource(string modelName)
+        {
+            var safe = new string(modelName.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');
+            return Path.Combine(Root(), "untitled", safe.Length == 0 ? "Model" : safe);
+        }
+        /// <summary>The name a LIVE model's kept copy goes by: the model's own name last (the offer says "kept your unsaved changes to Northstar"), under a folder named for its endpoint and database so two models of one name never meet.</summary>
+        internal static string LiveSource(string endpoint, string database)
+        {
+            var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes((endpoint ?? "").Trim().ToLowerInvariant() + "|" + (database ?? "").Trim().ToLowerInvariant()))).Substring(0, 12).ToLowerInvariant();
+            var name = database ?? "";
+            var safe = new string(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c).ToArray()).Trim().TrimEnd('.');
+            return Path.Combine(Root(), "live", id, safe.Length == 0 ? "Model" : safe);
         }
         internal static string UnsavedPath(string source) => Path.Combine(TargetDir("file", FileKey(source)), "unsaved.json");
 

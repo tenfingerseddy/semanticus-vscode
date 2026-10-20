@@ -80,8 +80,8 @@ const JOBS = [
       s.instructionsPaneShown && 'the Instructions pane is showing over the Notes tab',
       missingSections(s).length && `the notes lost ${missingSections(s).join(', ')} on the way into the tab`,
       !s.calls.includes('getPrimer') && 'the notes never read the engine, so this is an empty shell and not the page',
-      s.editRow.join(' | ') !== 'Find and replace | Queries | AI instructions | Advanced modelling'
-        && `the Edit row should read Find and replace, Queries, AI instructions, Advanced modelling; it read ${JSON.stringify(s.editRow)}`,
+      s.editRow.join(' | ') !== 'Queries | AI instructions | Advanced modelling'
+        && `the Edit row should read Queries, AI instructions, Advanced modelling; it read ${JSON.stringify(s.editRow)}`,
       s.editRowLit !== 'AI instructions' && `the Edit row should stay lit on AI instructions while its Notes tab is open; it lit ${JSON.stringify(s.editRowLit)}`,
     ],
   },

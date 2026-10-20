@@ -34,6 +34,36 @@ namespace Semanticus.Engine.Query
         public int RowCount { get; set; }
         /// <summary>human or agent: which door asked.</summary>
         public string Origin { get; set; }
+
+        // ---- the notebook (1.6, Kane 16 Oct): the same record is a row of the notebook and an item of the full history.
+        /// <summary>"words" for a question read from words or parts, "dax" for a query a person or an assistant ran as written.
+        /// Null on a record kept before the notebook: read as words.</summary>
+        public string Kind { get; set; }
+        /// <summary>A pinned row stays at the top of the notebook and is never dropped to make room.</summary>
+        public bool Pinned { get; set; }
+        /// <summary>True while the row is open in the notebook. Closing a row clears it; the row stays in the history.</summary>
+        public bool InNotebook { get; set; }
+        /// <summary>The number the row shows when it is folded, as the page wrote it ("$1.2M", "Blank"). Never a row of data.</summary>
+        public string Headline { get; set; }
+        /// <summary>The plain line a part that could not apply was said in (the K21 harm), so a folded row can still mark it.</summary>
+        public string Dropped { get; set; }
+        /// <summary>How long the query took, in ms, when it ran.</summary>
+        public double? TookMs { get; set; }
+        /// <summary>The first run with nothing kept, in ms, from the last Time all.</summary>
+        public double? ColdMs { get; set; }
+        /// <summary>The repeat runs, in ms, from the last Time all.</summary>
+        public double? WarmMs { get; set; }
+    }
+
+    /// <summary>The notebook and the full history as one view: every question of the model, newest first, with the flags that
+    /// say which are pinned and which are open. The notebook is the pinned and open ones; the history is all of them.</summary>
+    public sealed class QueryNotebookView
+    {
+        public DataQuestionRecord[] Questions { get; set; } = Array.Empty<DataQuestionRecord>();
+        /// <summary>A plain line when there is nothing to keep (an unsaved model), or when an action found no such row.</summary>
+        public string Note { get; set; }
+        /// <summary>What an action did, in one plain line ("Pinned.", "Removed.").</summary>
+        public string Done { get; set; }
     }
 
     public sealed class DataQuestionHistory
@@ -72,8 +102,48 @@ namespace Semanticus.Engine.Query
             return Path.Combine(workspaceSidecar, LiveFolder, key.Substring(0, 24) + ".json");
         }
 
+        /// <summary>Carry the rows an older build kept in a workspace's sidecar into the model's own file in the per-user home, once. Rows
+        /// already there win; the old file is renamed so a row the person later removes does not come back. Never throws: a history is a
+        /// convenience.</summary>
+        public static void CarryOver(string legacy, string home)
+        {
+            if (legacy == null || home == null || string.Equals(legacy, home, StringComparison.Ordinal)) return;
+            try
+            {
+                lock (Gate)
+                {
+                    if (!File.Exists(legacy)) return;
+                    var old = ReadShape(legacy);
+                    var shape = ReadShape(home);
+                    var have = new HashSet<string>(shape.Questions.Select(q => q.Id), StringComparer.Ordinal);
+                    var carried = old.Questions.Where(q => !string.IsNullOrEmpty(q.Id) && have.Add(q.Id)).ToList();
+                    if (carried.Count > 0)
+                    {
+                        shape.Questions.InsertRange(0, carried);
+                        Trim(shape);
+                        Write(home, shape);
+                    }
+                    File.Move(legacy, legacy + ".moved", overwrite: true);
+                }
+            }
+            catch { /* left where it is; the next ask tries again */ }
+        }
+
         public static string Clip(string question) =>
             question == null || question.Length <= KeepChars ? question : question.Substring(0, KeepChars).TrimEnd() + "...";
+
+        /// <summary>What makes two records the same question: its words, else its reading, else its DAX with the spaces squashed.
+        /// A query run as written is its DAX. Case does not matter. The words come first (UAT 17 Oct, round 3): two questions
+        /// that read the same (one answered, one flagged, both Order Count) are two rows, so a newer twin never hides an older
+        /// answered row; and the same words asked again after Allow are one row, not two.</summary>
+        public static string KeyOf(DataQuestionRecord r)
+        {
+            var text = r.Kind == "dax" ? r.Dax : (!string.IsNullOrWhiteSpace(r.Question) ? r.Question : !string.IsNullOrWhiteSpace(r.Reading) ? r.Reading : r.Dax);
+            return string.IsNullOrWhiteSpace(text) ? r.Id : string.Join(" ", text.Split((char[])null, StringSplitOptions.RemoveEmptyEntries)).ToLowerInvariant();
+        }
+
+        /// <summary>DAX with its whitespace squashed, so a query run again with other spacing is the same query.</summary>
+        public static string SquashDax(string dax) => string.Join(" ", (dax ?? "").Split((char[])null, StringSplitOptions.RemoveEmptyEntries));
 
         public static void Append(string file, DataQuestionRecord record)
         {
@@ -81,16 +151,68 @@ namespace Semanticus.Engine.Query
             lock (Gate)
             {
                 var shape = ReadShape(file);
+                // A question asked again takes the place of its earlier row in the notebook, with its pin: one row per question, and
+                // the history keeps every ask.
+                var key = KeyOf(record);
+                foreach (var earlier in shape.Questions.Where(q => (q.Pinned || q.InNotebook) && KeyOf(q) == key))
+                {
+                    record.Pinned |= earlier.Pinned; record.InNotebook |= earlier.InNotebook;
+                    earlier.Pinned = false; earlier.InNotebook = false;
+                }
                 shape.Questions.Add(record);
-                if (shape.Questions.Count > Keep) shape.Questions.RemoveRange(0, shape.Questions.Count - Keep);
-                var dir = Path.GetDirectoryName(file);
-                Directory.CreateDirectory(dir);
-                // The sidecar's .gitignore keeps this file out of the model's commits; make sure it says so before the
-                // first question is written. The live-model folder sits inside a sidecar too.
-                LayoutStore.EnsureRuntimeIgnore(Path.GetFileName(dir) == LiveFolder ? Path.GetDirectoryName(dir) : dir);
-                var tmp = file + ".tmp";
-                File.WriteAllText(tmp, JsonSerializer.Serialize(shape, Json));
-                File.Move(tmp, file, overwrite: true);
+                Trim(shape);
+                Write(file, shape);
+            }
+        }
+
+        /// <summary>The oldest go first, and a pinned row is never one of them.</summary>
+        private static void Trim(FileShape shape)
+        {
+            while (shape.Questions.Count > Keep)
+            {
+                var i = shape.Questions.FindIndex(q => !q.Pinned);
+                if (i < 0) break;
+                shape.Questions.RemoveAt(i);
+            }
+        }
+
+        private static void Write(string file, FileShape shape)
+        {
+            var dir = Path.GetDirectoryName(file);
+            Directory.CreateDirectory(dir);
+            // The sidecar's .gitignore keeps this file out of the model's commits; make sure it says so before the
+            // first question is written. The live-model folder sits inside a sidecar too.
+            LayoutStore.EnsureRuntimeIgnore(Path.GetFileName(dir) == LiveFolder ? Path.GetDirectoryName(dir) : dir);
+            var tmp = file + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(shape, Json));
+            File.Move(tmp, file, overwrite: true);
+        }
+
+        /// <summary>Change one record in place. False when the file holds no record with that id.</summary>
+        public static bool Update(string file, string id, Action<DataQuestionRecord> change)
+        {
+            if (file == null || string.IsNullOrEmpty(id)) return false;
+            lock (Gate)
+            {
+                var shape = ReadShape(file);
+                var r = shape.Questions.FirstOrDefault(q => q.Id == id);
+                if (r == null) return false;
+                change(r);
+                Write(file, shape);
+                return true;
+            }
+        }
+
+        /// <summary>Take one record out of the history for good. False when there is no such record.</summary>
+        public static bool Remove(string file, string id)
+        {
+            if (file == null || string.IsNullOrEmpty(id)) return false;
+            lock (Gate)
+            {
+                var shape = ReadShape(file);
+                if (shape.Questions.RemoveAll(q => q.Id == id) == 0) return false;
+                Write(file, shape);
+                return true;
             }
         }
 

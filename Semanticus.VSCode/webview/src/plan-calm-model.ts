@@ -79,20 +79,24 @@ export function verbGroupOf(item: Pick<P.PlanItem, 'title' | 'jump' | 'section'>
   const tool = item.jump?.tool ?? '';
   if (tool === 'readiness' || tool === 'instructions' || tool === 'knowledge' || tool === 'dataagent') return 'Readiness';
   if (tool === 'relationships' || tool === 'lineage') return 'Relationships';
-  if (tool === 'daxlab' || tool === 'meditor') return 'DAX';
+  if (tool === 'query' || tool === 'daxlab' || tool === 'meditor') return 'DAX';
   return groupForTool(tool) ?? 'Modelling';
 }
 
 /** What Run the plan says while it works: the verb of the row being worked on, and "3 of 10". `step` is the position in the press. */
-export function pressWords(held: readonly string[], steps: Readonly<Record<string, P.RunPhase>>, items: readonly P.PlanItem[], quiet: boolean, seed = 0):
+export function pressWords(held: readonly string[], steps: Readonly<Record<string, P.RunPhase>>, items: readonly P.PlanItem[], quiet: boolean, seed = 0, choosing: string | null = null):
   { verb: string; count: string; fraction: number; n: number; total: number } {
   const total = held.length;
   const finished = held.filter((id) => steps[id]?.step === 'done' || steps[id]?.step === 'skipped').length;
   const n = Math.min(finished + 1, Math.max(total, 1));
   const live = held.find((id) => ['work', 'waitjev', 'apply', 'check'].includes(steps[id]?.step ?? ''));
   const current = items.find((i) => i.id === (live ?? held.find((id) => steps[id]?.step !== 'done' && steps[id]?.step !== 'skipped')));
+  const fraction = total === 0 ? 0 : (finished + 0.5) / total;
+  // While the press waits for Jev, the slot says what Jev is choosing, with the real count, and drops the "n of total" that cannot move
+  // until Jev answers (hero22: "Labelling the fields 38 of 38" sat for 12 s). The engine's words are the engine's own (plan/runProgress, choosing).
+  if (choosing) return { verb: choosing, count: '', fraction, n, total };
   const verb = verbFor(current ? verbGroupOf(current) : 'Readiness', n - 1, quiet, seed);
-  return { verb, count: `${n} of ${total}`, fraction: total === 0 ? 0 : (finished + 0.5) / total, n, total };
+  return { verb, count: `${n} of ${total}`, fraction, n, total };
 }
 
 // ---- the end of a run ---------------------------------------------------------------------------------------------------------
@@ -148,6 +152,7 @@ export type Slot =
   | { kind: 'said'; text: string }
   | { kind: 'wheel'; text: string }
   | { kind: 'next' }
+  | { kind: 'connect'; text: string }
   | { kind: 'quiet'; text: string };
 
 export interface SlotInput {
@@ -160,10 +165,15 @@ export interface SlotInput {
   driver: { connected: boolean; mode: 'claudeDrives' | 'iDrive'; wheel: boolean; assistantWorking: boolean; name: string };
   /** The engine suggested a next step the person can press. */
   hasNext: boolean;
+  /** That step can only be done by an assistant (no Do it beside it). With no assistant connected it is not offered. */
+  nextNeedsAssistant?: boolean;
 }
 
 /** The slot is never empty (Kane, 13 Oct): with no step to suggest, this quiet line holds the place. */
 export const NOTHING_WAITING = 'Nothing waiting for your assistant';
+/** With no assistant connected the page speaks to the person: the rows that need words say so, and this one quiet line offers the connection (UAT F8). */
+export const CONNECT_WORDS = 'Tasks that need words wait for an assistant.';
+export const CONNECT_LABEL = 'Connect your assistant';
 /** What the slot says while the assistant drives and works: its work, never a step for the person to press (hero19 D3). */
 export const ASSISTANT_WORKING = 'Working on your model';
 
@@ -199,6 +209,7 @@ export function slotOf(i: SlotInput): Slot {
   if (i.receipt) return i.receipt.kind === 'ran' ? { kind: 'done', text: i.receipt.text } : { kind: 'said', text: i.receipt.text };
   if (i.driver.connected && i.driver.mode === 'claudeDrives' && i.driver.wheel) return { kind: 'wheel', text: `You have the wheel. Your next message to ${midSentence(i.driver.name)} gives it back.` };
   if (i.driver.connected && i.driver.mode === 'claudeDrives' && i.driver.assistantWorking) return { kind: 'work', who: 'assistant', verb: ASSISTANT_WORKING, count: null };
+  if (!i.driver.connected && (!i.hasNext || i.nextNeedsAssistant)) return { kind: 'connect', text: CONNECT_WORDS };
   if (i.hasNext) return { kind: 'next' };
   return { kind: 'quiet', text: NOTHING_WAITING };
 }

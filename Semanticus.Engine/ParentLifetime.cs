@@ -24,7 +24,16 @@ namespace Semanticus.Engine
     {
         /// <summary>Long enough for a full window reload (the extension host restart plus activation) and
         /// short enough that a closed editor's engine is gone before anyone notices it.</summary>
-        public const int DefaultGraceMs = 20_000;
+        public const int DefaultGraceMs = 8_000;
+
+        /// <summary>How long a HELD engine (unsaved live work, or an assistant attached) may keep waiting after its
+        /// grace. A hold used to pause the countdown for ever: the r2 UAT found a 418 MB engine still running an hour
+        /// after the window closed. Ten minutes is long enough to reopen a window by mistake and short enough that a
+        /// closed editor is not still holding memory when the person has gone to lunch.</summary>
+        public const int DefaultHoldCapMs = 600_000;
+
+        /// <summary>Test hook, like <see cref="GraceEnvironmentVariable"/>: it can only shorten the hold cap.</summary>
+        public const string HoldCapEnvironmentVariable = "SEMANTICUS_PARENT_HOLD_MS";
 
         /// <summary>Test hook, read once at construction. It can only SHORTEN the grace and never removes
         /// the watch, so the worst a stray value does in production is make the engine leave sooner. Nothing
@@ -52,11 +61,13 @@ namespace Semanticus.Engine
             TimeSpan? poll = null,
             Func<int, bool> isAlive = null,
             Action<int> onAdopted = null,
-            Func<bool> holdOpen = null)
+            Func<bool> holdOpen = null,
+            TimeSpan? holdCap = null)
         {
             _onExpired = onExpired ?? throw new ArgumentNullException(nameof(onExpired));
             _onAdopted = onAdopted;
             Grace = grace ?? ResolveGrace();
+            HoldCap = holdCap ?? ResolveHoldCap();
             _poll = poll ?? ParentWatchdog.DefaultPoll;
             _isAlive = isAlive;
             _holdOpen = holdOpen;
@@ -73,6 +84,9 @@ namespace Semanticus.Engine
 
         /// <summary>How long a dead parent's engine waits for a window to come back.</summary>
         public TimeSpan Grace { get; }
+
+        /// <summary>The most a hold can add on top of the grace before the engine leaves anyway.</summary>
+        public TimeSpan HoldCap { get; }
 
         /// <summary>The process this engine currently dies with, or null when it watches nobody.</summary>
         public int? WatchedPid { get { lock (_gate) return _pid; } }
@@ -115,6 +129,14 @@ namespace Semanticus.Engine
                 try { _watch?.Dispose(); } catch { }
                 _watch = null;
             }
+        }
+
+        private static TimeSpan ResolveHoldCap()
+        {
+            var raw = Environment.GetEnvironmentVariable(HoldCapEnvironmentVariable);
+            if (int.TryParse(raw, out var ms) && ms >= 100 && ms <= DefaultHoldCapMs)
+                return TimeSpan.FromMilliseconds(ms);
+            return TimeSpan.FromMilliseconds(DefaultHoldCapMs);
         }
 
         private static TimeSpan ResolveGrace()
@@ -166,18 +188,26 @@ namespace Semanticus.Engine
                     // The grace only counts while nothing holds the owner open. A hold (an owner the assistant
                     // started, with unsaved changes or a client attached) pauses the countdown; once it clears the
                     // whole grace runs again, so a connection that is reconnecting gets its full window.
+                    // The hold is bounded (HoldCap): it used to pause the countdown for ever and left an engine
+                    // running for an hour after its window closed.
                     var announced = false;
+                    var deadline = DateTime.UtcNow + HoldCap;
                     while (true)
                     {
                         if (mine.Token.WaitHandle.WaitOne(Grace)) return;   // adopted, or the lifetime went away
                         if (!Held()) break;
                         if (!announced)
                         {
-                            Console.Error.WriteLine("[engine] staying up: this session has unsaved changes or a connection attached.");
+                            Console.Error.WriteLine($"[engine] staying up for up to {HoldCap.TotalMinutes:0.#} min: this session has unsaved changes or a connection attached.");
                             announced = true;
                         }
+                        var capped = false;
                         while (Held())
+                        {
                             if (mine.Token.WaitHandle.WaitOne(_poll)) return;
+                            if (DateTime.UtcNow >= deadline) { capped = true; break; }
+                        }
+                        if (capped) break;
                     }
                     var expire = false;
                     lock (_gate)

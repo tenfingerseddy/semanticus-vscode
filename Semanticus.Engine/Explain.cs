@@ -71,6 +71,17 @@ namespace Semanticus.Engine
         /// first and then the lowest, so a person can see where it is high and where it is low. Not shares and never a sum. Empty when
         /// the parts do add up (Rows holds them) or there is nothing to compare.</summary>
         public ExplainContributorRow[] Spread { get; set; } = Array.Empty<ExplainContributorRow>();
+        /// <summary>The other columns whose split also explains most of the number, best first (the chosen one is not in it). Empty when the person
+        /// named the column, or when none other qualifies. The page shows them as a row to switch the split with; the assistant passes one as decomposeBy.</summary>
+        public string[] Alternatives { get; set; } = Array.Empty<string>();
+    }
+
+    /// <summary>One column tried as the split of a number: each of its members and that member's value in the cell's own context.</summary>
+    public sealed class SplitTrial
+    {
+        public string Dimension { get; set; }                                       // 'Table'[Column]
+        public IReadOnlyList<KeyValuePair<string, double>> Members { get; set; }
+        public bool Truncated { get; set; }                                         // more members than the probe reads
     }
 
     /// <summary>One check of the why-is-this-blank checklist. Result vocabulary:
@@ -192,6 +203,27 @@ namespace Semanticus.Engine
             foreach (System.Text.RegularExpressions.Match m in
                 System.Text.RegularExpressions.Regex.Matches(dax, @"'((?:[^']|'')+)'\s*\["))
                 yield return m.Groups[1].Value.Replace("''", "'");
+        }
+
+        /// <summary>Every 'Table'[Column] a raw DAX predicate names, as "table|column" (lower case), for the columns a number is already fixed on.</summary>
+        public static IEnumerable<string> ColumnsInPredicate(string dax)
+        {
+            if (string.IsNullOrEmpty(dax)) yield break;
+            foreach (System.Text.RegularExpressions.Match m in
+                System.Text.RegularExpressions.Regex.Matches(dax, @"'((?:[^']|'')+)'\s*\[([^\]]+)\]"))
+                yield return ColumnKey(m.Groups[1].Value.Replace("''", "'"), m.Groups[2].Value);
+        }
+
+        /// <summary>"table|column", lower case: one spelling for a column however it was written.</summary>
+        public static string ColumnKey(string table, string column) => ((table ?? "") + "|" + (column ?? "")).ToLowerInvariant();
+
+        /// <summary>"'Table'[Column]" to its ColumnKey (null when unparseable).</summary>
+        public static string ColumnKeyOf(string columnRef)
+        {
+            var table = TableOf(columnRef);
+            var open = columnRef?.LastIndexOf('[') ?? -1; var close = columnRef?.LastIndexOf(']') ?? -1;
+            if (table == null || open < 0 || close <= open) return null;
+            return ColumnKey(table, columnRef.Substring(open + 1, close - open - 1).Replace("]]", "]"));
         }
 
         /// <summary>Reachability of the measure's data tables from a filter table, honoring filter-flow
@@ -338,6 +370,76 @@ namespace Semanticus.Engine
             c.Rows = rows.ToArray();
             c.Note = $"The largest parts of this number, split by {dimension}. The parts add up to the total.";
             return c;
+        }
+
+        public const string NoSplitNote = "No single column explains most of this number.";
+
+        /// <summary>A column with this many values or fewer reads as a split of a number; more reads as a list.</summary>
+        public const int SplitFewMax = 12;
+
+        /// <summary>How many other columns are offered beside the chosen one: a short row, not a menu.</summary>
+        public const int SplitAlternativesMax = 4;
+
+        /// <summary>THE SPLIT THAT EXPLAINS THE NUMBER. Trials come in the model's own order. Only a split whose parts add up to the total can be chosen, and
+        /// never one whose "everything else" holds more than half of it (a split that leaves most of the number unexplained explains nothing). Among those,
+        /// a column with few values (SplitFewMax or fewer) beats one with many; then the one whose top parts cover the most (to the whole percent); a tie
+        /// keeps the order of the trials. The others that qualify are Alternatives, in the same order. When none qualifies the note says so in one line.
+        /// A number whose parts do not add up (a ratio, an average) gets the usual refusal, with how it differs by the first column.</summary>
+        public static ExplainContributors PickSplit(IReadOnlyList<SplitTrial> trials, double total, int topK)
+        {
+            topK = Math.Max(1, Math.Min(topK <= 0 ? 5 : topK, 25));
+            var usable = (trials ?? Array.Empty<SplitTrial>()).Where(t => t?.Members != null && !t.Truncated && t.Members.Count >= 2).ToList();
+            if (usable.Count == 0) return new ExplainContributors { Additive = false, Note = NoSplitNote };
+
+            var additive = usable.Where(t => SumMatchesTotal(t.Members.Sum(m => m.Value), total)).ToList();
+            if (additive.Count == 0)
+            {
+                var first = usable.OrderBy(t => t.Members.Count <= SplitFewMax ? 0 : 1).First();
+                var refusal = BuildContributors(first.Dimension, total, first.Members, false, topK);
+                refusal.Spread = Spread(first.Members);
+                return refusal;
+            }
+
+            var ranked = additive
+                .Select(t => (Trial: t, Cover: total == 0 ? (double?)null : t.Members.OrderByDescending(m => m.Value).Take(topK).Sum(m => m.Value) / total))
+                .Where(x => x.Cover.HasValue && Math.Abs(1 - x.Cover.Value) <= 0.5 + 1e-9)
+                .OrderBy(x => x.Trial.Members.Count <= SplitFewMax ? 0 : 1)
+                .ThenByDescending(x => Math.Round(x.Cover.Value * 100))   // OrderBy is stable: equal covers keep the model's order
+                .ToList();
+            if (ranked.Count == 0) return new ExplainContributors { Additive = false, Note = NoSplitNote };
+
+            // Columns that cut the number into the same parts (a quarter's number, its name, its year and quarter) are one choice: the first stays.
+            var seen = new HashSet<string>();
+            ranked = ranked.Where(x => seen.Add(string.Join("|", x.Trial.Members.Select(m => Math.Round(m.Value, 2)).OrderByDescending(v => v)
+                .Select(v => v.ToString("R", System.Globalization.CultureInfo.InvariantCulture))))).ToList();
+
+            var best = ranked[0].Trial;
+            var c = BuildContributors(best.Dimension, total, best.Members, false, topK);
+            // The row spreads over tables: one column per table first, then a second, so a date table cannot fill the row. Best first inside a table.
+            var rest = ranked.Skip(1).Select(x => x.Trial.Dimension).ToList();
+            var bestTable = TableOfRef(best.Dimension);
+            var tables = new[] { bestTable }.Concat(rest.Select(TableOfRef)).Distinct().ToList();
+            var alts = new List<string>();
+            for (var round = 0; round < SplitPerTableMax && alts.Count < SplitAlternativesMax; round++)
+                foreach (var t in tables)
+                {
+                    var mine = rest.Where(d => TableOfRef(d) == t).ToList();
+                    var at = round - (t == bestTable ? 1 : 0);   // the best already holds its table's first place
+                    if (at >= 0 && at < mine.Count && alts.Count < SplitAlternativesMax) alts.Add(mine[at]);
+                }
+            c.Alternatives = alts.ToArray();
+            return c;
+        }
+
+        /// <summary>At most this many columns of one table in the row of offered splits (the chosen one counts).</summary>
+        public const int SplitPerTableMax = 2;
+
+        /// <summary>The table of a 'Table'[Column] reference.</summary>
+        public static string TableOfRef(string columnRef)
+        {
+            if (string.IsNullOrEmpty(columnRef)) return "";
+            var end = columnRef.LastIndexOf('[');
+            return (end > 0 ? columnRef.Substring(0, end) : columnRef).Trim('\'');
         }
 
         /// <summary>The members of a non-additive number, three highest then two lowest (all of them when there are five or fewer), as plain values.</summary>

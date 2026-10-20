@@ -76,6 +76,8 @@
     <!-- Microsoft.Data.SqlClient 7.0.2 brings Pkcs 8.0.1 (GHSA-846f-f764-76mx, GHSA-2fmv-rv2c-59x7); 8.0.2 is the fix. -->
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="8.0.2" />
     <PackageReference Include="StreamJsonRpc" Version="2.25.29" />
+    <!-- StreamJsonRpc 2.25.29 brings MessagePack 2.5.302 (GHSA-qhrr-8q5h-9q3h, NU1902); 2.5.303 is the fix. -->
+    <PackageReference Include="MessagePack" Version="2.5.303" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="ModelContextProtocol" Version="1.4.1" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />

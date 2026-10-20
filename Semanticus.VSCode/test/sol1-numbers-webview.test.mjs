@@ -106,7 +106,7 @@ function queriesAsk(answers) {
   const Q = makeLoader({
     './bridge': { rpc: async (m, ...p) => { rpcCalls.push(m); if (m === 'askData') return answers.shift(); return null; } },
     './hooks': { usePersistedState: (_k, init) => rt.React.useState(init) },
-    './consent': { useConsentCard: () => {} },
+    './consent': { useConsentCard: () => {}, useAskWhenAnswerNeedsPermission: () => {} },
     './daxeditor': { useDaxModelContext: () => ({ measures: [], columns: [] }) },
     './askdata': {
       ChipMenu: () => null, OtherReadings: () => null, AssumptionLine: () => null, JEV_READ_THIS: 'Jev read this',
@@ -154,8 +154,8 @@ test('3.2 the statement shows only while it still describes what is on screen', 
 
 test('3.2 the Queries page tells the lines whether the statement still holds', async () => {
   const { readFileSync } = await import('node:fs');
-  const lab = readFileSync(new URL('../webview/src/daxlab.tsx', import.meta.url), 'utf8');
-  assert.match(lab, /<AskLines ask=\{ask\} current=\{ask\.answer\?\.dax \? answerRows : !res\}/, 'the page says whether the statement still describes the screen (rows owned by the answer, delta B3)');
+  const lab = readFileSync(new URL('../webview/src/query.tsx', import.meta.url), 'utf8');
+  assert.match(lab, /<AskLines ask=\{q\.askBox\} current=\{q\.askState\.answer\?\.dax \? q\.answerRows : !q\.res\}/, 'the page says whether the statement still describes the screen (rows owned by the answer, delta B3)');
 });
 
 // ── 3.8: whitespace inside a text value is a difference ───────────────────────────────────────────────

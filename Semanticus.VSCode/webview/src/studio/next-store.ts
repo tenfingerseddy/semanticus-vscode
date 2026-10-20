@@ -24,6 +24,7 @@ export function createNextStore(
   let snap: NextSnapshot = { view: null, pressed: null };
   let pending: { view: View | null; since: number; limit: number } | null = null;
   let cancel: (() => void) | null = null;
+  let current: string | null = null;
   const subs = new Set<() => void>();
   const emit = () => subs.forEach((fn) => fn());
   const clearHold = () => { pending = null; if (cancel) { cancel(); cancel = null; } };
@@ -54,6 +55,12 @@ export function createNextStore(
       pending = { view, since, limit };
       if (cancel) cancel();
       cancel = schedule(() => { const p = pending; cancel = null; if (p) adopt(p.view); }, Math.max(0, since + limit - now()));
+    },
+    /** The model the step belongs to. Another model starts clean: "Added. Tell Claude go." was drawn on Contoso for a press made on another model (UAT F14). */
+    setScope(scope: string) {
+      if (scope === current) return;
+      current = scope;
+      if (snap.pressed) { snap = { ...snap, pressed: null }; emit(); }
     },
     press(id: string, text: string, failed = false) { snap = { ...snap, pressed: { id, text, failed } }; emit(); },
     clearPress() { snap = { ...snap, pressed: null }; emit(); },

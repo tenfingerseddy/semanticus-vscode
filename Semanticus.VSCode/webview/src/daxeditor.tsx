@@ -20,14 +20,14 @@ export function useDaxModel(): DaxModel {
       try {
         const [graph, ms, cs] = await Promise.all([
           rpc<{ tables: { name: string }[] }>('getModelGraph'),
-          rpc<{ name: string; table: string; formatString?: string }[]>('listMeasures'),
-          rpc<{ table: string; name: string; sortByColumn?: string }[]>('listColumns'),
+          rpc<{ name: string; table: string; formatString?: string; description?: string }[]>('listMeasures'),
+          rpc<{ table: string; name: string; sortByColumn?: string; description?: string }[]>('listColumns'),
         ]);
         if (!alive) return;
         setModel({
           tables: graph.tables.map((x) => x.name),
-          measures: ms.map((x) => ({ name: x.name, table: x.table, formatString: x.formatString })),
-          columns: cs.map((c) => ({ table: c.table, name: c.name, ...(c.sortByColumn ? { sortByColumn: c.sortByColumn } : {}) })),
+          measures: ms.map((x) => ({ name: x.name, table: x.table, formatString: x.formatString, ...(x.description ? { description: x.description } : {}) })),
+          columns: cs.map((c) => ({ table: c.table, name: c.name, ...(c.sortByColumn ? { sortByColumn: c.sortByColumn } : {}), ...(c.description ? { description: c.description } : {}) })),
           functions: [],
         });
       } catch { /* no model open yet — built-in functions still complete */ }

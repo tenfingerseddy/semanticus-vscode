@@ -5,7 +5,8 @@ import { useSyncExternalStore } from 'react';
 import type { ChapterEntry, RecordedAnswer, TourSnapshot } from './tour-model';
 
 export type LearnPhase = 'idle' | 'starting' | 'running' | 'failed';
-export type LearnRuntime = { phase: LearnPhase; chapterId: string | null; message: string | null };
+/** `own`: the tour is about the person's own open model, not the demo. */
+export type LearnRuntime = { phase: LearnPhase; chapterId: string | null; message: string | null; own?: boolean };
 export type LearnView = { runtime: LearnRuntime; tour: TourSnapshot };
 
 const IDLE: LearnView = {
@@ -23,8 +24,10 @@ const getView = () => view;
 export function useLearn(): LearnView {
   return useSyncExternalStore(subscribe, getView, getView);
 }
-/** True while a chapter plays on the demo model. The Ask page reads it to show its recorded examples. */
-export const learnActive = (v: LearnView) => v.runtime.phase === 'running';
+/** The tour's phase, for code that is not a component (the Plan's first-open guide decides once, when it mounts). */
+export const learnPhase = (): LearnPhase => view.runtime.phase;
+/** True while a chapter plays on the demo model. The Ask page reads it to show its recorded examples (never on the person's own model). */
+export const learnActive = (v: LearnView) => v.runtime.phase === 'running' && !v.runtime.own;
 
 type Registration = { chapters: readonly ChapterEntry[]; examples: readonly RecordedAnswer[]; start(chapterId: string): void };
 let registration: Registration | null = null;

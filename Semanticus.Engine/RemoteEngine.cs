@@ -278,6 +278,11 @@ namespace Semanticus.Engine
         public Task<ModelSqlEndpointList> ListModelSqlEndpointsAsync() => _rpc.InvokeAsync<ModelSqlEndpointList>("listModelSqlEndpoints");
         public Task<Entitlement.EntitlementInfo> GetEntitlementAsync() => _rpc.InvokeAsync<Entitlement.EntitlementInfo>("getEntitlement");
         public Task<Entitlement.TrialTally> GetTrialTallyAsync() => _rpc.InvokeAsync<Entitlement.TrialTally>("getTrialTally");
+        public Task<HostSettingsView> GetHostSettingsAsync() => _rpc.InvokeAsync<HostSettingsView>("getHostSettings");
+        public Task<HostSettingsView> SetHostSettingsAsync(string personality, bool? sounds, int? soundVolume, string origin = "human") => _rpc.InvokeAsync<HostSettingsView>("setHostSettings", personality, sounds, soundVolume, origin);
+        // ReportHostSettingsAsync is the person's: an agent pipe has no such method, so the owner refuses it by method-not-found.
+        public Task ReportHostSettingsAsync(string personality, bool sounds, int soundVolume) => _rpc.InvokeAsync("reportHostSettings", personality, sounds, soundVolume);
+        public Task<TrialStartResult> StartTrialAsync(string email, bool personSaidYes, string origin = "human") => _rpc.InvokeAsync<TrialStartResult>("startTrial", email, personSaidYes, origin);
         public Task<VerifiedModeState> GetVerifiedModeAsync() => _rpc.InvokeAsync<VerifiedModeState>("getVerifiedMode");
         public Task<VerifiedModeState> SetVerifiedModeAsync(bool on, string origin) => _rpc.InvokeAsync<VerifiedModeState>("setVerifiedMode", on, origin);
         public Task<ModelGraph> GetModelGraphAsync() => _rpc.InvokeAsync<ModelGraph>("getModelGraph");
@@ -541,6 +546,11 @@ namespace Semanticus.Engine
         public Task<InterviewRunResult> RunInterviewAsync(string questionId, string inlineJson, bool abstained, string attemptDax, string origin) => _rpc.InvokeAsync<InterviewRunResult>("runInterview", questionId, inlineJson, abstained, attemptDax, origin);
         public Task<SetResult> DeleteInterviewQuestionAsync(string id, string origin) => _rpc.InvokeAsync<SetResult>("deleteInterviewQuestion", id, origin);
         public Task<InterviewSeedResult> ListInterviewSeedsAsync(string source, string measure) => _rpc.InvokeAsync<InterviewSeedResult>("listInterviewSeeds", source, measure);
+        public Task<CopilotViewResult> GetCopilotViewAsync() => _rpc.InvokeAsync<CopilotViewResult>("getCopilotView");
+        public Task<CopilotAddResult> AddInterviewQuestionsAsync(CopilotQuestionIn[] items, string origin) => _rpc.InvokeAsync<CopilotAddResult>("addInterviewQuestions", items, origin);
+        public Task<CopilotStudentQuestions> GetStudentQuestionsAsync() => _rpc.InvokeAsync<CopilotStudentQuestions>("getStudentQuestions");
+        public Task<CopilotBatchResult> RunInterviewBatchAsync(string roundId, string bankKey, string student, CopilotAnswerIn[] answers, CopilotRoundChange[] changes, string origin) => _rpc.InvokeAsync<CopilotBatchResult>("runInterviewBatch", roundId, bankKey, student, answers, changes, origin);
+        public Task<CopilotRoundsView> InterviewRoundsAsync(string round) => _rpc.InvokeAsync<CopilotRoundsView>("interviewRounds", round);
 
         public Task<ChangePlanView> ProposePlanAsync(string scope, bool includeAi, int maxAiItems, string origin) => _rpc.InvokeAsync<ChangePlanView>("proposePlan", scope, includeAi, maxAiItems, origin);
         public Task<ChangePlanView> ProposeReplaceAsync(SearchOptions find, string replace, int maxItems, string origin) => _rpc.InvokeAsync<ChangePlanView>("proposeReplace", find, replace, maxItems, origin);
@@ -691,7 +701,15 @@ namespace Semanticus.Engine
         public Task<Composer.DescribedWorkflow> DescribeWorkflowStepsAsync(string words) => _rpc.InvokeAsync<Composer.DescribedWorkflow>("describeWorkflowSteps", words);
         public Task<Query.DataAnswer> AskDataAsync(Query.DataAsk ask, string origin = "human") => _rpc.InvokeAsync<Query.DataAnswer>("askData", ask, origin);
         public Task<Query.DataQuestionHistory> ListDataQuestionsAsync(int limit = 50) => _rpc.InvokeAsync<Query.DataQuestionHistory>("listDataQuestions", limit);
+        public Task<Query.QueryNotebookView> QueryNotebookAsync(string action = "list", string id = null) => _rpc.InvokeAsync<Query.QueryNotebookView>("queryNotebook", action, id);
+        // This proxy is the assistant's connection: it has no HumanGovernanceRpcTarget, so its run is kept through the agent method (hero 26 N1), which the owner
+        // always stamps as the assistant's. Whatever origin or row to replace the caller names, it can never write or replace a person's row.
+        public Task<string> RecordQueryRunAsync(string dax, int rowCount, double elapsedMs, string headline = null, string origin = "human", string replaces = null) => _rpc.InvokeAsync<string>("recordAgentQueryRun", RecordQueryRunArgs(dax, rowCount, elapsedMs, headline, replaces));
+        /// <summary>The RPC takes no origin and no row to replace (the owner decides both from the connection), so the wire carries four arguments.</summary>
+        internal static object[] RecordQueryRunArgs(string dax, int rowCount, double elapsedMs, string headline, string replaces) => new object[] { dax, rowCount, elapsedMs, headline };
+        public Task<bool> NoteQueryRowAsync(string id, QueryRowNote note) => _rpc.InvokeAsync<bool>("noteQueryRow", id, note);
         public Task<Query.ChartPick> PickChartKindAsync(Query.ChartPickAsk ask) => _rpc.InvokeAsync<Query.ChartPick>("pickChartKind", ask);
+        public Task<CheckVisualPicks> PickCheckVisualsAsync(CheckVisualAsk ask) => _rpc.InvokeAsync<CheckVisualPicks>("pickCheckVisuals", ask);
         public Task<ModelPlanView> CompletePlanTaskAsync(string id, string reply) => _rpc.InvokeAsync<ModelPlanView>("completePlanTask", id, reply);
         public Task<ModelPlanView> DeclinePlanTaskAsync(string id, string reason) => _rpc.InvokeAsync<ModelPlanView>("declinePlanTask", id, reason);
         public Task<NextAction[]> GetNextActionsAsync() => _rpc.InvokeAsync<NextAction[]>("getNextActions");

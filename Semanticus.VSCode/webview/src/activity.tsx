@@ -4,16 +4,20 @@ import type { SaidGroup } from './studio/said-model';
 import { appendEdit, saidCopy } from './studio/said-model';
 import { ConnectAssistantsPanel } from './connect-assistants';
 import { PANEL_TITLE } from './connect-assistants-model';
+import { ASSISTANT_PULSE_EVENT } from './firstrun-gate';
+import { actorOf } from './activity-actor';
 
 export type { ActivityEvent };
 
 // Which Studio tab renders each op's result — lets the feed deep-link and tabs reflect the agent's run.
 export const KIND_TAB: Record<string, string> = {
-  // The DAX Lab hub owns every query/perf op (author · run · debug · pivot · profile · plan · benchmark · verify).
-  run_dax: 'daxlab', evaluate_and_log: 'daxlab', profile_dax: 'daxlab', benchmark_dax: 'daxlab',
-  benchmark_coldwarm: 'daxlab', clear_cache: 'daxlab', capture_query_plan: 'daxlab',
-  verify_equivalence: 'daxlab', preview_table: 'data', pivot_measure: 'daxlab', vpaq_scan: 'stats',
+  // The Query page owns every query/perf op (author · run · debug · pivot · profile · plan · benchmark · verify).
+  run_dax: 'query', evaluate_and_log: 'query', profile_dax: 'query', benchmark_dax: 'query', ask_data: 'query',
+  benchmark_coldwarm: 'query', clear_cache: 'query', capture_query_plan: 'query',
+  verify_equivalence: 'query', preview_table: 'data', pivot_measure: 'query', vpaq_scan: 'stats',
   get_doc_model: 'docs', set_doc_section: 'docs',
+  // The Copilot test: Studio follows the assistant to its page.
+  run_interview_batch: 'copilottest', add_interview_questions: 'copilottest', interview_rounds: 'copilottest', get_copilot_view: 'copilottest', get_student_questions: 'copilottest',
   get_spec: 'spec', set_spec: 'spec', clear_spec: 'spec', build_model_from_spec: 'spec',
   autogenerate_spec_from_model: 'spec', autogenerate_spec_from_fabric: 'spec', load_spec: 'spec',
   git_commit: 'deploy', git_push: 'deploy', git_pull: 'deploy', git_checkout: 'deploy',
@@ -28,8 +32,8 @@ export const KIND_TAB: Record<string, string> = {
 // Display names for deep-link tooltips — the UI never speaks internal tab ids. `compare` is an alias
 // into Deploy (App.tsx routes it there), so its destination reads as Deploy too.
 const TAB_LABEL: Record<string, string> = {
-  daxlab: 'DAX Lab', data: 'Data', stats: 'Storage', docs: 'Docs', spec: 'Model Spec',
-  deploy: 'Deploy', compare: 'Deploy', readiness: 'AI Readiness', tests: 'Tests',
+  query: 'Query', data: 'Data', stats: 'Storage', docs: 'Docs', spec: 'Model Spec',
+  deploy: 'Deploy', compare: 'Deploy', readiness: 'AI Readiness', copilottest: 'Copilot test', tests: 'Tests',
 };
 // A single neutral marker per feed entry — the op's text label carries the meaning (no colorful
 // pictographs in any product surface).
@@ -73,7 +77,8 @@ export function ActivityProvider({ children }: { children: React.ReactNode }) {
   }, []);
   const pin = (e: ActivityEvent) => setPinned({ event: e, nonce: ++pinNonce.current });
   useEffect(() => onActivity((e) => {
-    setFeed((f) => [e, ...f].slice(0, 60));
+    // The person's own accept or take back tells the page to read the waivers again, but it is not something the assistant ran.
+    if (!(e.kind === 'check_waiver' && e.origin !== 'agent')) setFeed((f) => [e, ...f].slice(0, 60));
     setLatest((m) => (m[e.kind] && m[e.kind].seq >= e.seq ? m : { ...m, [e.kind]: e }));   // newest-per-kind, by server Seq
   }), []);
   return <Ctx.Provider value={{ feed, latestByKind, pinned, pin, addEdit }}>{children}</Ctx.Provider>;
@@ -164,6 +169,14 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
     if (highlight >= 0) itemRefs.current[highlight]?.focus(); else menuRef.current?.focus();
   }, [open, view, highlight]);
   const closeAndReturnFocus = () => { setOpen(false); chipRef.current?.focus(); };
+  // After the tour from the first-run card, this button pulses once so connecting later is easy to find.
+  const [pulse, setPulse] = useState(false);
+  useEffect(() => {
+    let timer: number | undefined;
+    const on = () => { setPulse(true); window.clearTimeout(timer); timer = window.setTimeout(() => setPulse(false), 2400); };
+    window.addEventListener(ASSISTANT_PULSE_EVENT, on);
+    return () => { window.removeEventListener(ASSISTANT_PULSE_EVENT, on); window.clearTimeout(timer); };
+  }, []);
 
   const latest = feed[0];
   const approvalLabel = `${pendingApprovalCount} permission${pendingApprovalCount === 1 ? '' : 's'} waiting for approval. Open Permissions.`;
@@ -224,7 +237,7 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
         title={latest?.label ? `Your assistant · ${latest.label}` : 'Your assistant'}
         // Instrument: a hairline button like its neighbours in the header, not a tinted chip. On the tint, the
         // muted feed mark measured 4.1:1 in Light Modern.
-        className="studio-header-action studio-feed-mark-host gap-2">
+        className={`studio-header-action studio-feed-mark-host gap-2${pulse ? ' is-pulsing' : ''}`}>
         {/* The dot only pulses while there is something live to pulse about; idle it is a plain muted mark. */}
         <span className={`w-1 h-1 rounded-full${feed.length > 0 ? ' animate-pulse' : ''}`}
           style={{ background: feed.length > 0 ? 'var(--sem-actor-assistant)' : 'var(--sem-muted)' }} />
@@ -292,12 +305,12 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
             style={{ color: 'var(--sem-muted)', borderBottom: '1px solid var(--sem-border)' }}>
             <span className={`w-1 h-1 rounded-full${feed.length > 0 ? ' animate-pulse' : ''}`}
               style={{ background: feed.length > 0 ? 'var(--sem-actor-assistant)' : 'var(--sem-muted)' }} />
-            Live activity · your assistant
+            Live activity
             <button type="button" onClick={() => setView('menu')} className="sem-btn sem-btn-sm sem-btn-quiet ml-auto"
               title="Back to the assistant menu">Back</button>
           </div>
           {feed.length === 0 && <div className="px-3 py-3 text-xs" style={{ color: 'var(--sem-muted)' }}>
-            Nothing yet. Anything your assistant runs on this model shows up here.
+            Nothing yet. What you or your assistant run on this model shows up here.
           </div>}
           <div className="max-h-96 overflow-auto">
             {feed.map((e) => {
@@ -312,6 +325,7 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
                   <span className="shrink-0" aria-hidden="true">{FEED_MARK}</span>
                   <span className="min-w-0 flex-1">
                     <span className="text-xs font-medium">{e.label}</span>
+                    <span className="text-(length:--sem-text-label) block" style={{ color: 'var(--sem-muted)' }}>{actorOf(e)}</span>
                     {e.query && <span className="text-xs font-mono block truncate" style={{ color: 'var(--sem-muted)' }}>{e.query}</span>}
                   </span>
                   {e.error ? <span className="text-(length:--sem-text-label) shrink-0" style={{ color: 'var(--sem-bad)' }}>error</span>

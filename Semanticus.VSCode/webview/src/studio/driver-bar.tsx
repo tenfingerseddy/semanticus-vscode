@@ -17,7 +17,8 @@ export function DriverBarView({ driver, onMode, onResume, touring = false, worki
   if (touring) return <div data-testid="studio-driver-bar" data-studio-driver-bar style={row}><span role="status">The tour is playing.</span></div>;
   if (!driver.assistantConnected) return null;
   // The connection file is written but no assistant has started: say so, and do not claim Claude is driving.
-  const waiting = driver.mode === 'claudeDrives' && !driver.assistantWorking;
+  // Once the assistant has been seen (its name is read from its own connection) the bar never goes back to waiting for it (hero 26 N8).
+  const waiting = driver.mode === 'claudeDrives' && !driver.assistantWorking && !driver.assistant;
   const person = !waiting && driver.mode === 'claudeDrives' && driver.state === 'personHasWheel';
   // One colour per actor: I drive and You have the wheel are the person's blue, Claude drives is the assistant's purple.
   const color = waiting ? 'var(--sem-muted)'
@@ -28,8 +29,8 @@ export function DriverBarView({ driver, onMode, onResume, touring = false, worki
   const connectedIdle = driver.mode === 'claudeDrives' && !waiting && !person && !working;
   // The name the engine read from the assistant's own connection (Claude Code, Codex, ...); "Your assistant" until it has.
   const name = driver.assistant?.name ?? 'Your assistant';
-  // The buttons name who drives: "Claude" for Claude Code and Claude Desktop alike, else the assistant's own name.
-  const driverName = driver.assistant?.key === 'claude' ? 'Claude' : name;
+  // One name for the driver on the switch: "Your assistant" whichever assistant it is (hero 26 N8). The words beside it still name the app.
+  const driverName = 'Your assistant';
   const words = driver.mode === 'iDrive' ? `I drive. ${name} works but does not move your screen.`
     : waiting ? 'Waiting for your assistant. Open Claude Code in this folder to begin.'
     : person ? `You have the wheel. Your next message to ${name === 'Your assistant' ? 'your assistant' : name} gives it back.`

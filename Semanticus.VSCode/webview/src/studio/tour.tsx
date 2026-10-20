@@ -22,7 +22,7 @@ import editChapter from '../../../assets/learn/edit.json';
 import reviewChapter from '../../../assets/learn/review.json';
 import publishChapter from '../../../assets/learn/publish.json';
 import recorded from '../../../assets/learn/contoso-shop/answers.json';
-import { createTourPlayer, endLine, type ChapterEntry, type RecordedAnswer, type TourChapter } from './tour-model';
+import { chapterFor, createTourPlayer, endLine, type ChapterEntry, type RecordedAnswer, type TourChapter } from './tour-model';
 import { registerLearn, setLearnView, useLearn, type LearnView, type LearnRuntime } from './learn-state';
 import './studio-tour.css';
 
@@ -38,8 +38,6 @@ export const RECORDED_ANSWERS: readonly RecordedAnswer[] = recorded.answers as R
 const START_FAILED = 'The demo model could not open. Your own model is unchanged.';
 
 const player = createTourPlayer({
-  setTimer: (fn, ms) => window.setTimeout(fn, ms),
-  clearTimer: (handle) => window.clearTimeout(handle as number),
   push: (note) => notesStore.push(note),
   canMove: () => driverStore.canMoveScreen(),
   places: placeMap.places,
@@ -65,10 +63,10 @@ function ensureWire() {
   if (wired || typeof window === 'undefined') return;
   wired = true;
   window.addEventListener('message', (event: MessageEvent) => {
-    const m = event.data as { type?: string; chapter?: string; sessionId?: string; message?: string } | undefined;
+    const m = event.data as { type?: string; chapter?: string; sessionId?: string; message?: string; own?: boolean } | undefined;
     if (!m || typeof m.type !== 'string' || !m.type.startsWith('learn')) return;
     if (m.type === 'learnReady' && runtime.phase === 'starting' && m.chapter === runtime.chapterId && SCRIPTS[m.chapter]) {
-      begin(SCRIPTS[m.chapter], m.sessionId ?? '');
+      begin(SCRIPTS[m.chapter], m.sessionId ?? '', m.own === true);
     } else if (m.type === 'learnFailed' && runtime.phase === 'starting') {
       publish({ phase: 'failed', message: m.message || START_FAILED });
     } else if (m.type === 'learnCancelled' && runtime.phase === 'starting') {
@@ -80,7 +78,7 @@ function ensureWire() {
   });
 }
 
-function begin(chapter: TourChapter, sessionId: string) {
+function begin(chapter: TourChapter, sessionId: string, own = false) {
   // The screen has to move for the tour whatever the person's setting was. It is given back in leaveTour.
   if (borrowedMode === null) borrowedMode = driverStore.getSnapshot().mode;
   driverStore.setMode('claudeDrives');
@@ -89,8 +87,8 @@ function begin(chapter: TourChapter, sessionId: string) {
   offDriver?.();
   // Taking the wheel, or switching to I drive, stops the tour where it is. Continue gives it back.
   offDriver = driverStore.subscribe(() => { if (!driverStore.canMoveScreen()) player.interrupt(); });
-  publish({ phase: 'running', chapterId: chapter.id, message: null });
-  player.start(chapter, sessionId);
+  publish({ phase: 'running', chapterId: chapter.id, message: null, own });
+  player.start(chapterFor(chapter, own), sessionId);
 }
 
 /** Starts a chapter (learn-state.ts startTour reaches this). */
@@ -115,7 +113,7 @@ function endHere(): void {
   offDriver?.(); offDriver = null;
   if (borrowedMode !== null) { driverStore.setMode(borrowedMode); borrowedMode = null; }
   notesStore.reset();
-  publish({ phase: 'idle', chapterId: null, message: null });
+  publish({ phase: 'idle', chapterId: null, message: null, own: false });
 }
 
 function continueTour() {

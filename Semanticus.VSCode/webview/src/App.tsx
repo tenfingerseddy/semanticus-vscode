@@ -13,6 +13,8 @@ import { ContextBar, compareSeedFromSession, QueryStalenessChip } from './contex
 import { FileRecoveryOffer } from './file-recovery';
 import { ConnectionsHub, openConnectionsOnCreate, openConnectionsOnView, type HubView } from './connectionshub';
 import type { ModelRef } from './compare';
+import { adviceFor, biggestShare, shareAdvice, shareWords, verdictWords } from './storage-share';
+import { useDriver } from './studio/driver-store';
 import { VpaqComponentBars, VPAQ_COMPONENT_COLORS, VPAQ_UNATTRIBUTED_COLOR, Sparkline, type VpaqColumn, type VpaqTable, type VpaqBarItem } from './echart';
 import { DiagramView } from './diagram';
 import type { ModelGraph } from './diagram';
@@ -25,16 +27,15 @@ import { ProPreview } from './propreview';
 import { ProChip, ProPage } from './propage';
 import { TrialEndingLine } from './trialline';
 import { DaxModelProvider } from './daxeditor';
-import { DaxLabTabStateProvider, DaxLabView, useDaxLabBusy } from './daxlab';
-import { AskDataView } from './askdata';
-import type { QueriesHandoff } from './askdata-model';
+import { DaxLabTabStateProvider, useDaxLabBusy } from './daxlab';
+import { QueryView } from './query';
 import { LineageTabStateProvider, LineageView, useLineageReportsBusy } from './lineage';
-import { SearchView } from './search';
 import { DataPreviewView } from './datapreview';
 import { BpaView } from './bpa';
 // Pending changes and the Model Spec are PARTS of the Plan page from 23 September, so the shell no
 // longer mounts either of them: plan.tsx owns both, one as a section and one as a panel.
 import { DocumentationView } from './documentation';
+import { CopilotTestView } from './copilot-test';
 import { DeployView } from './deploy';
 import { usePublishReach } from './publishReach';
 import { TestsView } from './tests';
@@ -46,7 +47,7 @@ import { busyAffordance } from './tabbusy.mjs';
 import { linkWork } from './personality/link-state';
 import { wirePersonality } from './personality/link';
 import { onPlanRunProgress, onProgress, postToHost } from './bridge';
-import { plainRuleName } from './rule-words';
+import { plainRuleName, plainCategory, plainGate } from './rule-words';
 
 // The personality (1.5): The Link hears the real work, and the Personality and Sounds switches write through the host.
 wirePersonality({ onAssistantCall, onActivity, onProgress, onPlanRunProgress, postToHost });
@@ -62,7 +63,6 @@ import { assistantChipCount, type Plan as PlanModel, type PlanDoer } from './pla
 import { AskBar, isAskKey } from './askbox';
 import { draftRowId } from './composer-model';
 import { ProDecisionsHost } from './decisions-settings';
-import { findBoxFor, namesOfTarget } from './search-names';
 import { band } from './readinessband.mjs';
 import { SCAN_PAGE_OF_TOOL } from './studio/checks-run';
 import { GradeFlip, BigWin } from './personality/motion';
@@ -114,14 +114,13 @@ const TAB_GROUPS: { id: Area; label: string; tabs: { id: StudioTab; label: strin
     { id: 'plan', label: 'Plan' },
   ] },
   { id: 'explore', label: 'Explore', tabs: [
-    { id: 'data', label: 'Data' }, { id: 'askdata', label: 'Ask your data' }, { id: 'diagram', label: 'Diagram' }, { id: 'lineage', label: 'Lineage' }, { id: 'stats', label: 'Size' },
+    { id: 'data', label: 'Data' }, { id: 'query', label: 'Query' }, { id: 'diagram', label: 'Diagram' }, { id: 'lineage', label: 'Lineage' }, { id: 'stats', label: 'Size' },
   ] },
   { id: 'edit', label: 'Edit', tabs: [
-    { id: 'search', label: 'Find and replace' }, { id: 'daxlab', label: 'Queries' },
     { id: 'instructions', label: 'AI instructions' }, { id: 'advmodels', label: 'Advanced modelling' }, { id: 'mcode', label: 'Power Query' },
   ] },
   { id: 'review', label: 'Review', tabs: [
-    { id: 'bpa', label: 'Model quality (BPA)' }, { id: 'readiness', label: 'AI readiness' }, { id: 'tests', label: 'Validation' }, { id: 'docs', label: 'Docs' },
+    { id: 'bpa', label: 'Model quality (BPA)' }, { id: 'readiness', label: 'AI readiness' }, { id: 'copilottest', label: 'Copilot test' }, { id: 'tests', label: 'Validation' }, { id: 'docs', label: 'Docs' },
   ] },
   { id: 'publish', label: 'Publish', tabs: [
     { id: 'deploy', label: 'Published' },
@@ -130,7 +129,7 @@ const TAB_GROUPS: { id: Area; label: string; tabs: { id: StudioTab; label: strin
     { id: 'workflows', label: 'Workflows' },
   ] },
 ];
-// The Edit row is a plain strip: Find and replace, Queries, AI instructions and Advanced modelling. Advanced
+// The Edit row is a plain strip: AI instructions and Advanced modelling (Queries moved to Explore > Query in 1.6). Advanced
 // modelling is one tab, not a dropdown (Kane, 8 October 2026). The page it opens has its own row of buttons, and
 // that one row (AREA_TABS in advmodels.tsx) lists Power Query together with the six builders, so there is a single list.
 // Power Query keeps its own tool id (`mcode`: the ask box, the Plan and Edit M Code all land on it, and the engine
@@ -150,7 +149,11 @@ TAB_TO_GROUP.evidence = 'review';
 // And Model notes did the same on 23 September: it is the Notes tab inside AI instructions now. `knowledge`
 // stays a real route for the deep link, the ask box, the Plan and every saved page that still names it.
 TAB_TO_GROUP.knowledge = 'edit';
-const CYCLE_TABS: StudioTab[] = TAB_GROUPS.flatMap((g) => g.tabs.map((t) => t.id));
+// Workflows retired for everyone (Kane, 17 Oct): the page and its code stay, but no strip, menu or list offers it. TAB_GROUPS
+// keeps the entry because the route table, the quick pick and AskRouteTests still read it as text.
+const RETIRED_AREAS: Area[] = ['workflows'];
+const SHOWN_GROUPS = TAB_GROUPS.filter((g) => !RETIRED_AREAS.includes(g.id));
+const CYCLE_TABS: StudioTab[] = SHOWN_GROUPS.flatMap((g) => g.tabs.map((t) => t.id));
 // The Plan is where a person starts (Plan at the heart, Kane 24 Sep). Every older area word, the Overview's
 // among them, resolves through route.ts's AREA_ALIASES.
 const FALLBACK_TAB: StudioTab = 'plan';
@@ -170,6 +173,7 @@ export function App() {
   // The remembered published model that is waiting for the person to sign in (host: setPendingReconnect). While it
   // waits the page names that model and offers Sign in to reconnect, instead of the generic Open a model page.
   const [reconnectName, setReconnectName] = useState<string | null>(null);
+  const [reconnectOffer, setReconnectOffer] = useState(false);
   // Words typed into the start plan and not saved: while any are held, an engine outage leaves the Plan on screen (read-only, saying so) instead of swapping it for the not-connected page, which would unmount the editor.
   const anyWordsDraft = useAnyWordsDraft();
   // The live connection context is the single source of truth for the attached query engine (its session copy is
@@ -351,7 +355,6 @@ export function App() {
     setRoute(next);
   };
   // Open in Queries' in-memory half (see daxTarget below).
-  const queriesHandoff = useRef<{ dax: string; handoff: QueriesHandoff } | null>(null);
   const consumeRouteSeed = useCallback((nonce: number) => {
     setRoute((current) => {
       if (current.nonce !== nonce || !current.seed) return current;
@@ -376,16 +379,13 @@ export function App() {
     goRoute({ ...remembered, sessionId: sid || remembered.sessionId, seed: undefined, nonce: ++navNonce.current });
   };
   const seedForTarget = (tool: StudioTab, target: string | undefined, object: Route['object'], approvalId?: string): Seed | undefined => {
-    if (tool === 'daxlab' && object?.kind === 'measure') return { kind: 'query', value: objectToRef(object) };
+    if (tool === 'query' && object?.kind === 'measure') return { kind: 'query', value: objectToRef(object) };
     if (tool === 'tests' && object?.kind === 'measure') return { kind: 'test', value: objectToRef(object) };
-    // "Fix N names that Copilot reads as the same word": the Plan hands the clashing names, and Find and replace opens with them filled in.
-    if (tool === 'search' && namesOfTarget(target)) return { kind: 'search', value: namesOfTarget(target)! };
-    if (tool === 'search' && target != null) return { kind: 'search', value: object?.kind === 'table' ? '' : (objectLabel(object) ?? target) };
     if (tool === 'permissions' && approvalId) return { kind: 'approval', value: approvalId };
     if (tool === 'advmodels' && target) return { kind: 'advanced', value: target.startsWith('area:') ? target.slice(5) : target };
     if (tool === 'workflows' && target?.startsWith('draft:')) return { kind: 'draft', value: target.slice('draft:'.length) };
-    // Open Ask your data from the Plan's field carries the typed words (askbox.tsx ASK_WORDS_TARGET).
-    if (tool === 'askdata' && target?.startsWith('words:')) return { kind: 'askWords', value: target.slice('words:'.length) };
+    // Open Query from the Plan's field carries the typed words (askbox.tsx ASK_WORDS_TARGET).
+    if (tool === 'query' && target?.startsWith('words:')) return { kind: 'askWords', value: target.slice('words:'.length) };
     if (tool === 'spec' && target === SQL_DRAFT_TARGET) return { kind: 'specStart', value: 'sql' };
     if (tool === 'plan' && target === PLAN_START_TARGET) return { kind: 'planStart', value: 'start' };
     return undefined;
@@ -546,7 +546,7 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Native selection is context only. It may update the Plan's route object, but never a DAX, Search or Tests seed.
+  // Native selection is context only. It may update the Plan's route object, but never a DAX or Tests seed.
   // Session identity makes a queued event from model A harmless after model B has opened, even when names match.
   useEffect(() => onTreeSelection((selection) => {
     if (selection.by === 'assistant') return;
@@ -660,7 +660,7 @@ export function App() {
       setEngineDown(!connected);
       if (connected) void refreshSession();
     });
-    const offReconnectPending = onReconnectPending(setReconnectName);
+    const offReconnectPending = onReconnectPending((name, offer) => { setReconnectName(name); setReconnectOffer(!!offer); });
     // The assistant's own AI readiness scan (show-checks, 12 Oct): scan again at once, so the page it opened on shows the result and not an older card.
     const offAssistantScan = onAssistantCall((call) => { if (SCAN_PAGE_OF_TOOL[call.tool] === 'readiness') void scan(); });
     return () => { off(); offReconnect(); offEngine(); offReconnectPending(); offAssistantScan(); window.clearTimeout(rescanTimer.current); };
@@ -702,12 +702,9 @@ export function App() {
   // The same shape for AI instructions' two tabs. `knowledge` is a real route id and not a page of its own
   // any more: it is how a deep link, the ask box, the Plan and every saved page still reach the Notes tab.
   const instructionsTab: InstructionsTab = tab === 'knowledge' ? 'notes' : 'instructions';
-  // Open in Queries from Ask your data hands the DAX TEXT over (seed kind 'daxText'), adopted once and acknowledged.
-  // Its other half, the question's parts, answer and words, is held here in memory (never in the route: the rows are
-  // the model's data) and travels only with the DAX text it was handed over with. A reload keeps the text alone.
-  const daxTarget = tab === 'daxlab' && seed?.kind === 'query' && routeObjectRef ? { ref: routeObjectRef, nonce: route.nonce }
-    : tab === 'daxlab' && seed?.kind === 'daxText' ? { ref: '', dax: String(seed.value), nonce: route.nonce,
-      handoff: queriesHandoff.current?.dax === String(seed.value) ? queriesHandoff.current.handoff : undefined } : null;
+  // A DAX text handed to the Query page (seed kind 'daxText') is adopted once and acknowledged.
+  const daxTarget = tab === 'query' && seed?.kind === 'query' && routeObjectRef ? { ref: routeObjectRef, nonce: route.nonce }
+    : tab === 'query' && seed?.kind === 'daxText' ? { ref: '', dax: String(seed.value), nonce: route.nonce } : null;
   // A draft handed to Author arrives as the seed { kind: 'draft', value: '<dr id>' } (Edit in Workflows and Make it
   // reusable on a draft, lane U5).
   const workflowTarget = tab === 'workflows' && (seed?.kind === 'workflow' || seed?.kind === 'workflowRuns' || seed?.kind === 'draft')
@@ -715,15 +712,10 @@ export function App() {
     : null;
   const pqTarget = tab === 'mcode' && routeTable ? { table: routeTable, partitionId: route.object?.kind === 'partition' ? routeObjectRef : undefined, nonce: route.nonce } : null;
   const advArea = tab === 'advmodels' && seed?.kind === 'advanced' ? { area: String(seed.value), nonce: route.nonce } : null;
-  const searchTarget = tab === 'search' && seed?.kind === 'search'
-    ? Array.isArray(seed.value)
-      ? { query: findBoxFor(seed.value).text, regex: findBoxFor(seed.value).regex, scope: undefined, nonce: route.nonce }
-      : { query: String(seed.value), scope: route.object?.kind === 'table' ? routeObjectRef : undefined, nonce: route.nonce }
-    : null;
   const permissionTarget = tab === 'permissions' && seed?.kind === 'approval' ? { id: String(seed.value), nonce: route.nonce } : null;
   const statsTarget = tab === 'stats' && routeTable ? { table: routeTable, nonce: route.nonce } : null;
   // The words typed in the Plan's field, handed to Ask your data's question box, adopted once (fix-askdata-r6).
-  const askWordsTarget = tab === 'askdata' && seed?.kind === 'askWords' ? { words: String(seed.value), nonce: route.nonce } : null;
+  const askWordsTarget = tab === 'query' && seed?.kind === 'askWords' ? { words: String(seed.value), nonce: route.nonce } : null;
   // The new model wizard's SQL step (route.ts SQL_DRAFT_TARGET), as the route's nonce so each ask opens it once.
   const draftStartSql = tab === 'spec' && seed?.kind === 'specStart' ? route.nonce : 0;
   // The Plan's start view, asked for by the Studio's plan/start place (route.ts PLAN_START_TARGET), also once.
@@ -780,7 +772,7 @@ export function App() {
           of copying it into persisted webview state. The session key still discards it when a different model opens. */}
       {session?.sessionId && <div className={tab === 'tests' || tab === 'evidence' ? 'h-full' : 'hidden'}><TestsView key={session.sessionId} navTarget={testTarget} onNavConsumed={consumeRouteSeed}
         page={validationTab} onPage={(next) => goTab(next === 'reports' ? 'evidence' : 'tests')}
-        onOpenDaxLab={(ref) => goTab('daxlab', undefined, ref)} onOpenSavedReports={() => goTab('evidence')} /></div>}
+        onOpenDaxLab={(ref) => goTab('query', undefined, ref)} onOpenSavedReports={() => goTab('evidence')} /></div>}
       {tab === 'pro' ? (
         // The Pro page needs no model and no engine of its own: buying and a key both run in the extension host,
         // and a person with nothing open yet must still be able to get here from the header chip or Help.
@@ -788,7 +780,7 @@ export function App() {
       ) : engineDown && !keepPlan ? (
         <EngineDown />
       ) : !session?.sessionId ? (
-        <Empty onOpen={() => showConnections('open')} reconnectName={reconnectName} />
+        <Empty onOpen={() => showConnections('open')} reconnectName={reconnectName} offer={reconnectOffer} />
       ) : featureGrant === 'denied' ? (
         <ProPreview tool={tab} />
       ) : featureGrant === 'unknown' ? (
@@ -833,7 +825,7 @@ export function App() {
       ) : tab === 'readiness' ? (
         <div className="sem-page">
           {error && <ReadyBanner tone="bad">{error}</ReadyBanner>}
-          {card?.gatedBy?.length ? <ReadyBanner tone="bad">{card.gatedBy.join(' · ')}</ReadyBanner> : null}
+          {card?.gatedBy?.length ? <ReadyBanner tone="bad">{card.gatedBy.map(plainGate).join(' · ')}</ReadyBanner> : null}
           {card?.caveat ? <ReadyBanner tone="warn">{card.caveat}</ReadyBanner> : null}
           {card?.ruleErrors?.length ? <ReadyBanner tone="warn">{card.ruleErrors.join(' · ')}</ReadyBanner> : null}
           {card ? <Hero card={card} trend={trend} busy={busy} onSafe={applySafeFixes} /> : <ReadyPanel><div className="sem-text-meta">Scanning model…</div></ReadyPanel>}
@@ -863,9 +855,6 @@ export function App() {
         <StatsView onReviewAsPlan={reviewAsPlan} navTarget={statsTarget} />
       ) : tab === 'data' ? (
         <DataPreviewView target={dataTarget} />
-      ) : tab === 'askdata' ? (
-        <AskDataView navWords={askWordsTarget} onNavConsumed={consumeRouteSeed}
-          onOpenQueries={(dax, handoff) => { queriesHandoff.current = handoff ? { dax, handoff } : null; goTab('daxlab', undefined, undefined, undefined, { kind: 'daxText', value: dax }); }} onOpenTests={() => goTab('tests')} />
       ) : tab === 'lineage' ? (
         // Add a check is a REAL hand-off, not a link to a page: a measure goes straight into the New check
         // drawer on the Tests page with its measure already filled in, through the same test seed the model
@@ -877,8 +866,8 @@ export function App() {
           // Tests page with the context dropped. One line, on the line this hand-off already owned.
           onAddCheck={(ref) => goTab('tests', undefined, ref, undefined, { kind: 'test', value: ref })}
           onRename={(ref) => goTab('plan', undefined, ref)} onOpenWorkflow={openWorkflow} />
-      ) : tab === 'search' ? (
-        <SearchView sessionId={session.sessionId} navQuery={searchTarget} onNavConsumed={consumeRouteSeed} onOpenPlan={() => goTab('optimize')} />
+      ) : tab === 'copilottest' ? (
+        <CopilotTestView />
       ) : tab === 'docs' ? (
         <DocumentationView />
       ) : tab === 'deploy' || tab === 'dataagent' ? (
@@ -888,8 +877,8 @@ export function App() {
         null
       ) : tab === 'permissions' ? (
         <PermissionsView focusApproval={permissionTarget} onFocusConsumed={consumeRouteSeed} onPolicyChanged={setAgentPolicy} onApprovalChanged={() => { void refreshPendingApprovals(); }} />
-      ) : tab === 'daxlab' ? (
-        <DaxLabView navTarget={daxTarget} onNavConsumed={(nonce) => { queriesHandoff.current = null; consumeRouteSeed(nonce); }} onOpenTests={() => goTab('tests')} />
+      ) : tab === 'query' ? (
+        <QueryView navTarget={daxTarget} navWords={askWordsTarget} onNavConsumed={consumeRouteSeed} onOpenTests={() => goTab('tests')} />
       ) : (
         // Explicit, safe fallback: every valid tab is enumerated above and goTab rejects unknown ids, so this is
         // unreachable in practice — but if it ever fires it lands on the first-of-lifecycle tab, never a random
@@ -982,7 +971,7 @@ function ToolChooser({ tab, locked, onTab, open: controlled, onClose }: {
   return <div ref={wrap} className={controlled === undefined ? 'tool-chooser relative' : undefined}>
     {controlled === undefined && <button type="button" className="studio-header-action" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((value) => !value)}>Find a tool</button>}
     {open && <div ref={menu} role="menu" aria-label={controlled === undefined ? 'Find a tool' : 'All tools'} className="tool-chooser-menu studio-header-pop absolute right-0 top-full mt-1">
-      {TAB_GROUPS.map((group) => <section key={group.id} aria-label={group.label}>
+      {SHOWN_GROUPS.map((group) => <section key={group.id} aria-label={group.label}>
         <div className="tool-chooser-heading">{group.label}</div>
         {/* The row carries a STABLE TOOL ID. It always did, and it now matters twice over: a Pro pill changes
             the row's text, so anything selecting these by their words breaks the moment a tool is locked. */}
@@ -1026,7 +1015,7 @@ function MoreStudioMenu({ activeArea, onGroup, tab, onTab, onConnections }: {
     <button type="button" aria-label="More Studio tools" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen((value) => !value)}
       className="studio-header-action">More</button>
     {open && <div ref={menu} role="menu" className="compact-menu studio-header-pop absolute right-0 top-full mt-1">
-      <div className="compact-areas">{TAB_GROUPS.map((group) => <button key={group.id} role="menuitem" type="button" aria-current={activeArea === group.id ? 'page' : undefined}
+      <div className="compact-areas">{SHOWN_GROUPS.map((group) => <button key={group.id} role="menuitem" type="button" aria-current={activeArea === group.id ? 'page' : undefined}
         onClick={() => { onGroup(group.id); setOpen(false); }}>{group.label}</button>)}</div>
       <ToolChooser tab={tab} locked={lockedTools} onTab={go} />
       {/* No Settings row: this menu is where the header utilities fold, and the gear is not one of them any more.
@@ -1179,12 +1168,12 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
   const busy = useMemo(() => {
     const surfaces: string[] = [];
     if (lineageBusy) surfaces.push('lineage');
-    if (daxLabBusy) surfaces.push('daxlab');
+    if (daxLabBusy) surfaces.push('query');
     if (storageBusy) surfaces.push('stats');
     return busyAffordance(surfaces, tab, activeGroup, TAB_TO_GROUP);
   }, [lineageBusy, daxLabBusy, storageBusy, tab, activeGroup]);
   // The Link in the status line works while the person's own job runs (1.5).
-  useEffect(() => { linkWork.setBusySurfaces([lineageBusy && 'lineage', daxLabBusy && 'daxlab', storageBusy && 'stats'].filter(Boolean) as string[]); },
+  useEffect(() => { linkWork.setBusySurfaces([lineageBusy && 'lineage', daxLabBusy && 'query', storageBusy && 'stats'].filter(Boolean) as string[]); },
     [lineageBusy, daxLabBusy, storageBusy]);
   const source = shellSession?.source ? shellSession.source.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : undefined;
   const publishing = context?.publishing;
@@ -1262,7 +1251,7 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
       <nav className="studio-groups flex items-center gap-1 ml-2 min-w-0" aria-label="Studio areas">
         {/* An area is marked Pro only when EVERY tool in it is locked: a mixed area would be lying about the
             free half of itself. Today that is Workflows and nothing else. */}
-        {TAB_GROUPS.map((item, index) => <GroupTab key={item.id} active={item.id === activeGroup}
+        {SHOWN_GROUPS.map((item, index) => <GroupTab key={item.id} active={item.id === activeGroup}
           title={`${item.label} (Ctrl+Shift+${index + 1})`} unseen={item.id !== activeGroup && item.tabs.some((tool) => unseen.has(tool.id))}
           busy={busy.groups.has(item.id)} locked={item.tabs.every((tool) => lockedTools.has(tool.id))}
           onClick={() => onGroup(item.id)}>{item.label}</GroupTab>)}
@@ -1554,7 +1543,7 @@ function Categories({ card }: { card: Scorecard }) {
   return (
     <ReadyPanel>
       <h2 className="sem-card-title">Categories</h2>
-      <RagBars rows={cats.map((c) => ({ name: c.category, score: c.score, detail: `${c.violations} of ${c.applicable}` }))} />
+      <RagBars rows={cats.map((c) => ({ name: plainCategory(c.category), score: c.score, detail: `${c.violations} of ${c.applicable}` }))} />
     </ReadyPanel>
   );
 }
@@ -1725,7 +1714,7 @@ function EngineDown() {
   );
 }
 
-function Empty({ onOpen, reconnectName }: { onOpen: () => void; reconnectName?: string | null }) {
+function Empty({ onOpen, reconnectName, offer }: { onOpen: () => void; reconnectName?: string | null; offer?: boolean }) {
   // The model the person was on, waiting for a sign-in: say so and make the one button the first thing, rather than
   // sending them to a page of local files (Kane, K15).
   if (reconnectName) {
@@ -1733,9 +1722,9 @@ function Empty({ onOpen, reconnectName }: { onOpen: () => void; reconnectName?: 
       <div className="h-full flex items-center justify-center p-8">
         <div className="model-empty-shell text-center max-w-sm" data-testid="reconnect-pending">
           <div className="text-sm font-semibold mb-1">{reconnectName}</div>
-          <div className="text-xs mb-3" style={{ color: 'var(--sem-muted)' }}>Sign in again to open your last model.</div>
+          <div className="text-xs mb-3" style={{ color: 'var(--sem-muted)' }}>{offer ? 'Your last model.' : 'Sign in again to open your last model.'}</div>
           <div className="flex items-center justify-center gap-2 flex-wrap">
-            <button type="button" className="sem-primary" onClick={() => runHostCommand('semanticus.signInToReconnect')}>Sign in to reconnect</button>
+            <button type="button" className="sem-primary" data-testid="reconnect-open" onClick={() => runHostCommand('semanticus.signInToReconnect')}>{offer ? 'Open it' : 'Sign in to reconnect'}</button>
             <button type="button" onClick={onOpen}>Open another model</button>
           </div>
         </div>
@@ -1803,7 +1792,7 @@ const OPP_GROUP_ORDER: string[] = ['Can remove', 'Worth reviewing', 'Behavior cl
 interface Opp {
   ruleId: string; ruleName: string; group: OppGroup; severity: number;
   ref: string; name: string; table: string; column: string; message: string;
-  kind: 'unused' | 'dict' | 'hash' | 'summarize';
+  kind: 'unused' | 'dict' | 'hash' | 'summarize' | 'share';
   bytes: number;                              // storage weight — ranks within a group, never masquerades as severity
   encoding?: string; data?: number; dict?: number; hash?: number; total?: number; pctModel?: number; pctTable?: number;
   effect?: string;                            // the honest storage-effect label shown beside the actions
@@ -1814,8 +1803,8 @@ interface Opp {
 // rules, thresholds, evidence gates and copy this tab used to compute here (Semanticus.Engine/Facts/StorageOpportunities.cs).
 interface StorageFacts { revision: number; storageOpportunities?: Opp[] }
 
-function oppToRow(o: Opp): FindingRow {
-  return { ruleId: o.ruleId, ruleName: plainRuleName(o.ruleName), category: o.group, severity: o.severity, objectRef: o.ref, objectName: o.name, message: o.message };
+function oppToRow(o: Opp, assistantConnected = true): FindingRow {
+  return { ruleId: o.ruleId, ruleName: plainRuleName(o.ruleName), category: o.group, severity: o.severity, objectRef: o.ref, objectName: o.name, message: adviceFor(o.message, assistantConnected) };
 }
 
 function snapOf(scan: ScanState, comp: { known: number; data: number; dict: number; hash: number; attributed: number }, opps: Opp[]): StorageSnap {
@@ -2035,6 +2024,7 @@ function StorageTabStateProvider({ active, children }: { active: boolean; childr
 }
 
 function StatsView({ onReviewAsPlan, navTarget }: { onReviewAsPlan?: () => void; navTarget?: { table: string; nonce: number } | null }) {
+  const assistantConnected = useDriver().assistantConnected;
   const { conn, session, context } = useConnection();
   const {
     scanState, meta, overviewMeta, stagedCols, colRows, unused, facts, prevSnap, setPrevSnap, pinnedSnap, setPinnedSnap,
@@ -2077,6 +2067,15 @@ function StatsView({ onReviewAsPlan, navTarget }: { onReviewAsPlan?: () => void;
   // only shows them beside a scan, as it always did.
   const opps = useMemo<Opp[]>(() => report ? (facts?.storageOpportunities ?? []) : [], [report, facts]);
   const oppsRef = useRef<Opp[]>([]); oppsRef.current = opps;
+  // The biggest cost is always named (UAT P16): a column at a clear share of the model is a finding even when the engine's byte floors let it pass.
+  const shownOpps = useMemo<Opp[]>(() => {
+    const f = report ? biggestShare(report.topColumns) : null;
+    if (!f) return opps;
+    const ref = colRef(f.table, f.column);
+    if (opps.some((o) => o.ruleId === 'STORAGE-SHARE')) return opps;   // the engine already named it
+    return [{ ruleId: 'STORAGE-SHARE', ruleName: shareWords(f), group: 'Worth reviewing', severity: 1, ref, name: `${f.table}[${f.column}]`, table: f.table, column: f.column,
+      message: shareAdvice(f), kind: 'share', bytes: f.totalSize, total: f.totalSize, pctModel: f.pct }, ...opps];
+  }, [report, opps]);
 
   // Is the finding evidence COMPLETE and SUCCESSFUL for THIS scan? Both enrichment reads must have SUCCEEDED —
   // distinguishing the three states each carries: undefined = still loading, null = the read FAILED, a value =
@@ -2103,7 +2102,9 @@ function StatsView({ onReviewAsPlan, navTarget }: { onReviewAsPlan?: () => void;
         return { ref: 'table:' + t.name, label: t.name, data: b.data, dict: b.dict, hash: b.hash, unattributed, total: t.size, pctModel: t.pctOfModel, pctTable: 100 };
       }).sort((a, b) => b.total - a.total);
     }
-    return report.topColumns.map((c) => { const ts = tableSizeByName.get(c.table) ?? 0; return { ref: colRef(c.table, c.column), label: c.column, sublabel: c.table, data: c.dataSize ?? 0, dict: c.dictionarySize ?? 0, hash: c.hashIndexSize ?? 0, total: c.totalSize, pctModel: c.pctOfModel, pctTable: ts > 0 ? Math.round((100 * c.totalSize) / ts) : 0 }; }).sort((a, b) => b.total - a.total);
+    // A column name used in two tables would be two bars with the same name: those carry their table in the label.
+    const seen = new Map<string, number>(); for (const c of report.topColumns) seen.set(c.column, (seen.get(c.column) ?? 0) + 1);
+    return report.topColumns.map((c) => { const ts = tableSizeByName.get(c.table) ?? 0; return { ref: colRef(c.table, c.column), label: (seen.get(c.column) ?? 0) > 1 ? `${c.table} · ${c.column}` : c.column, sublabel: c.table, data: c.dataSize ?? 0, dict: c.dictionarySize ?? 0, hash: c.hashIndexSize ?? 0, total: c.totalSize, pctModel: c.pctOfModel, pctTable: ts > 0 ? Math.round((100 * c.totalSize) / ts) : 0 }; }).sort((a, b) => b.total - a.total);
   }, [report, barMode, tableSizeByName]);
 
   // The current scan as a snapshot (memoized so identity is stable for the decision), the comparison target, and
@@ -2396,12 +2397,12 @@ function StatsView({ onReviewAsPlan, navTarget }: { onReviewAsPlan?: () => void;
         <>
           {/* Ways to save space, first (Z5): the assistant is the main action on each row (D4) and the by-hand actions
               fold into the row's menu. One card, no side rail. Nothing to fix is one line, not a card. */}
-          {opps.length === 0
-            ? <div className="xe-msg" style={{ '--xe-dot': 'var(--sem-good)' } as React.CSSProperties}>Nothing to fix.</div>
+          {shownOpps.length === 0
+            ? <div className="xe-msg" style={{ '--xe-dot': 'var(--sem-good)' } as React.CSSProperties}>{verdictWords(facts === undefined || unused === undefined ? 'loading' : facts === null ? 'failed' : 'done', 0)}</div>
             : <Panel>
                 <div ref={oppsPanelRef} className="scroll-mt-2" />
                 <div className="flex items-center gap-2">
-                  <SectionTitle>Ways to save space <span className="sem-num" style={{ color: 'var(--sem-muted)' }}>{opps.length}</span></SectionTitle>
+                  <SectionTitle>Ways to save space <span className="sem-num" style={{ color: 'var(--sem-muted)' }}>{shownOpps.length}</span></SectionTitle>
                   {removalPlanCandidates.length > 0 && onReviewAsPlan && (
                     <div className="ml-auto"><Button primary disabled={!reverifiedPlanAllowed} onClick={() => void reviewAsPlanItems(removalPlanCandidates)}
                       title={!reverifiedPlanAllowed ? planBlockedReason ?? undefined : `Adds ${removalPlanCandidates.length} ${removalPlanCandidates.length === 1 ? 'removal' : 'removals'} to your plan. Semanticus checks them again before anything changes. It does not promise how much space you save.`}>
@@ -2412,9 +2413,9 @@ function StatsView({ onReviewAsPlan, navTarget }: { onReviewAsPlan?: () => void;
                 {unused === null && <div className="mt-1 xe-msg xe-msg-warn">Usage could not be determined (the safe-to-remove check did not run), so removal actions are disabled.</div>}
                 {editingBlockedReason && !linkedCopyObservation && <div className="mt-1 xe-msg xe-msg-warn">{editingBlockedReason}</div>}
                 <div className="mt-2">
-                  <GroupedFindings rows={opps.map(oppToRow)} categoryOrder={OPP_GROUP_ORDER}
-                    renderActions={(r) => { const o = opps.find((x) => x.ruleId === r.ruleId && x.ref === r.objectRef); return o
-                      ? <OppActions o={o} reachable={oppReachable(o)} usageKnown={unused !== null} ambiguous={refIsAmbiguous(o.table, o.column)}
+                  <GroupedFindings rows={shownOpps.map((o) => oppToRow(o, assistantConnected))} categoryOrder={OPP_GROUP_ORDER}
+                    renderActions={(r) => { const o = shownOpps.find((x) => x.ruleId === r.ruleId && x.ref === r.objectRef); return o
+                      ? <OppActions o={o} assistantConnected={assistantConnected} reachable={oppReachable(o)} usageKnown={unused !== null} ambiguous={refIsAmbiguous(o.table, o.column)}
                           editingAllowed={editingEvidenceAllowed} editingBlockedReason={editingBlockedReason ?? undefined}
                           planAllowed={reverifiedPlanAllowed} planBlockedReason={planBlockedReason ?? undefined}
                           onGiveTask={giveTask} onDoNotSummarize={doNotSummarize} onHide={hideColumn} onDelete={deleteColumn}
@@ -2435,8 +2436,8 @@ function StatsView({ onReviewAsPlan, navTarget }: { onReviewAsPlan?: () => void;
               </div>
               <div className="ml-auto flex gap-3 flex-wrap">
                 <Key color={VPAQ_COMPONENT_COLORS.data}>Data <span className="sem-num" title={compare?.componentsComparable && comparison ? `Before: ${fmtMB(comparison.data)}` : undefined}>{fmtMB(comp.data)}</span></Key>
-                <Key color={VPAQ_COMPONENT_COLORS.dict}>Dictionary <span className="sem-num" title={compare?.componentsComparable && comparison ? `Before: ${fmtMB(comparison.dict)}` : undefined}>{fmtMB(comp.dict)}</span></Key>
-                <Key color={VPAQ_COMPONENT_COLORS.hash}>Hash indexes <span className="sem-num" title={compare?.componentsComparable && comparison ? `Before: ${fmtMB(comparison.hash)}` : undefined}>{fmtMB(comp.hash)}</span></Key>
+                <Key color={VPAQ_COMPONENT_COLORS.dict}>Different values <span className="sem-num" title={compare?.componentsComparable && comparison ? `Before: ${fmtMB(comparison.dict)}` : undefined}>{fmtMB(comp.dict)}</span></Key>
+                <Key color={VPAQ_COMPONENT_COLORS.hash}>Lookup help <span className="sem-num" title={compare?.componentsComparable && comparison ? `Before: ${fmtMB(comparison.hash)}` : undefined}>{fmtMB(comp.hash)}</span></Key>
                 {barMode === 'tables' && barItems.some((b) => (b.unattributed ?? 0) > 0) && (
                   <span title={storageMode === 'unknown' ? 'Table values are observed storage only. Components come from the scanned columns and the rest is unattributed.' : 'Table totals are exact for this storage mode. Components are estimated from the scanned columns and the rest is unattributed.'}>
                     <Key color={VPAQ_UNATTRIBUTED_COLOR}>Unattributed</Key>
@@ -2485,8 +2486,8 @@ function StatsView({ onReviewAsPlan, navTarget }: { onReviewAsPlan?: () => void;
                       { key: 'encoding', label: 'Encoding', sortVal: (c) => c.encoding, render: (c) => <span className="sem-text-meta">{c.encoding}</span> },
                       { key: 'totalSize', label: sizeLabel, align: 'right', sortVal: (c) => c.totalSize, render: (c) => <SizeCell bytes={c.totalSize} max={maxColSize} /> },
                       { key: 'dataSize', label: 'Data', align: 'right', sortVal: (c) => c.dataSize ?? 0, render: (c) => <span className="tnum" style={{ color: 'var(--sem-muted)' }}>{c.dataSize != null ? fmtMB(c.dataSize) : 'Not available'}</span> },
-                      { key: 'dictionarySize', label: 'Dict', align: 'right', sortVal: (c) => c.dictionarySize ?? 0, render: (c) => <span className="tnum" style={{ color: 'var(--sem-muted)' }}>{c.dictionarySize != null ? fmtMB(c.dictionarySize) : 'Not available'}</span> },
-                      { key: 'hashIndexSize', label: 'Index', align: 'right', sortVal: (c) => c.hashIndexSize ?? 0, render: (c) => <span className="tnum" style={{ color: 'var(--sem-muted)' }}>{c.hashIndexSize != null ? fmtMB(c.hashIndexSize) : 'Not available'}</span> },
+                      { key: 'dictionarySize', label: 'Values', align: 'right', sortVal: (c) => c.dictionarySize ?? 0, render: (c) => <span className="tnum" style={{ color: 'var(--sem-muted)' }}>{c.dictionarySize != null ? fmtMB(c.dictionarySize) : 'Not available'}</span> },
+                      { key: 'hashIndexSize', label: 'Lookup', align: 'right', sortVal: (c) => c.hashIndexSize ?? 0, render: (c) => <span className="tnum" style={{ color: 'var(--sem-muted)' }}>{c.hashIndexSize != null ? fmtMB(c.hashIndexSize) : 'Not available'}</span> },
                       { key: 'pctOfModel', label: modelShareLabel, align: 'right', sortVal: (c) => c.pctOfModel, render: (c) => <span className="tnum" style={{ color: 'var(--sem-muted)' }}>{c.pctOfModel}%</span> },
                       { key: 'pctTable', label: tableShareLabel, align: 'right', sortVal: (c) => (tableSizeByName.get(c.table) ? c.totalSize / (tableSizeByName.get(c.table) as number) : 0), render: (c) => { const ts = tableSizeByName.get(c.table) ?? 0; return <span className="tnum" style={{ color: 'var(--sem-muted)' }}>{ts > 0 ? Math.round((100 * c.totalSize) / ts) + '%' : '-'}</span>; } },
                       { key: 'reveal', label: '', align: 'right', sortVal: () => '', render: (c) => columnReachable(c.table, c.column) ? <RevealBtn objRef={'column:' + c.table + '/' + c.column} /> : null },
@@ -2507,8 +2508,8 @@ function StatsView({ onReviewAsPlan, navTarget }: { onReviewAsPlan?: () => void;
 // name: '/' is legal inside table and column names but the ref grammar splits on the first slash, so a slash-bearing
 // name could resolve to a DIFFERENT object than the one the finding measured — Delete and the plan hand-off both
 // refuse rather than guess.
-function OppActions({ o, reachable, usageKnown, ambiguous, editingAllowed, editingBlockedReason, planAllowed, planBlockedReason, onGiveTask, onDoNotSummarize, onHide, onDelete, onChangeType, onReviewAsPlan }: {
-  o: Opp; reachable: boolean; usageKnown: boolean; ambiguous: boolean; editingAllowed: boolean; editingBlockedReason?: string; planAllowed: boolean; planBlockedReason?: string;
+function OppActions({ o, assistantConnected, reachable, usageKnown, ambiguous, editingAllowed, editingBlockedReason, planAllowed, planBlockedReason, onGiveTask, onDoNotSummarize, onHide, onDelete, onChangeType, onReviewAsPlan }: {
+  o: Opp; assistantConnected: boolean; reachable: boolean; usageKnown: boolean; ambiguous: boolean; editingAllowed: boolean; editingBlockedReason?: string; planAllowed: boolean; planBlockedReason?: string;
   onGiveTask: (o: Opp) => PlanTaskRequest; onDoNotSummarize: (o: Opp) => void; onHide: (o: Opp) => void; onDelete: (o: Opp) => void;
   onChangeType: (ref: string) => void; onReviewAsPlan?: () => void;
 }) {
@@ -2521,6 +2522,7 @@ function OppActions({ o, reachable, usageKnown, ambiguous, editingAllowed, editi
     <div className="flex flex-col items-end gap-1">
       {o.effect && <span className="sem-label">{o.effect}</span>}
       <div className="flex items-center gap-1 flex-wrap justify-end">
+        {!assistantConnected && o.kind === 'share' && <button type="button" className="sem-btn sem-btn-sm" data-testid="size-connect" onClick={() => runHostCommand('semanticus.connectClaudeCode')}>Connect your assistant</button>}
         <GiveToAssistant sendKey={`stats|${o.ruleId}|${o.ref}`} disabled={!editingAllowed} disabledTitle={blockedTip} build={() => onGiveTask(o)} />
         {hasMenu && <RowMenu label="⋯" align="end" title="Do it yourself">
           {o.kind === 'unused' && <DeleteConfirm disabled={!editingAllowed || !reachable || !usageKnown || ambiguous} disabledTitle={!editingAllowed ? blockedTip : ambiguous ? ambiguousTip : unavailableTip} onConfirm={() => onDelete(o)} />}

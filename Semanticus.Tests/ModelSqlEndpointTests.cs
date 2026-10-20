@@ -46,7 +46,7 @@ namespace Semanticus.Tests
             var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
             await engine.CreateModelAsync(name, 1604);
             await engine.CreateImportTableAsync("Sales",
-                "let Source = Sql.Database(\"fabric.example.com\", \"LH_Gold\"), t = Source{[Schema=\"dbo\",Item=\"fact_sales\"]}[Data] in t", "human");
+                "let Source = Sql.Database(\"contoso.datawarehouse.fabric.microsoft.com\", \"LH_Gold\"), t = Source{[Schema=\"dbo\",Item=\"fact_sales\"]}[Data] in t", "human");
             await engine.CreateMeasureAsync("Sales", "Total Rows", "COUNTROWS('Sales')", "human");
             await engine.SaveAsync(dir, "TMDL", false, "human");
             return engine;
@@ -140,14 +140,14 @@ namespace Semanticus.Tests
         public async Task The_open_model_with_no_endpoint_is_offered_what_its_own_sources_read_from()
         {
             using var engine = await SavedModelAsync("Contoso Retail");
-            var lakehouse = SqlSourceRegistry.Save(null, "Contoso lakehouse", "fabric.example.com", "LH_Gold", "interactive", null);
+            var lakehouse = SqlSourceRegistry.Save(null, "Contoso lakehouse", "contoso.datawarehouse.fabric.microsoft.com", "LH_Gold", "interactive", null);
             // The source is saved but no check uses it, so the upgrade pass links nothing and the model's own
             // partitions are what the add form offers first.
             Assert.Null((await McpTools.GetConnectionContext(engine)).SqlEndpoint);
 
             var suggestion = (await engine.ConnectionContextAsync()).SqlEndpointSuggestion;
             Assert.NotNull(suggestion);
-            Assert.Equal("fabric.example.com", suggestion.Server);
+            Assert.Equal("contoso.datawarehouse.fabric.microsoft.com", suggestion.Server);
             Assert.Equal("LH_Gold", suggestion.Database);
             Assert.Equal(lakehouse.Id, suggestion.MatchingSourceId);
         }
@@ -540,8 +540,8 @@ namespace Semanticus.Tests
             engine.ReconcileSqlForTests = (server, database, sql) => { ran.Add((server, database)); return OneValue(5); };
 
             var oldRun = await engine.TryTestAsync(old, "human");
-            Assert.Equal(("fabric.example.com", "LH_Gold"), Assert.Single(ran));
-            Assert.Contains("grand total reconciles", oldRun.Message);   // it ran to a comparison, not a stop before the query
+            Assert.Equal(("contoso.datawarehouse.fabric.microsoft.com", "LH_Gold"), Assert.Single(ran));
+            Assert.Contains("The model and the source both give 5", oldRun.Message);   // it ran to a comparison, not a stop before the query
 
             ran.Clear();
             await engine.TryTestAsync(fresh, "human");
@@ -550,7 +550,7 @@ namespace Semanticus.Tests
             // The whole run takes the same path (as a person: an agent's run asks first before reading source rows).
             ran.Clear();
             await engine.RunTestSuiteAsync(origin: "human", sections: new[] { "measures" });
-            Assert.Contains(("fabric.example.com", "LH_Gold"), ran);
+            Assert.Contains(("contoso.datawarehouse.fabric.microsoft.com", "LH_Gold"), ran);
             Assert.Equal(2, ran.Count(r => r.Server == warehouse.Server));   // revenue names it; the new check reads the endpoint
             Assert.Equal(3, ran.Count);
         }

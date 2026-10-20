@@ -82,6 +82,10 @@ namespace Semanticus.Tests
             public readonly Dictionary<string, object[]> Over = new Dictionary<string, object[]>(StringComparer.Ordinal);
             /// <summary>When set, the run itself (the SUMMARIZECOLUMNS query) fails with these words, as a server does.</summary>
             public string FailWith;
+            /// <summary>What the customers-by-order-count query (UatQuery) answers.</summary>
+            public object CustomersByOrders = 0L;
+            /// <summary>What a plain count of a thing (CountReading: one ROW, no per-customer test) answers.</summary>
+            public object PlainCount = 42L;
 
             public IEnumerable<string> Runs => Queries.Where(q => q.Contains("SUMMARIZECOLUMNS"));
 
@@ -102,6 +106,10 @@ namespace Semanticus.Tests
                     var rows = Connected.Select(kv => new object[] { kv.Key, kv.Value.Expression, kv.Value.Format }).ToArray();
                     return new ResultSet { Columns = new[] { new ColumnDef { Name = "Name" }, new ColumnDef { Name = "Expression" }, new ColumnDef { Name = "FormatString" } }, Rows = rows, RowCount = rows.Length };
                 }
+                if (q.Contains("\"@Orders\""))
+                    return new ResultSet { Columns = new[] { new ColumnDef { Name = "[Customers]" } }, Rows = new[] { new[] { CustomersByOrders } }, RowCount = 1 };
+                if (q.StartsWith("EVALUATE\nROW(\n", StringComparison.Ordinal))
+                    return new ResultSet { Columns = new[] { new ColumnDef { Name = "[Count]" } }, Rows = new[] { new[] { PlainCount } }, RowCount = 1 };
                 if (q.Contains("MAXX ( FILTER ( VALUES ( "))
                     return new ResultSet { Columns = new[] { new ColumnDef { Name = "[Latest]" } }, Rows = new[] { new object[] { Latest } }, RowCount = 1 };
                 var on = Regex.Matches(q, @"DATE \( (\d+), (\d+), (\d+) \)");
@@ -1644,7 +1652,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Two_models_opened_live_keep_their_own_questions_and_the_sidecar_leaves_them_out_of_commits()
+        public async Task Two_models_opened_live_keep_their_own_questions_and_keep_them_out_of_the_workspace()
         {
             using var f = new DecisionFixture(TestEntitlements.Pro);
             var e = f.Engine;
@@ -1664,12 +1672,39 @@ namespace Semanticus.Tests
             await e.AskDataAsync(new DataAsk { Measures = new[] { "Net Sales" } });
             Assert.Single((await e.ListDataQuestionsAsync()).Questions);
 
-            var sidecar = System.IO.Path.Combine(f.Workspace, Semanticus.Engine.LayoutStore.DirName);
-            Assert.Equal(2, System.IO.Directory.GetFiles(System.IO.Path.Combine(sidecar, DataQuestionStore.LiveFolder)).Length);
-            var ignore = System.IO.File.ReadAllText(System.IO.Path.Combine(sidecar, ".gitignore")).Split('\n').Select(l => l.Trim()).ToList();
-            Assert.Contains(DataQuestionStore.FileName, ignore);
-            Assert.Contains(DataQuestionStore.LiveFolder + "/", ignore);
+            // The rows are the person's, kept under their home and keyed by the model, so another folder still has them (UAT 18 Oct).
+            Assert.Equal(2, System.IO.Directory.GetFiles(System.IO.Path.Combine(Semanticus.Engine.ConnectionRegistry.Root(), DataQuestionStore.LiveFolder), "*.json").Length);
+            // Nothing of them is written into the workspace, so a commit of the folder cannot pick them up.
+            Assert.False(System.IO.Directory.Exists(System.IO.Path.Combine(f.Workspace, Semanticus.Engine.LayoutStore.DirName, DataQuestionStore.LiveFolder)));
             Assert.Contains(Semanticus.Engine.LayoutStore.GitAddExcludes, x => x.EndsWith("/.semanticus/data-questions.json", StringComparison.Ordinal));
+        }
+
+        // UAT 18 Oct, lost work: Connect your assistant opens the model's folder, and every kept and pinned row of a model opened live
+        // sat in the old workspace, so "Nothing asked yet". The rows are keyed by the model under the person's home now.
+        [Fact]
+        public async Task A_live_models_kept_and_pinned_rows_are_there_in_another_folder_and_rows_an_older_build_left_come_along_once()
+        {
+            using var f = new DecisionFixture(TestEntitlements.Pro);
+            await f.Engine.CreateModelAsync("Contoso Live", 1604, discardUnsaved: true);
+            await f.Engine.CreateTableAsync("Sales", "human");
+            await f.Engine.CreateColumnAsync("table:Sales", "Amount", "Double", "Amount", "human");
+            await f.Engine.CreateMeasureAsync("table:Sales", "Net Sales", "SUM ( Sales[Amount] )", "human");
+            f.Sessions.Current.LiveOrigin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/Contoso Live", "Contoso Sales", null);
+            // A row an older build wrote in the workspace's sidecar.
+            var old = DataQuestionStore.FileForLiveModel(System.IO.Path.Combine(f.Workspace, Semanticus.Engine.LayoutStore.DirName), "powerbi://api.powerbi.com/v1.0/myorg/Contoso Live", "Contoso Sales");
+            DataQuestionStore.Append(old, new DataQuestionRecord { Id = "old1", AskedAt = DateTime.UtcNow.ToString("o"), Question = "net sales by year", Pinned = true, InNotebook = true });
+            var asked = await f.Engine.AskDataAsync(new DataAsk { Measures = new[] { "Net Sales" } });
+            Assert.NotNull(asked.QuestionId);
+
+            // The person connects their assistant: another folder, a new engine, the same model.
+            var elsewhere = System.IO.Path.Combine(f.Home, "model-folder");
+            System.IO.Directory.CreateDirectory(elsewhere);
+            var moved = new LocalEngine(f.Sessions, TestEntitlements.Pro, elsewhere);
+            var rows = (await moved.ListDataQuestionsAsync()).Questions;
+            Assert.Contains(rows, r => r.Id == asked.QuestionId);
+            Assert.Contains(rows, r => r.Id == "old1" && r.Pinned);
+            Assert.False(System.IO.File.Exists(old), "the older file is renamed once it has been carried, so a removed row does not return");
+            Assert.Single((await moved.ListDataQuestionsAsync()).Questions, r => r.Id == "old1");
         }
     }
 }

@@ -53,7 +53,14 @@ namespace Semanticus.Engine
             var added = fresh.Items.Where(i => IsOpenRow(i) && !openBefore.Contains(i.Id)).ToList();
             var memory = PlanMemory.Read(bound.File, bound.Identity);
             var undone = await UndoneAppliesAsync(bound.Session, memory).ConfigureAwait(false);
-            var missing = VanishedApplies(bound.Session, memory, fresh.Items.Select(i => i.Id).ToHashSet(StringComparer.Ordinal), undone);
+            // The strip counts every applied task that left the plan, in any session (D10). Refresh SAYS only the ones this session showed: a task
+            // applied in an earlier session had no row and no ghost, so "8 done tasks cleared" would name work the list never showed (f95edc87).
+            // The others stay counted by the strip and are left alone here.
+            var shownThisSession = _sessions.Ledger.NewestByCause(bound.Session?.Id, ChangeCauseKinds.PlanItem)
+                .Where(p => !p.Value.TakenBack && string.Equals(_sessions.Ledger.Find(p.Value.EntryId)?.SessionId, bound.Session?.Id, StringComparison.Ordinal))
+                .Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
+            var missing = VanishedApplies(bound.Session, memory, fresh.Items.Select(i => i.Id).ToHashSet(StringComparer.Ordinal), undone)
+                .Where(shownThisSession.Contains);
             var done = fresh.Items.Where(IsDoneRow).Select(i => i.Id).Concat(missing).Distinct(StringComparer.Ordinal).ToList();
             var titles = fresh.Items.Where(IsDoneRow).Select(i => i.Title)
                 .Concat(memory.History.Where(h => done.Contains(h.ItemId)).Select(h => h.Title))
@@ -87,18 +94,19 @@ namespace Semanticus.Engine
             };
         }
 
-        /// <summary>Applied tasks of THIS session that left the live plan (their gap closed) and were not cleared yet. The Studio keeps them visible
-        /// during the session; earlier sessions have no such rows. NewestByCause includes the model's older history, so the entry's session is
-        /// checked too. Refresh plan clears them, and the strip counts them from the moment they leave (hero run 21, N9: Plan done went from 20% to 70%
-        /// on Refresh plan with no work, because the strip only counted them once Refresh had written them down).</summary>
+        /// <summary>Applied tasks that left the live plan (their gap closed) and were not cleared yet. They count from the moment they leave
+        /// (hero run 21, N9: Plan done went from 20% to 70% on Refresh plan with no work, because the strip only counted them once Refresh had
+        /// written them down). They count in a later session too (hero run 24, D10: Plan done read 71% at the close and 25% after the reopen,
+        /// because only the session that applied them knew them). The plan's own memory holds each one as applied on disk, and
+        /// <see cref="UndoneAppliesAsync"/> reads the model for any that was put back, in this session or an earlier one, so a task that is no
+        /// longer done is not counted. Only one the ledger says was taken back in this session is left out here.</summary>
         private IEnumerable<string> VanishedApplies(Session s, PlanMemoryState memory, ISet<string> listed, ISet<string> undone)
         {
             if (s == null || memory?.Changes == null) return Array.Empty<string>();
-            var currentApplies = _sessions.Ledger.NewestByCause(s.Id, ChangeCauseKinds.PlanItem)
-                .Where(p => !p.Value.TakenBack && string.Equals(_sessions.Ledger.Find(p.Value.EntryId)?.SessionId, s.Id, StringComparison.Ordinal))
-                .Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
+            var takenBack = _sessions.Ledger.NewestByCause(s.Id, ChangeCauseKinds.PlanItem)
+                .Where(p => p.Value.TakenBack).Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
             return memory.Changes.Where(p => p.Value?.State == ModelPlanChangeStates.Applied
-                && currentApplies.Contains(p.Key)
+                && !takenBack.Contains(p.Key)
                 && !listed.Contains(p.Key) && !memory.ClearedDone.Contains(p.Key)
                 && !undone.Contains(p.Key)).Select(p => p.Key).ToList();
         }

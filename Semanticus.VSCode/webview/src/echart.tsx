@@ -160,7 +160,7 @@ export function VpaqComponentBars({ items, storageMode = 'unknown', onSelect }: 
       itemStyle: { color }, emphasis: { focus: 'series' }, data: rows.map(pick),
     });
     const hasUnattributed = rows.some((r) => (r.unattributed ?? 0) > 0);
-    const series = [seg('Data', C.data, (r) => r.data), seg('Dictionary', C.dict, (r) => r.dict), seg('Hash indexes', C.hash, (r) => r.hash)];
+    const series = [seg('Data', C.data, (r) => r.data), seg('Different values', C.dict, (r) => r.dict), seg('Lookup help', C.hash, (r) => r.hash)];
     if (hasUnattributed) series.push(seg('Unattributed', unattributed, (r) => r.unattributed ?? 0));
     return {
       grid: { left: 4, right: 64, top: 6, bottom: 6, containLabel: true },
@@ -179,8 +179,8 @@ export function VpaqComponentBars({ items, storageMode = 'unknown', onSelect }: 
               : `${fmt(it.total)} · ${it.pctModel}% of model · ${it.pctTable}% of table`;
           return `<b>${esc(it.label)}</b>${sub}<br/>${shares}<br/>`
             + `<span style="color:${C.data}">■</span> Data ${fmt(it.data)} &nbsp; `
-            + `<span style="color:${C.dict}">■</span> Dictionary ${fmt(it.dict)} &nbsp; `
-            + `<span style="color:${C.hash}">■</span> Hash index ${fmt(it.hash)}${rem}`;
+            + `<span style="color:${C.dict}">■</span> Different values ${fmt(it.dict)} &nbsp; `
+            + `<span style="color:${C.hash}">■</span> Lookup help ${fmt(it.hash)}${rem}`;
         },
       },
       xAxis: { type: 'value', axisLabel: { color: muted, fontSize: tokenPx('--sem-text-label'), formatter: (v: number) => fmt(v) }, splitLine: { lineStyle: { color: border } } },

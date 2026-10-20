@@ -124,7 +124,13 @@ namespace Semanticus.Tests
             var getter = typeof(Session).GetProperty(nameof(Session.SnapshotOf))!.GetMethod!;
             var callers = CompiledCallGraph.FindCallers(typeof(LocalEngine).Assembly, getter)
                 .Select(m => m.DeclaringType!.FullName + "." + m.Name).Distinct().OrderBy(x => x).ToArray();
-            Assert.Equal(new[] { "Semanticus.Engine.LocalEngine.ModelIdentityOf", "Semanticus.Engine.LocalEngine.ModelLabelOf" }, callers);
+            // Since 15923113 (11 Oct, hero15 H15) the recovery copy and the idle-exit check also ask whether a session is a snapshot: a snapshot
+            // keeps no recovery copy, and its unsaved edits keep the engine up. Neither one picks a model to write to or query.
+            Assert.Equal(new[]
+            {
+                "Semanticus.Engine.LocalEngine.ModelIdentityOf", "Semanticus.Engine.LocalEngine.ModelLabelOf", "Semanticus.Engine.Program.KeepOwnerAlive",
+                "Semanticus.Engine.Session.AttachLiveRecovery", "Semanticus.Engine.Session.get_RecoveryEligible", "Semanticus.Engine.Session.StartFileRecovery",
+            }, callers);
             var setter = typeof(Session).GetProperty(nameof(Session.SnapshotOf))!.SetMethod!;
             Assert.All(CompiledCallGraph.FindCallers(typeof(LocalEngine).Assembly, setter), m => Assert.Contains("OpenCoreAsync", m.DeclaringType!.FullName + m.Name));
         }

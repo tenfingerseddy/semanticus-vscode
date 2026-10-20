@@ -393,6 +393,8 @@ const VOCABULARY_ALLOWED_PATTERNS = [
   /\b(?:to|and) test\b/gi, /\btest (?:it|and save|the measure|this expression)\b/gi, /\bexpression to test\b/gi,
   /\bdevelopment,? (?:then )?test,? (?:and |then )?production\b/gi,
   /\bdeployment pipelines?\b/gi,                      // Microsoft's own product name
+  /\bPublish, then test\b/g,                         // the one-press label on the Copilot test page (Kane's brief, 17 Oct 2026)
+  /\bCopilot tests?\b/gi,                            // Kane's name for the Review page that asks how Copilot answers (15 Oct 2026), not a saved check
   /\bcolumn profiles?\b|\bprofile (?:columns|failed|details|progress|needs)\b|\bto profile\b/gi,
 ];
 const mergeRoot = resolve(extensionRoot, 'webview/src');

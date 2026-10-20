@@ -105,6 +105,16 @@ namespace Semanticus.Engine
             return swept;
         }
 
+        /// <summary>True when <paramref name="path"/> is inside the folder Semanticus keeps its own working copies of published models in.</summary>
+        public static bool IsInSnapshotRoot(string path)
+        {
+            try { return !string.IsNullOrWhiteSpace(path) && (Norm(path) + Path.DirectorySeparatorChar).StartsWith(Norm(TempRoot) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase); }
+            catch { return false; }
+        }
+
+        /// <summary>A model's name made safe to use as a file or folder name.</summary>
+        public static string SafeName(string name) => Sanitize(name);
+
         /// <summary>Absolute, separator-normalised, no trailing separator — the only form path comparisons use here.</summary>
         internal static string Norm(string p) =>
             Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);

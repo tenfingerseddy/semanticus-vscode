@@ -147,6 +147,12 @@ namespace Semanticus.Engine
                 if (d.Outcome == GateOutcome.Deny) throw new InvalidOperationException(d.Reason);
                 if (d.Outcome == GateOutcome.Ask && !asking) { ask = d; asking = true; }
             }
+            if (!asking && entry.AsksEveryPreset?.Invoke(call) == true)
+            {
+                ask = new PolicyDecision(GateOutcome.Ask, entry.Capability, "local",
+                    "This needs the user's approval in every preset: it saves a SQL server that is not saved yet, and Semanticus sends a sign-in token to a saved server. It has been added to the approvals queue: ask the user to approve it, then retry.");
+                asking = true;
+            }
             if (!asking) return null;
 
             var witness = await _inner.GateWitnessAsync(entry, call).ConfigureAwait(false);

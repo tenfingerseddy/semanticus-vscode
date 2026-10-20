@@ -145,7 +145,7 @@ namespace Semanticus.Engine
             var asks = CleanupSuggest.Requests(sweep.Candidates)
                 .Select(async r =>
                 {
-                    try { return await decisions.AskAsync(point.Name, r.Snapshot, r.Questions, true, true, fence, cts.Token).ConfigureAwait(false); }
+                    try { return await Splitter.AskAsync(decisions, point.Name, r.Snapshot, r.Questions, true, true, fence, cts.Token).ConfigureAwait(false); }
                     catch { return null; }
                 }).ToArray();
             if (asks.Length == 0) return 0;

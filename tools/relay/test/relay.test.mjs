@@ -890,15 +890,16 @@ test('a refusal is logged with its outcome and still no content', async () => {
 
 // --- one request per table (m11/jev-batch) -------------------------------------------------------------------
 //
-// The Plan's four per-object families (measure.folder_and_format, column.format, column.summarize, ai.schema) now ask a table's
-// objects in ONE request: the table's shared facts once, a list of objects, and one question per object named
-// "<question>:<object ref>". Only those four points may do it, only up to what a chunk needs, and everything else keeps its bound.
+// The Plan's four per-object families (measure.folder_and_format, column.format, column.summarize, ai.schema) ask the objects of a WHOLE
+// MODEL in as few requests as Jev's context allows (m16/jev-batch): what each table shares once in a map keyed by the table's name, a list
+// of objects (each names its table), and one question per object named "<question>:<object ref>". Only those four points may do it, only
+// up to what one request carries (400 questions), and everything else keeps its bound.
 
 const BATCHED = {
-    'measure.folder_and_format': { cap: 30, questions: ['display_folder', 'format_family'], field: 'measures', schemaVersion: 2 },
-    'column.format': { cap: 30, questions: ['format_family'], field: 'columns', schemaVersion: 1 },
-    'column.summarize': { cap: 30, questions: ['summarize_by'], field: 'columns', schemaVersion: 1 },
-    'ai.schema': { cap: 30, questions: ['ai_schema'], field: 'objects', schemaVersion: 1 },
+    'measure.folder_and_format': { cap: 400, questions: ['display_folder', 'format_family'], field: 'measures', shared: ['table_columns', 'sibling_measures'], schemaVersion: 2 },
+    'column.format': { cap: 400, questions: ['format_family'], field: 'columns', shared: ['table_columns'], schemaVersion: 1 },
+    'column.summarize': { cap: 400, questions: ['summarize_by'], field: 'columns', shared: ['table_columns', 'table_facts'], schemaVersion: 1 },
+    'ai.schema': { cap: 400, questions: ['ai_schema'], field: 'objects', shared: ['table_fields'], schemaVersion: 1 },
 };
 
 /** One question per object, in the engine's own naming: "<question>:<object ref>". */
@@ -914,10 +915,10 @@ function batchedQuestions(point, objects) {
 
 function batchedBody(point, objects, extra = {}) {
     const entries = [];
-    for (let i = 0; i < objects; i++) entries.push({ name: 'Col' + i, data_type: 'Double' });
+    for (let i = 0; i < objects; i++) entries.push({ name: 'Col' + i, data_type: 'Double', table: i % 2 ? 'Sales' : 'Customer' });
     return JSON.stringify({
         point,
-        snapshot: { table_name: 'Sales', [BATCHED[point].field]: entries },
+        snapshot: { ...Object.fromEntries(BATCHED[point].shared.map((f) => [f, { Sales: ['Col1'], Customer: ['Col0'] }])), [BATCHED[point].field]: entries },
         questions: batchedQuestions(point, objects),
         idempotencyKey: 'batch-' + point + '-' + objects,
         schemaVersion: BATCHED[point].schemaVersion,
@@ -1054,4 +1055,25 @@ test('a paid token the same distance past its end keeps the grace (only trials l
     const w = await world();
     const res = await w.decide(await w.token({ exp: Math.floor(T0 / 1000) - 1 }));
     assert.equal(res.status, 200);
+});
+
+// --- the ledger index in KV (15 Oct 2026: the free tier's 1,000 writes a day ran out and every decide failed) ----
+
+test('a KV that refuses writes (daily limit) does not fail a decide', async () => {
+    const w = await world();
+    w.env.RELAY_KV.put = async () => { throw new Error('KV put() limit exceeded for the day.'); };
+    const res = await w.decide(await w.token());
+    assert.equal(res.status, 200);
+    assert.equal(w.upstream.calls.length, 1);
+});
+
+test('the ledger index is written once per licence, not once per decide', async () => {
+    const w = await world();
+    let puts = 0;
+    const put = w.env.RELAY_KV.put.bind(w.env.RELAY_KV);
+    w.env.RELAY_KV.put = async (k, v) => { puts++; return put(k, v); };
+    const tok = await w.token();
+    for (let i = 0; i < 5; i++) assert.equal((await w.decide(tok, decideBody({ idempotencyKey: 'kv-once-' + i }))).status, 200);
+    assert.equal(puts, 1);
+    assert.equal(await w.env.RELAY_KV.get('led:sid:sub_test_1'), '1');
 });

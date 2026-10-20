@@ -137,6 +137,19 @@ namespace Semanticus.Tests
                 Assert.DoesNotContain(retired, d, StringComparison.Ordinal);
         }
 
+        /// <summary>Hero 24 D12: an assistant saved a check by reading the shipped studio.js for the paramsJson fields. The description names them,
+        /// so it can never fall behind the two request classes.</summary>
+        [Fact]
+        public void save_test_lists_every_paramsJson_field_of_both_kinds()
+        {
+            var d = ToolDescriptions().Single(x => x.Tool == "save_test").Description;
+            string Camel(string n) => char.ToLowerInvariant(n[0]) + n.Substring(1);
+            foreach (var type in new[] { typeof(Semanticus.Engine.ReconcileRequest), typeof(Semanticus.Engine.MeasureValueRequest) })
+                foreach (var prop in type.GetProperties())
+                    Assert.True(d.Contains(Camel(prop.Name), StringComparison.Ordinal), type.Name + "." + Camel(prop.Name) + " is not in the save_test description: " + d.Substring(0, Math.Min(400, d.Length)));
+            Assert.DoesNotContain("\u2014", d, StringComparison.Ordinal);
+        }
+
         /// <summary>The new shared free projection tells the agent it is the free way to see source usage.</summary>
         [Fact]
         public void list_sql_source_usage_is_described_as_free_and_read_only()

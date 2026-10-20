@@ -1008,10 +1008,14 @@ namespace Semanticus.Engine
             var settled = JevSettledAsync(left);
             while (true)
             {
-                if (looking.Length > 0)
+                // What Jev is being asked, with the real count, is said with every tick of the wait, whether or not a row is named: the rows Jev
+                // looks at again may be none while the press still waits for its answer to a measure the last batch made.
+                var choosing = JevChoosing.Words();
+                if (looking.Length > 0 || choosing != null)
                     _sessions.Bus.PublishRunProgress(new PlanRunProgress
                     {
                         RunId = run.Id, ItemIds = looking, Phase = PlanRunPhases.WaitJev, Wave = wave, WaitedSeconds = (int)clock.Elapsed.TotalSeconds, Ms = run.Watch.ElapsedMilliseconds,
+                        Choosing = choosing,
                     });
                 if (settled.IsCompleted) break;
                 await Task.WhenAny(settled, Task.Delay(1000)).ConfigureAwait(false);

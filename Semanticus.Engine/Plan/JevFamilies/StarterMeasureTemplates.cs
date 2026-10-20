@@ -354,6 +354,18 @@ namespace Semanticus.Engine
             return facts;
         }
 
+        /// <summary>The hidden column a measure table keeps because a table needs one ("Value" beside forty KPI measures). A table
+        /// that holds measures, shows no column and joins nothing is a home for measures, not data, so its columns never get a base
+        /// measure of their own, whatever their type (a live Jev run wrote SUM('Measure Table'[Value]), 15 Oct). A rule, not Jev's call.</summary>
+        internal static bool IsMeasureTablePlaceholder(Column c)
+        {
+            var t = c?.Table;
+            if (t == null || t.Measures.Count == 0) return false;
+            if (!t.Columns.Where(x => x.Type != ColumnType.RowNumber).All(x => x.IsHidden)) return false;
+            // A fact table that hides its columns and shows measures is data, and a relationship is what tells them apart.
+            return !t.Model.Relationships.OfType<SingleColumnRelationship>().Any(r => r.FromTable == t || r.ToTable == t);
+        }
+
         /// <summary>Whether a measure's formula names this column directly, from the model's dependency list.</summary>
         internal static bool AnyMeasureUses(Column c)
         {
@@ -373,7 +385,7 @@ namespace Semanticus.Engine
             foreach (var t in FactTables(m).OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase))
             {
                 var columns = t.Columns
-                    .Where(c => c.Type != ColumnType.RowNumber && IsNumber(c.DataType) && !AnyMeasureUses(c)
+                    .Where(c => c.Type != ColumnType.RowNumber && IsNumber(c.DataType) && !IsMeasureTablePlaceholder(c) && !AnyMeasureUses(c)
                                 && WaiverStore.Match(accepted, "air", StandsForRuleId, ObjectRefs.For(c)) == null)
                     .OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase)
                     .ToList();

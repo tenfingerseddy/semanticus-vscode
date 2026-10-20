@@ -1179,6 +1179,12 @@ namespace Semanticus.Engine
             // row that writes a measure's entry feed every other such row, and the order the schema's rule needs
             // (a field back before the measure that uses it) would fall to plan order. It is still a population row.
             if (id.StartsWith(JevFamily.ItemPrefix + AiSchemaFamily.Name + ".", StringComparison.Ordinal)) return fp.Read(Objects);
+            // The base-measure family (m16/jev-batch): ONE row for each table, and a row decides only for its own table's columns, from the
+            // measures that exist now. Making a measure in one table changes nothing another table's row should say, and the names two rows
+            // could both take already meet on their claims (Claims), so the rows do not read the objects facet that every row of the family
+            // writes. Read it, they chained one table to a wave: a 30-table model ran in 23 waves, each waiting for Jev. A row of any other
+            // kind that makes, removes or renames something still meets these rows on the refs and names it writes.
+            if (id.StartsWith(JevFamily.ItemPrefix + ColumnSummarizeFamily.Name + ".", StringComparison.Ordinal)) return fp.ReadAll(x.Model.MeasureRefs);
             return fp.ReadAll(x.Model.MeasureRefs).Read(Objects);
         }
 

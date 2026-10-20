@@ -37,7 +37,7 @@ const browser = await puppeteer.launch({
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // connected: what the host says about the folder. failConnect: the first press answers with an error.
-const seed = (connected, failConnect) => `
+const seed = (connected, failConnect, needsFolder = false) => `
 ${FIXTURE_SRC}
 const __plan = makePlan({});
 window.__host = [];
@@ -56,7 +56,8 @@ Object.defineProperty(window, 'acquireVsCodeApi', { configurable: true,
         const f = read();
         if (t === 'getFirstRun') reply({ type: 'firstRun', id: msg.id, show: !f.done && !${connected}, connected: ${connected} || !!f.connected });
         else if (t === 'firstRunConnect') {
-          if (${failConnect} && !__failed) { __failed = true; setTimeout(() => reply({ type: 'firstRunConnected', id: msg.id, ok: false, error: 'The connection file in this folder is not valid JSON, so nothing was written. Fix it and press Connect again.' }), 350); }
+          if (${needsFolder} && !__failed) { __failed = true; setTimeout(() => reply({ type: 'firstRunConnected', id: msg.id, ok: false, needsFolder: true, error: 'Semanticus could not write the connection there. Choose another folder.' }), 350); }
+          else if (${failConnect} && !__failed) { __failed = true; setTimeout(() => reply({ type: 'firstRunConnected', id: msg.id, ok: false, error: 'The connection file in this folder is not valid JSON, so nothing was written. Fix it and press Connect again.' }), 350); }
           else setTimeout(() => { localStorage.setItem(FLAGS, JSON.stringify({ done: true, connected: true, mode: 'assistant' })); reply({ type: 'firstRunConnected', id: msg.id, ok: true }); }, 350);
         }
         else if (t === 'firstRunClose') localStorage.setItem(FLAGS, JSON.stringify({ ...f, done: true, mode: msg.mode }));
@@ -81,11 +82,11 @@ let failed = 0;
 const check = (ok, what) => { if (!ok) { failed += 1; console.error('  FAIL ' + what); } else console.log('  ok   ' + what); };
 const card = (page) => page.evaluate(() => { const c = document.querySelector('.first-run'); if (!c) return null; const r = c.getBoundingClientRect();
   return { text: c.innerText, inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, focusIn: c.contains(document.activeElement) }; });
-async function open(ctx, theme, { connected = false, failConnect = false } = {}) {
+async function open(ctx, theme, { connected = false, failConnect = false, needsFolder = false } = {}) {
   const page = await ctx.newPage();
   page.on('pageerror', (e) => { failed += 1; console.error('pageerror: ' + e.message); });
   await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
-  await page.evaluateOnNewDocument(seed(connected, failConnect));
+  await page.evaluateOnNewDocument(seed(connected, failConnect, needsFolder));
   await page.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html?conn=1&live=1&tier=pro&tab=plan`, { waitUntil: 'networkidle0', timeout: 30000 });
   await page.waitForSelector('nav button, [data-tab]', { timeout: 20000 });
   await applyTheme(page, theme);
@@ -149,6 +150,56 @@ for (const theme of THEMES) {
     const count = await page.evaluate(() => document.querySelector('.plan-tour-count')?.textContent ?? null);
     check(count === '1 of 7', `and the Plan tour starts (${count})`);
     await shot(page, theme, '8-around-tour');
+    await ctx.close();
+  }
+  // Not now: a quiet way out that writes By hand
+  {
+    const ctx = await browser.createBrowserContext();
+    const page = await open(ctx, theme);
+    const c = await card(page);
+    check(c && c.text.includes('Not now'), 'the card has a Not now');
+    check(await click(page, 'Not now'), 'it can be pressed'); await wait(200);
+    check((await card(page)) === null, 'Not now closes the card');
+    check(await page.evaluate(() => window.__host.find((m) => m.type === 'firstRunClose')?.mode) === 'hand', 'and writes By hand');
+    await ctx.close();
+  }
+  // By hand chosen, then a press outside the card closes it; with the assistant choice on it does not
+  {
+    const ctx = await browser.createBrowserContext();
+    const page = await open(ctx, theme);
+    await page.mouse.click(40, 400); await wait(200);
+    check((await card(page)) !== null, 'a press outside does nothing while the assistant choice is on');
+    await click(page, 'By hand'); await wait(100);
+    await page.mouse.click(40, 400); await wait(200);
+    check((await card(page)) === null, 'with By hand chosen, a press outside closes the card');
+    await ctx.close();
+  }
+  // no folder open: the press cannot use one, and the card says so with a button that does the next step
+  {
+    const ctx = await browser.createBrowserContext();
+    const page = await open(ctx, theme, { needsFolder: true });
+    await click(page, 'Connect Claude Code'); await wait(700);
+    const c = await card(page);
+    check(c && c.text.includes('Choose another folder') && c.text.includes('Choose a folder') && !c.text.includes('Connect Claude Code'), 'a failed press shows a plain line and a Choose a folder button');
+    await shot(page, theme, '9-choose-a-folder');
+    await click(page, 'Choose a folder'); await wait(700);
+    check(await page.evaluate(() => window.__host.filter((m) => m.type === 'firstRunConnect').some((m) => m.pickFolder === true)), 'it asks the host to let the person pick');
+    const after = await card(page);
+    check(after && after.text.includes('Open Claude Code in this folder and say:'), 'and the say card follows');
+    await ctx.close();
+  }
+  // Show me around: the card does not come back, and the Your assistant button pulses
+  {
+    const ctx = await browser.createBrowserContext();
+    const page = await open(ctx, theme);
+    await click(page, 'Show me around'); await wait(1500);
+    check((await card(page)) === null, 'the tour does not bring the card back');
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('semanticus:pulse-assistant-chip')));
+    await wait(500);
+    check(await page.evaluate(() => !!document.querySelector('[data-tour="assistant-chip"].is-pulsing')), 'the Your assistant button pulses');
+    await shot(page, theme, '10-chip-pulse');
+    await wait(2200);
+    check(await page.evaluate(() => !document.querySelector('[data-tour="assistant-chip"].is-pulsing')), 'and stops by itself');
     await ctx.close();
   }
   // already connected: nothing shows

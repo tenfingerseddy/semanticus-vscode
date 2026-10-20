@@ -46,7 +46,7 @@ test('H5 leaving a tour explicitly opens Plan Work', () => {
 test('H9 a result closes What I did and hides the connection prompt', () => {
   const s = source('webview/src/daxlab.tsx');
   assert.match(s, /if \(res && !res.error\) notesStore.setListOpen\(false\)/);
-  assert.match(s, /!res && <div className="shrink-0"><ConnectBar/);
+  assert.match(source('webview/src/query.tsx'), /<ConnectBar hint="Connect a model that holds data to run queries\." \/>/);
 });
 
 test('H9 ratios only receive the measure format when it exists', () => {
@@ -84,7 +84,7 @@ test('H10 the plan strip does not give a second waiting count', () => {
 test('H11 programmatic tree selections cannot filter the Plan', () => {
   assert.match(source('src/extension.ts'), /type: 'treeSelection', ref, sessionId: currentSessionId, by: lastTreeSelectionBy/);
   // N10: the tree's own redraw is not the person either, so `by` comes from the guarded decision, not from the reveal depth alone.
-  assert.match(source('src/extension.ts'), /const byPerson = treeSelectionGuard\.classify\(\[\.\.\.e\.selection\]\.map\(\(n\) => n\.ref\)\) === 'person' && studioTreeRevealDepth === 0/);
+  assert.match(source('src/extension.ts'), /const kind = treeSelectionGuard\.classify\(\[\.\.\.e\.selection\]\.map\(\(n\) => n\.ref\)\);\s+const byPerson = kind === 'person' && studioTreeRevealDepth === 0/);
   assert.match(source('webview/src/App.tsx'), /if \(selection.by === 'assistant'\) return/);
   assert.match(source('webview/src/bridge.ts'), /by: msg.by === 'assistant' \? 'assistant' : 'human'/);
 });

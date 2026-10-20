@@ -44,6 +44,8 @@ const EXACT_FILES = new Set([
   ...['semanticus', 'semanticus-optimize-dax', 'semanticus-ai-ready', 'semanticus-interview-model',
     'semanticus-model-pr', 'semanticus-distill-workflow', 'semanticus-curate-knowledge']
     .map(name => `extension/assistant-pack/plugins/semanticus/skills/${name}/SKILL.md`),
+  // The student of the Copilot test (Haiku, no tools), listed under "agents" in the pack manifest. One exact file, so an unlisted agent is still refused.
+  'extension/assistant-pack/plugins/semanticus/agents/copilot-student.md',
 ]);
 
 const ALLOWED_PREFIXES = [

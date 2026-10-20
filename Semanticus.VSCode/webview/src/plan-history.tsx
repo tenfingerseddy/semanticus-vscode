@@ -462,7 +462,7 @@ export function HistoryDetail({ row, parent, chain, now, busy, sessionId, onClos
       {ver && (
         <div className="ph-verline">
           {ver.tone === 'good' ? <Check /> : <Dot tone={ver.tone} />}
-          <span><b>{ver.word}.</b> {record?.overrideReason ? '"' + record.overrideReason + '"' : record?.summary ?? ''}{' '}
+          <span><b>{ver.word}.</b> {record?.overrideReason ? '"' + record.overrideReason + '"' : M.recordWords(record)}{' '}
             {record && <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet ph-inline" aria-expanded={evidence}
               onClick={() => setEvidence((v) => !v)}>Evidence</button>}</span>
         </div>
@@ -472,7 +472,7 @@ export function HistoryDetail({ row, parent, chain, now, busy, sessionId, onClos
         <div className="ph-acts"><button type="button" className="sem-btn sem-btn-sm" onClick={() => void copyText(row.report!.evidence!)}>Copy what the run did</button></div>
       )}
       {/* A finished workflow run (lane W2, contract 11.3): its sealed report and "Make it reusable" live here now. */}
-      {row.kind === 'run' && row.report?.runId && <RunEntryActions report={row.report} onOpenWorkflows={onGo ? () => onGo('workflows') : undefined} />}
+      {row.kind === 'run' && row.report?.runId && <RunEntryActions report={row.report} />}
 
       <div className="ph-acts">
         {a.kind === 'undo' && <><button type="button" className="sem-btn sem-btn-sm" disabled={busy} onClick={() => onAction(row)} data-testid="ph-detail-undo">Undo to here</button>

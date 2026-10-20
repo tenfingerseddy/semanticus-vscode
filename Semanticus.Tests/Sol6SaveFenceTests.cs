@@ -259,15 +259,16 @@ namespace Semanticus.Tests
         {
             using var e = await FreshAsync();
             var saved = await e.SaveSqlSourceAsync(null, "Warehouse", "contoso-sql.example", "Warehouse", "interactive", null, "human");
-            await e.SaveSqlSourceAsync(saved.Id, "Warehouse", "other-sql.example", "Warehouse", "interactive", null, "agent");   // the assistant re-pointed it
+            // The assistant re-points the saved source at another database on the same saved server. A new server would ask the person first (the token rule), so the fence is tested on a change the assistant may make.
+            await e.SaveSqlSourceAsync(saved.Id, "Warehouse", "contoso-sql.example", "Staging", "interactive", null, "agent");
             var started = "{\"name\":\"Warehouse\",\"server\":\"contoso-sql.example\",\"database\":\"Warehouse\",\"authMode\":\"interactive\",\"tenantId\":null}";
 
             await Refused(() => e.SaveSqlSourceAsync(saved.Id, "Warehouse", "contoso-sql.example", "Mine", "interactive", null, "human", started));
-            Assert.Equal("other-sql.example", SqlSourceRegistry.Find(saved.Id).Server);
-            var live = "{\"name\":\"Warehouse\",\"server\":\"other-sql.example\",\"database\":\"Warehouse\",\"authMode\":\"interactive\",\"tenantId\":null}";
-            await e.SaveSqlSourceAsync(saved.Id, "Warehouse", "other-sql.example", "Mine", "interactive", null, "human", live);
+            Assert.Equal("Staging", SqlSourceRegistry.Find(saved.Id).Database);
+            var live = "{\"name\":\"Warehouse\",\"server\":\"contoso-sql.example\",\"database\":\"Staging\",\"authMode\":\"interactive\",\"tenantId\":null}";
+            await e.SaveSqlSourceAsync(saved.Id, "Warehouse", "contoso-sql.example", "Mine", "interactive", null, "human", live);
             Assert.Equal("Mine", SqlSourceRegistry.Find(saved.Id).Database);
-            await e.SaveSqlSourceAsync(saved.Id, "Warehouse", "other-sql.example", "Unfenced", "interactive", null, "human");
+            await e.SaveSqlSourceAsync(saved.Id, "Warehouse", "contoso-sql.example", "Unfenced", "interactive", null, "human");
         }
 
         [Trait(TestCost.Key, TestCost.Sweep)]

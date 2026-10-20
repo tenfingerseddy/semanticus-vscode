@@ -664,10 +664,14 @@ namespace Semanticus.Tests
                 var again = await McpTools.SaveModel(f.Engine);
                 Assert.Equal(Path.GetFullPath(mine), again.Path);
                 Assert.True(File.Exists(Path.Combine(mine, "tables", "Second.tmdl")));
-                // Save as: a saved model may be pointed at an existing .bim by the agent door, as it could before the lane.
-                var saveAs = await McpTools.SaveModel(f.Engine, bim, "bim");
-                Assert.Equal(Path.GetFullPath(bim), saveAs.Path);
-                Assert.Contains("Brand New", File.ReadAllText(bim));
+                // Save as: a copy goes only to a new file (b3e60c8a), so an existing .bim is refused untouched and a new one is written.
+                var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.SaveModel(f.Engine, bim, "bim"));
+                Assert.Contains("already exists", refused.Message);
+                Assert.Equal("{\"name\":\"Theirs\"}", File.ReadAllText(bim));
+                var fresh = Path.Combine(root, "fresh.bim");
+                var saveAs = await McpTools.SaveModel(f.Engine, fresh, "bim");
+                Assert.Equal(Path.GetFullPath(fresh), saveAs.Path);
+                Assert.Contains("Brand New", File.ReadAllText(fresh));
             }
             finally { try { Directory.Delete(root, true); } catch { } }
         }

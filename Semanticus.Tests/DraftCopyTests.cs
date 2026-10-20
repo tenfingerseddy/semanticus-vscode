@@ -30,7 +30,7 @@ namespace Semanticus.Tests
             Assert.Equal("Done. One Undo takes back the step.", DraftCopy.DoneAll(1));
             Assert.Equal("Done. One Undo takes back steps 1 to 7.", DraftCopy.DoneSteps(7));
             Assert.Equal("Done. One Undo takes back step 1.", DraftCopy.DoneSteps(1));
-            Assert.Equal("Done. One Undo takes back the change to the model, including the refreshed Sales data. Publishing to Test happened after it, so Undo cannot take that back.",
+            Assert.Equal("Done. One Undo takes back the change to the model, including the refreshed Sales data. Publishing to Test happened after it, so Undo does not reach it. Undo publish does.",
                 DraftCopy.DonePublished("Sales", "Test"));
             Assert.Equal("Ready. It runs as one change.", DraftCopy.ReadySentence);
             Assert.Equal("Running as one change", DraftCopy.RunningSentence);
@@ -43,7 +43,7 @@ namespace Semanticus.Tests
             Assert.Equal("Loading the data runs after the change. Undo removes the table and its data.", DraftCopy.LoadingNote);
             Assert.Equal("2 checks happen after it runs; if one fails, one Undo takes the change back.", DraftCopy.AfterChecksNote(2));
             Assert.Equal("1 check happens after it runs; if it fails, one Undo takes the change back.", DraftCopy.AfterChecksNote(1));
-            Assert.Equal("Publishing to Test happens after the change. Undo cannot take that back.", DraftCopy.PublishNote("Test"));
+            Assert.Equal("Publishing to Test happens after the change. Undo does not reach it. Undo publish does.", DraftCopy.PublishNote("Test"));
             Assert.Equal("Both parts passed their checks; 1 answer is filled in for you to check.", DraftCopy.PartsPassed(2, 1));
             Assert.Equal("The part passed its checks.", DraftCopy.PartsPassed(1, 0));
             Assert.Equal("All 3 parts passed their checks; 2 answers are filled in for you to check.", DraftCopy.PartsPassed(3, 2));

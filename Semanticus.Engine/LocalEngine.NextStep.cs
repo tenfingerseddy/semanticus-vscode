@@ -309,7 +309,7 @@ namespace Semanticus.Engine
                 if (!_studioSuggestion.TryGetValue(key, out var s) || s?.Steps == null || s.Steps.Length == 0) return null;
                 var at = ParseAt(s.At);
                 if (_studioNotes.TryGetValue(key, out var ring) && ring.Any(n => ParseAt(n.At) > at)) return null;
-                return s;
+                return WithoutDonePublishSteps(s);
             }
         }
 
@@ -335,7 +335,8 @@ namespace Semanticus.Engine
             try
             {
                 var info = await SessionInfoAsync().ConfigureAwait(false);
-                unsavedEdits = info?.HasUnsavedEdits == true;
+                // A copy kept of a live model is the save the header would ask for (the service changes only on publish), so it asks for nothing now (UAT 18 Oct N23).
+                unsavedEdits = info?.HasUnsavedEdits == true && info.KeptCopyPath == null;
                 live = info?.LiveBound == true;
             }
             catch { }

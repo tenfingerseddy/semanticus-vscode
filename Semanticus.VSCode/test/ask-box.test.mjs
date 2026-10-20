@@ -169,10 +169,10 @@ assert.match(madeCalendar, /data-target="area:calendars"/, 'the button opens the
 //      never did, but the product HAS a create-a-measure path: the Model tree's own New Measure command,
 //      which the extension runs and which asks for the table when none is selected. So the button runs
 //      that command instead of changing tab, and the line says plainly what is about to happen.
-const madeMeasure = render({ tool: 'daxlab', area: 'calc', confidence: 1, asked: false, create: 'measure' });
+const madeMeasure = render({ tool: 'query', area: 'explore', confidence: 1, asked: false, create: 'measure' });
 assert.match(readable(madeMeasure), /New measure: pick the table, then write the formula\./,
   'the line says what will happen, not the name of a page that cannot do it');
-assert.doesNotMatch(readable(madeMeasure), /Queries is the place for that/,
+assert.doesNotMatch(readable(madeMeasure), /Query is the place for that/,
   'and it no longer names a page whose only answer to "create a measure" is that it cannot');
 assert.match(madeMeasure, /data-command="semanticus\.newMeasure"/, 'the button runs the tree command');
 assert.match(readable(madeMeasure), /New measure/, 'and it is labelled as the thing it makes');
@@ -211,7 +211,7 @@ const went = [];
 const press = (result) => A.openAskAnswer(A.askAction(result), (tool, target) => went.push([tool, target]),
   (command) => ran.push(command));
 
-press({ tool: 'daxlab', area: 'calc', confidence: 1, create: 'measure' });
+press({ tool: 'query', area: 'explore', confidence: 1, create: 'measure' });
 assert.deepEqual(ran, ['semanticus.newMeasure'], 'the Open button asks the extension to run the tree command');
 assert.deepEqual(went, [], 'and nobody is moved to another tab');
 
@@ -262,10 +262,10 @@ const catalog = catalogSrc.split('new AskRouteTool(').slice(1).map((chunk) => {
   const head = /^"([^"]+)", "([^"]+)", "([^"]+)",/.exec(chunk);
   return head ? { id: head[1], area: head[2], label: head[3], isTab: /\bisTab:\s*true\b/.test(chunk) } : null;
 }).filter(Boolean);
-assert.equal(catalog.length, 22, 'the catalogue is every place the box can send anybody. It was twenty '
+assert.equal(catalog.length, 21, 'the catalogue is every place the box can send anybody. It was twenty '
   + 'until 22 September, when Plan was found to be in the strip and in no catalogue, then twenty-two when '
   + 'the seven areas landed with AI instructions and Reports, then twenty-one when the Overview retired in slice 11, '
-  + 'then twenty-two again when Ask your data became a page under Explore (26 September).');
+  + 'then twenty-two again when Ask your data became a page under Explore (26 September), then twenty-one when Find and replace left the Studio (15 October), then twenty-two when the Copilot test joined Review (15 October), then twenty-one when Ask your data and Queries became the one Query page (1.6).');
 const stripEntries = catalog.filter((t) => !t.isTab);
 const tabEntries = catalog.filter((t) => t.isTab);
 // Four places are a tab or a section inside another page rather than a button on the strip, and each one
@@ -290,8 +290,8 @@ const strip = new Map([...groupsBlock[0].matchAll(/\{ id: '([a-z]+)', label: '([
   .map((m) => [m[1], m[2]]));
 // Twenty-one until 23 September, then eighteen: minus Pending changes and Model Spec (folded into Plan)
 // and minus Model notes (a tab on AI instructions). Sixteen since slice 11: minus the Overview and Edit History.
-// Seventeen since 26 September: plus Ask your data, after Data in Explore.
-assert.equal(strip.size, 17, `the strip is the catalogue minus the places that are a tab, found ${strip.size}`);
+// Seventeen since 26 September: plus Ask your data, after Data in Explore. Seventeen again since 15 October: Find and replace left, the Copilot test joined Review. Sixteen in 1.6: Ask your data and Queries became Query.
+assert.equal(strip.size, 16, `the strip is the catalogue minus the places that are a tab, found ${strip.size}`);
 assert.deepEqual([...strip.keys()].sort(), stripEntries.map((t) => t.id).sort(),
   'every catalogue entry that is not a tab is on the strip, and every strip tool is in the catalogue');
 for (const tool of stripEntries) {
@@ -426,7 +426,7 @@ assert.ok(!/\.overview-cols \{/.test(css) && !/\.overview-health \{/.test(css), 
       ...STUBS['./bridge'],
       rpc: async (method, ...params) => {
         barCalls.push([method, ...params]);
-        return method === 'composeTask' ? { draftId: 'dr-test' } : { tool: 'askdata', area: 'explore' };
+        return method === 'composeTask' ? { draftId: 'dr-test' } : { tool: 'query', area: 'explore' };
       },
     },
   };
@@ -513,30 +513,34 @@ assert.ok(!/\.overview-cols \{/.test(css) && !/\.overview-health \{/.test(css), 
     // fix-askdata-final (verify-askdata-r6 L3): the task's own line, the same first or second, so the first thing a
     // person reads says what Enter does.
     sentence: 'Keep it as a task. Semanticus does not know a page for this one.',
-    other: { kind: 'question', tool: 'askdata', area: 'explore', confidence: 1, line: 'Or ask it as a question.' },
+    other: { kind: 'question', tool: 'query', area: 'explore', confidence: 1, line: 'Or ask it as a question.' },
   };
   const T = withWords(taskFirst, 'Totals per region are double counting');
   assert.match(T, /Semanticus does not know a page for this one\./, 'the task reading says what the row says');
-  assert.match(T, /Or ask it as a question\./, 'and Ask your data is named as the second choice');
-  assert.doesNotMatch(T, /Ask your data is the place for that/, 'never as the answer');
-  assert.match(T, /Open Ask your data/, 'with a way through to it');
+  assert.match(T, /Or ask it as a question\./, 'and the question is named as the second choice');
+  assert.doesNotMatch(T, /Query is the place for that/, 'never as the answer');
+  assert.doesNotMatch(T, /Ask your data|Queries/, 'and no old page name is printed');
+  assert.match(T, /Open Query/, 'with a way through to it');
   assert.equal(A.fieldSuggestion(taskFirst), taskFirst, 'and the Plan field shows it, because the choice IS the point');
 
   // (b) A question first: Ask your data, with keeping it as a task still named.
   const questionFirst = {
-    tool: 'askdata', area: 'explore', confidence: 1, asked: false, reading: 'question',
+    tool: 'query', area: 'explore', confidence: 1, asked: false, reading: 'question',
     other: { kind: 'task', tool: null, confidence: 0, line: 'Keep it as a task. Semanticus does not know a page for this one.' },
   };
   const Q = withWords(questionFirst, 'please show me net sales by region');
-  assert.match(Q, /Ask your data is the place for that\./, 'the question reading names the page');
+  assert.match(Q, /Query is the place for that\./, 'the question reading names the page');
+  assert.doesNotMatch(Q, /Ask your data|Queries/, 'and no old page name is printed');
   assert.match(Q, /Keep it as a task\./, 'and keeping it as a task is still named');
 
   // The typed words travel with the button, so Ask your data opens on the question and not empty (round 4's note).
   const jump = A.askAction(questionFirst, 'please show me net sales by region');
-  assert.equal(jump.target, 'words:please show me net sales by region', 'Open Ask your data carries the words');
+  assert.equal(jump.target, 'words:please show me net sales by region', 'Open Query carries the words of the question reading');
   assert.equal(A.askAction(questionFirst).target, undefined, 'and carries nothing when there are no words');
   assert.equal(A.askAction({ tool: 'lineage' }, 'what uses Net Sales').target, undefined,
-    'only Ask your data takes them: no other page has a box to put them in');
+    'only the Query page takes them: no other page has a box to put them in');
+  assert.equal(A.askAction({ tool: 'query', create: 'measure' }, 'create a measure').target, undefined,
+    'and only its question reading: a create answer on the same page carries no words into the question box');
   assert.equal(A.askOther(taskFirst, 'Totals per region are double counting').target,
     'words:Totals per region are double counting', 'the second choice carries them too');
   assert.equal(A.askOther(questionFirst, 'anything'), null, 'a task reading with no page has no button, only its line');
@@ -548,7 +552,7 @@ assert.ok(!/\.overview-cols \{/.test(css) && !/\.overview-health \{/.test(css), 
     'Ask your data', 'take me to the ask your data page', 'use ask your data', 'please open Ask your data for me',
     'I would like to open Ask your data', "I'd like to see ask your data"]) {
     assert.equal(A.carriedWords(only), '', `"${only}" only names the page`);
-    assert.equal(A.askAction(questionFirst, only).target, undefined, `"${only}" opens Ask your data empty`);
+    assert.equal(A.askAction(questionFirst, only).target, undefined, `"${only}" opens Query empty`);
   }
   assert.equal(A.carriedWords('check net sales by region in ask your data'), 'check net sales by region in ask your data',
     'a question that names the page keeps its words');
@@ -556,16 +560,16 @@ assert.ok(!/\.overview-cols \{/.test(css) && !/\.overview-health \{/.test(css), 
   assert.equal(A.askOther(taskFirst, twoLines).target, 'words:Totals per region are double counting', 'on one line');
 
   // fix-askdata-final (verify-askdata-r6 F1): the page Enter sends with the words is the page the field shows for the
-  // TASK: the one reading's place (never Ask your data), or the task reading's place, first or second.
+  // TASK: the one reading's place, or the task reading's place, first or second. The question reading is never a task page.
   assert.equal(A.fieldTaskPage({ tool: 'advmodels', confidence: 0.9, asked: true }), 'advmodels', 'the service named a page');
   assert.equal(A.fieldTaskPage({ tool: 'history', sentence: 'Nothing has changed.' }), 'history', 'the engine answered from its state');
-  assert.equal(A.fieldTaskPage({ tool: 'askdata' }), null, 'Ask your data alone is never a task page');
+  assert.equal(A.fieldTaskPage({ tool: 'query', create: 'measure' }), 'query', 'one reading on Query is a create answer, and a task page');
   assert.equal(A.fieldTaskPage(taskFirst), null, 'task first, no page');
-  assert.equal(A.fieldTaskPage({ ...taskFirst, tool: 'daxlab' }), 'daxlab', 'task first, with a page');
+  assert.equal(A.fieldTaskPage({ ...taskFirst, tool: 'query' }), 'query', 'task first, with a page');
   assert.equal(A.fieldTaskPage(questionFirst), null, 'question first, the task has no page');
-  assert.equal(A.fieldTaskPage({ ...questionFirst, other: { ...questionFirst.other, tool: 'daxlab' } }), 'daxlab', 'question first, the task has one');
+  assert.equal(A.fieldTaskPage({ ...questionFirst, other: { ...questionFirst.other, tool: 'query' } }), 'query', 'question first, the task has one');
   assert.equal(A.fieldTaskPage({ tool: null, fallback: 'menu', sentence: 'Nothing here matches' }), null, 'nothing placed');
-  assert.equal(A.fieldTaskPage({ failed: 'x', tool: 'daxlab' }), null, 'a failed call shows nothing');
+  assert.equal(A.fieldTaskPage({ failed: 'x', tool: 'query' }), null, 'a failed call shows nothing');
   assert.equal(A.fieldTaskPage(null), null);
   const planSrcF1 = readFileSync(join(webview, 'src', 'plan.tsx'), 'utf8');
   assert.match(planSrcF1, /const fieldPage = fieldTaskPage\(suggestion\);/, 'Enter reads the page off the suggestion on screen');
@@ -579,15 +583,16 @@ assert.ok(!/\.overview-cols \{/.test(css) && !/\.overview-health \{/.test(css), 
   assert.equal((live.match(/aria-live/g) || []).length, 1, 'and nothing inside it is a second one');
   assert.match(live, /aria-live="polite"[\s\S]*Or ask it as a question\./, 'the second choice is inside it');
 
-  // The shell turns that target into the seed Ask your data adopts, and the page fills its question box with it.
+  // The shell turns that target into the seed the Query page adopts, and the page fills its question box with it.
   const appSrcR6 = readFileSync(join(webview, 'src', 'App.tsx'), 'utf8');
   // These four read source text, so on their own they prove the lines exist, not that the wiring works; the press and
   // the box are driven for real in tools/uishot/cp-plan-drive.mjs, scene field-open-ask-carries-words (verify-askdata-r6 L2).
-  assert.match(appSrcR6, /tool === 'askdata' && target\?\.startsWith\('words:'\)/, 'the shell reads the words off the target');
+  assert.match(appSrcR6, /tool === 'query' && target\?\.startsWith\('words:'\)/, 'the shell reads the words off the target');
   assert.match(appSrcR6, /kind: 'askWords'/, 'and hands them over as a one-use seed');
-  const askDataSrc = readFileSync(join(webview, 'src', 'askdata.tsx'), 'utf8');
-  assert.match(askDataSrc, /setWords\(navWords\.words\)/, 'Ask your data puts them in its question box');
-  assert.match(askDataSrc, /onNavConsumed\?\.\(navWords\.nonce\)/, 'and acknowledges the seed so it cannot replay');
+  const queryPageSrc = readFileSync(join(webview, 'src', 'query.tsx'), 'utf8');
+  assert.match(queryPageSrc, /navWords/, 'the Query page takes the words');
+  assert.match(queryPageSrc, /setWords\(navWords\.words\)/, 'and puts them in its question box');
+  assert.match(queryPageSrc, /onNavConsumed\?\.\(navWords\.nonce\)/, 'and acknowledges the seed so it cannot replay');
 }
 
 console.log('Ask box: routeAsk called with the typed text, the reply shapes rendered including the three '

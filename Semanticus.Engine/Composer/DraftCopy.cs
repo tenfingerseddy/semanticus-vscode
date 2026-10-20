@@ -50,7 +50,7 @@ namespace Semanticus.Engine.Composer
             "Done. One Undo takes back the change to the model"
             + (string.IsNullOrWhiteSpace(refreshedTable) ? "" : ", including the refreshed " + refreshedTable + " data")
             + ". Publishing" + (string.IsNullOrWhiteSpace(stage) ? "" : " to " + stage)
-            + " happened after it, so Undo cannot take that back.";
+            + " happened after it, so Undo does not reach it. Undo publish does.";
 
         // ---- notes under the summary (10.3), each only when true ---------------------------------------------
 
@@ -61,7 +61,7 @@ namespace Semanticus.Engine.Composer
                         : N(checks) + " checks happen after it runs; if one fails, one Undo takes the change back.";
 
         public static string PublishNote(string stage) =>
-            "Publishing" + (string.IsNullOrWhiteSpace(stage) ? "" : " to " + stage) + " happens after the change. Undo cannot take that back.";
+            "Publishing" + (string.IsNullOrWhiteSpace(stage) ? "" : " to " + stage) + " happens after the change. Undo does not reach it. Undo publish does.";
 
         /// <summary>When every part is written: "Both parts passed their checks; 1 answer is filled in for you to check."</summary>
         public static string PartsPassed(int parts, int prefilled)

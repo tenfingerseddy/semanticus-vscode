@@ -57,6 +57,9 @@ namespace Semanticus.Engine
         // Settable: a model created from scratch starts with no path; the first save_model(path) anchors it here so
         // a later save_model() (no path) overwrites the same target (matching file-opened session semantics).
         public string SourcePath { get; internal set; }
+
+        /// <summary>One plain line the open leaves for the person: a copy saved inside the model's own folder was left out of the model (null otherwise).</summary>
+        public string OpenNote { get; internal set; }
         /// <summary>Set once by open_live right after the session is created, to bind it to its live source so
         /// deploy_live can push back without re-supplying the endpoint. Null for file-opened sessions. Holds no
         /// secret (see <see cref="LiveOrigin"/>). Reference assignment is atomic; written on the open path,
@@ -374,6 +377,58 @@ namespace Semanticus.Engine
         /// made" is on the plan from then on. A save that writes changes after that records itself in the plan memory
         /// (LocalEngine.SaveAsync), because the row it answers must still read as done after a restart.</summary>
         public bool PlanSawUnsaved { get; set; }
+
+        private string _keptCopyPath;
+        private long _keptCopyRevision = -1;
+
+        /// <summary>Where a copy of this live model was kept (a save of a model that lives on a service writes a copy, never the service), while that copy holds
+        /// every change made so far. Null once a newer change is in no copy. The footer and the Plan read it, so they say "copy kept, not published" and not "unsaved"
+        /// next to an assistant that said the changes were saved (UAT 18 Oct N23). Dispatcher thread only.</summary>
+        public string KeptCopyPath => _keptCopyRevision == Revision ? _keptCopyPath : null;
+        public void NoteKeptCopy(string path) { _keptCopyPath = path; _keptCopyRevision = Revision; }
+
+        // Files this session wrote as copies of the model. A later copy to the same file replaces it (the assistant keeps one copy fresh); a file this
+        // session did not write is never replaced (LocalEngine.RefuseCopyOverExisting).
+        private readonly HashSet<string> _copyFiles = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        public void NoteCopyFile(string path) { if (!string.IsNullOrEmpty(path)) lock (_copyFiles) _copyFiles.Add(System.IO.Path.GetFullPath(path)); }
+        public bool WroteCopyFile(string path) { if (string.IsNullOrEmpty(path)) return false; lock (_copyFiles) return _copyFiles.Contains(System.IO.Path.GetFullPath(path)); }
+
+        // A TMDL copy is a folder, and a folder is the person's the moment anything in it changes. For each copy folder this session wrote, what it wrote:
+        // every file with a hash of its bytes, and every sub-folder. The next copy to that path replaces the folder only when it is still exactly this.
+        private readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>> _copyFolders =
+            new System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        public void NoteCopyFolder(string path) { if (!string.IsNullOrEmpty(path)) { var written = TreeRecord(path); lock (_copyFolders) _copyFolders[System.IO.Path.GetFullPath(path)] = written; } }
+        public bool WroteCopyFolder(string path) { if (string.IsNullOrEmpty(path)) return false; lock (_copyFolders) return _copyFolders.ContainsKey(System.IO.Path.GetFullPath(path)); }
+        /// <summary>True when the folder holds exactly what this session wrote there: nothing added, edited, removed or put back by someone else.
+        /// Anything unreadable counts as changed, so a doubt keeps the folder.</summary>
+        public bool CopyFolderUnchanged(string path)
+        {
+            System.Collections.Generic.Dictionary<string, string> written;
+            if (string.IsNullOrEmpty(path)) return false;
+            lock (_copyFolders) if (!_copyFolders.TryGetValue(System.IO.Path.GetFullPath(path), out written)) return false;
+            var now = TreeRecord(path);
+            if (now == null || now.Count != written.Count) return false;
+            foreach (var entry in written) if (!now.TryGetValue(entry.Key, out var hash) || hash != entry.Value) return false;
+            return true;
+        }
+
+        private static System.Collections.Generic.Dictionary<string, string> TreeRecord(string root)
+        {
+            var record = new System.Collections.Generic.Dictionary<string, string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+            try
+            {
+                if (!System.IO.Directory.Exists(root)) return null;
+                foreach (var entry in System.IO.Directory.EnumerateFileSystemEntries(root, "*", System.IO.SearchOption.AllDirectories))
+                {
+                    var key = System.IO.Path.GetRelativePath(root, entry);
+                    if (System.IO.Directory.Exists(entry)) { record[key] = ""; continue; }
+                    using var stream = new System.IO.FileStream(entry, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite | System.IO.FileShare.Delete);
+                    record[key] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
+                }
+                return record;
+            }
+            catch (Exception ex) when (ex is System.IO.IOException || ex is UnauthorizedAccessException) { return null; }
+        }
 
         // ---- ambient commit observers ---------------------------------------------------------------------
         // The generalized probe seam (#82 follow-up): what used to be one settable health-probe slot is a small

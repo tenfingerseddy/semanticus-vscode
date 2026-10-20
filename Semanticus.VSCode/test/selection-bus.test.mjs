@@ -59,7 +59,7 @@ assert.match(revealFn, /propGrid\.showObject\(node\)/, 'after a follow reveal, P
 assert.match(actions, /Reveal in Model tree/, 'the shared RevealBtn must carry the canonical label');
 assert.match(actions, /stopPropagation/, 'RevealBtn must not trigger the row action it sits on');
 assert.match(actions, /export function rowKeyProps\(/, 'the shared keyboard-activation helper must exist');
-for (const nav of ['objectbrowser.tsx', 'fieldspanel.tsx', 'search.tsx', 'datapreview.tsx', 'App.tsx']) {
+for (const nav of ['objectbrowser.tsx', 'fieldspanel.tsx', 'datapreview.tsx', 'App.tsx']) {
   const src = read('webview/src/' + nav);
   assert.match(src, /selectInProperties\(/, `${nav} must feed the selection bus on row focus`);
   assert.match(src, /RevealBtn/, `${nav} must expose the universal Reveal in Model tree affordance`);
@@ -72,12 +72,12 @@ for (const nav of ['objectbrowser.tsx', 'fieldspanel.tsx', 'search.tsx', 'datapr
   assert.match(src, /rowKeyProps\([^\n]*,\s*\(\) =>/, `${nav} must wire a focus-select (rowKeyProps' 2nd arg) so focusing a row selects it`);
 }
 // The div-navigators use the dedicated always-posts focus helper (not the deduped click path) on focus.
-for (const nav of ['objectbrowser.tsx', 'fieldspanel.tsx', 'search.tsx', 'datapreview.tsx']) {
+for (const nav of ['objectbrowser.tsx', 'fieldspanel.tsx', 'datapreview.tsx']) {
   assert.match(read('webview/src/' + nav), /focusSelectInProperties\(/, `${nav} must select on focus via the always-posts focus helper`);
 }
 // The Reveal affordance must appear on keyboard focus, not hover alone — for the navigators that hide it until
 // hover. (The Statistics grids in App.tsx show ⤢ permanently, so it is already keyboard-reachable there.)
-for (const nav of ['objectbrowser.tsx', 'fieldspanel.tsx', 'search.tsx', 'datapreview.tsx']) {
+for (const nav of ['objectbrowser.tsx', 'fieldspanel.tsx', 'datapreview.tsx']) {
   assert.match(read('webview/src/' + nav), /group-focus-within:/, `${nav} must reveal its hover affordance on keyboard focus-within`);
 }
 // The shared helper actually implements the keyboard contract.
@@ -100,10 +100,6 @@ assert.match(read('webview/src/App.tsx'), /rowKeyProps\(\(\) => onRowClick\?\.\(
 // --- 2b. untrusted-input allowlists: only resolvable ref kinds reach the engine ------------------------
 assert.match(ext, /const SELECTABLE_REF_KINDS = new Set\(/, 'the host must allowlist the ref kinds it will resolve');
 assert.match(busFn, /SELECTABLE_REF_KINDS\.has\(/, 'selectRefInProperties must reject kinds outside the allowlist');
-const search = read('webview/src/search.tsx');
-assert.match(search, /const NAVIGABLE_KINDS = new Set\(/, 'Search must allowlist the kinds it renders select/reveal for');
-assert.doesNotMatch(search, /NAVIGABLE_KINDS = new Set\(\[[^\]]*namedexpression/, 'namedexpr is NOT navigable (grid + tree cannot resolve it)');
-assert.match(search, /navigable \? rowKeyProps/, 'Search must only wire keyboard activation for navigable hits');
 
 // --- 2c. live-stats rows verify against the STAGED model before acting ---------------------------------
 const app = read('webview/src/App.tsx');

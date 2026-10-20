@@ -41,15 +41,17 @@ namespace Semanticus.Engine
         /// measure, and LocalEngine.JevFamilies.cs asks this many of them per run, not-yet-asked first, then starts the next run
         /// for the rest (m11/sf-progress). Every ask is a call and the session has a budget, so a first plan on a very large model
         /// must not spend it all in one read.</summary>
-        internal const int MaxMeasuresPerRun = 60;
+        internal const int MaxMeasuresPerRun = JevTableBatch.MaxObjectsPerRun;
 
-        /// <summary>WHETHER THE ASKS GO ONE PER TABLE (m11/jev-batch, JevTableBatch.cs): a table's measures in one request, the
-        /// table's columns and measures once, one question per folder or format pointing at the measure's entry in `measures`.
+        /// <summary>WHETHER THE ASKS ARE BATCHED (m11/jev-batch, JevTableBatch.cs; across tables since m16/jev-batch): the measures of the whole model in
+        /// as few requests as Jev's context allows, each table's columns and measures once, one question per folder or format pointing at the
+        /// measure's entry in `measures`.
         /// True, as shipped: ON (Kane, 1 Oct: "the batching is the best mitigation not caps"). The comparison run of 30 September missed its fixed bar (docs/redesign/jev-batch-comparison-result.md: the unsure middle moves, sure answers stay), and Kane accepted that an unsure answer can move and arrive ticked or unticked in the reviewed Plan. JevPerObjectModeTests still proves both modes give the same plan lines. False: one request per object (the test seam JevBatchedForTest sets it).</summary>
         internal const bool Batched = true;
 
-        /// <summary>How many measures one batched request asks about (two questions each at most: thirty questions, the most a request carries).</summary>
-        internal const int ChunkSize = 15;
+        /// <summary>The most measures one batched request asks about (up to two questions each; JevTableBatch.MeasureObjectsPerRequest, measured live).
+        /// Jev's context (JevTableBatch.MaxBodyBytes) and JevTableBatch.MaxQuestions can cut a request earlier.</summary>
+        internal const int ChunkSize = JevTableBatch.MeasureObjectsPerRequest;
 
         /// <summary>One measure the family will ask about, with everything Map needs to turn an answer into
         /// lines without reading the model again.</summary>
@@ -108,7 +110,7 @@ namespace Semanticus.Engine
         /// <summary>The batched requests for the asks: each table's measures in chunks, and for each measure the questions it
         /// always asked (a folder, a format) under a name that carries its ref, each starting "For the measure `measures[i]`:" and
         /// then saying what it always said, with the same options.</summary>
-        internal static List<TableBatch<Ask>> Batches(Prepared prepared, int size = ChunkSize)
+        internal static List<TableBatch<Ask>> Batches(Prepared prepared, int size = ChunkSize, bool perTable = false)
         {
             TableBatch<Ask> Build(IReadOnlyList<Ask> chunk)
             {
@@ -120,16 +122,16 @@ namespace Semanticus.Engine
                     foreach (var q in chunk[i].Questions)
                     {
                         var name = JevTableBatch.QuestionName(q.Name, chunk[i].Ref);
-                        questions.Add(new DecisionQuestion(name, q.Kind, "For the measure " + JevTableBatch.Path("measures", i) + ": " + q.Instructions, q.Options));
+                        questions.Add(new DecisionQuestion(name, q.Kind, JevTableBatch.Lead("measure", "measures", i, (string)chunk[i].Entry["name"], chunk[i].TableName) + q.Instructions, q.Options));
                         names.Add(new KeyValuePair<string, string>(name, q.Name));
                     }
                     batch.Names[chunk[i]] = names;
                 }
                 batch.Questions = questions;
-                batch.Snapshot = MeasureDefaultsPoint.BatchSnapshot(prepared.Shares[batch.TableRef], chunk.Select(a => a.Entry));
+                batch.Snapshot = MeasureDefaultsPoint.BatchSnapshot(chunk.Select(a => (a.TableName, prepared.Shares[a.TableRef])), chunk.Select(a => a.Entry));
                 return batch;
             }
-            return JevTableBatch.Chunks(prepared.Asks, a => a.TableRef, size).SelectMany(c => JevTableBatch.Fit(c, Build)).ToList();
+            return JevTableBatch.Pack(prepared.Asks, a => a.TableRef, Build, DecisionRegistry.Require(DecisionRegistry.MeasureFolderAndFormat), perTable ? int.MaxValue : size, perTable, perTable ? JevTableBatch.LegacyQuestions : JevTableBatch.MaxQuestions);
         }
 
         private static readonly Regex CountsRowsPattern =

@@ -333,7 +333,7 @@ try {
         .map((e) => (e.textContent || '').replace(/\s+/g, ' ').trim());
       return { expanded: chip?.getAttribute('aria-expanded'),
         menu: [...document.querySelectorAll('[role="menu"]')].some((m) => m.getAttribute('aria-label') === 'Your assistant' && m.getClientRects().length > 0),
-        feed: panes.some((t) => t.startsWith('Live activity · your assistant')) };
+        feed: panes.some((t) => t.startsWith('Live activity')) };
     });
     const focusChip = () => page.evaluate(() => {
       const b = [...document.querySelectorAll('header [aria-haspopup="menu"]')].find((x) => (x.textContent || '').includes('Your assistant'));
@@ -864,7 +864,7 @@ try {
     const feedState = () => p.evaluate(() => {
       const chip = [...document.querySelectorAll('header [aria-haspopup="menu"]')].find((b) => (b.textContent || '').includes('Your assistant'));
       const panes = [...document.querySelectorAll('header .absolute')].filter((e) => e.getClientRects().length);
-      const feed = panes.find((t) => (t.textContent || '').replace(/\s+/g, ' ').trim().startsWith('Live activity · your assistant'));
+      const feed = panes.find((t) => (t.textContent || '').replace(/\s+/g, ' ').trim().startsWith('Live activity'));
       return { expanded: chip?.getAttribute('aria-expanded'), open: !!feed, inside: !!feed && feed.contains(document.activeElement) };
     });
     const openFeed = async () => {
@@ -1024,7 +1024,7 @@ try {
     const strip = await openPage('live=1&conn=1&tier=pro');
     const p = strip.page;
     await p.waitForSelector('[data-testid="plan-page"]');
-    await dispatch(p, { type: 'navigate', sessionId: 'uishot', tab: 'search' });
+    await dispatch(p, { type: 'navigate', sessionId: 'uishot', tab: 'daxlab' });
     await p.waitForSelector('.area-tabs');
     for (const width of [1366, 1000]) {
       await p.setViewport({ width, height: 768, deviceScaleFactor: 1 });
@@ -1035,7 +1035,7 @@ try {
           menus: document.querySelectorAll('.area-tabs [role="menu"], .area-tabs [aria-haspopup]').length,
           scrollLeft: Math.round(bar.scrollLeft), canScrollY: bar.scrollHeight > bar.clientHeight + 1 };
       });
-      assert.deepEqual(read.segments, ['Find and replace', 'Queries', 'AI instructions', 'Advanced modelling'], `${width}px: a plain strip of four`);
+      assert.deepEqual(read.segments, ['Queries', 'AI instructions', 'Advanced modelling'], `${width}px: a plain strip of three`);
       assert.equal(read.menus, 0, `${width}px: no menu in the strip`);
       assert.equal(read.canScrollY, false, `${width}px: and no vertical scrollbar`);
     }
@@ -1089,7 +1089,7 @@ try {
       ['Plan', null, [], null],
       // Ask your data is the Explore segment right after Data since 26 September (ask-data-page.test.mjs pins it).
       ['Explore', 'Explore', ['Data', 'Ask your data', 'Diagram', 'Lineage', 'Size'], null],
-      ['Edit', 'Edit', ['Find and replace', 'Queries', 'AI instructions', 'Advanced modelling'], null],
+      ['Edit', 'Edit', ['Queries', 'AI instructions', 'Advanced modelling'], null],
       ['Review', 'Review', ['Model quality (BPA)', 'AI readiness', 'Validation', 'Docs'], null],
       // One tool since Edit History became the Plan's History (slice 11), so the row names it instead of a strip.
       ['Publish', null, [], null],

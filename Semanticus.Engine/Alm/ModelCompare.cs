@@ -175,7 +175,7 @@ namespace Semanticus.Engine
                 CompareCollection(lt.Partitions.Cast<TOM.Partition>().Where(NotCalculationGroupPartition),
                     rt.Partitions.Cast<TOM.Partition>().Where(NotCalculationGroupPartition),
                     p => p.Name, p => null, "Partition", lt.Name, rt.Name, rt.LineageTag, items, true);
-                CompareCollection(lt.Hierarchies.Cast<TOM.Hierarchy>(), rt.Hierarchies.Cast<TOM.Hierarchy>(), h => h.Name, h => h.LineageTag, "Hierarchy", lt.Name, rt.Name, rt.LineageTag, items, false);
+                CompareCollection(lt.Hierarchies.Cast<TOM.Hierarchy>(), rt.Hierarchies.Cast<TOM.Hierarchy>(), h => h.Name, h => h.LineageTag, "Hierarchy", lt.Name, rt.Name, rt.LineageTag, items, false, HierarchyEqual);
                 // Calculation-group ITEMS of a MATCHED table ARE walked per-item (issue #124). Previously a matched calc-
                 // group table was compared ONLY on TableProps above, so a changed calc-item DAX expression (or a right-only
                 // item) yielded ZERO diff — a false-EQUAL that silently drops a real change on deploy (data loss). Calculation
@@ -222,7 +222,7 @@ namespace Semanticus.Engine
         // by NAME ONLY (tag is null) — flags the name-keyed groups in the UI. Lineage-tagged types pass matchedByName:false.
         private static void CompareCollection<T>(IEnumerable<T> leftItems, IEnumerable<T> rightItems,
             Func<T, string> name, Func<T, string> tag, string type, string srcTable, string tgtTable, string tgtTableTag,
-            List<ModelDiffItem> items, bool matchedByName)
+            List<ModelDiffItem> items, bool matchedByName, Func<T, T, bool> sameAs = null)
             where T : TOM.MetadataObject
         {
             var kind = type.ToLowerInvariant();
@@ -230,7 +230,11 @@ namespace Semanticus.Engine
             var rightByTag = ByTag(rl, tag);
             var dupTags = DuplicateTags(rl, tag);
             var matched = new HashSet<T>();
-            foreach (var l in leftItems)
+            var leftList = leftItems.ToList();
+            // A live object that another source object already matches by lineage tag is taken: a source object that only shares its NAME
+            // (rename one hierarchy, make a new one under the old name) is a new object, not a republish of the renamed one.
+            var takenByTag = new HashSet<T>(leftList.Select(x => { var t = tag(x); return !string.IsNullOrEmpty(t) && !dupTags.Contains(t) && rightByTag.TryGetValue(t, out var hit) ? hit : null; }).Where(x => x != null));
+            foreach (var l in leftList)
             {
                 var ltag = tag(l);
                 if (!string.IsNullOrEmpty(ltag) && dupTags.Contains(ltag))
@@ -240,7 +244,7 @@ namespace Semanticus.Engine
                         $"the target has multiple {type.ToLowerInvariant()}s sharing LineageTag '{ltag}': cannot resolve which to update"));
                     continue;
                 }
-                var r = Match(ltag, name(l), rightByTag, n => rl.FirstOrDefault(x => name(x) == n), tag, out var retagR);
+                var r = Match(ltag, name(l), rightByTag, n => rl.FirstOrDefault(x => name(x) == n && !takenByTag.Contains(x)), tag, out var retagR);
                 if (r == null)
                 {
                     // Create: no target CHILD (no TargetTag/TargetName), but carry the matched PARENT table's identity so
@@ -264,7 +268,7 @@ namespace Semanticus.Engine
                 }
                 matched.Add(r);
                 var ls = Ser(l); var rs = Ser(r);
-                items.Add(Target(Mk(RefFor(kind, srcTable, name(l)), type, name(l), srcTable, JsonSemanticEqual(ls, rs) ? "Equal" : "Update", ls, rs, matchedByName),
+                items.Add(Target(Mk(RefFor(kind, srcTable, name(l)), type, name(l), srcTable, (sameAs != null ? sameAs(l, r) : JsonSemanticEqual(ls, rs)) ? "Equal" : "Update", ls, rs, matchedByName),
                     tag(r), name(r), tgtTable, tgtTableTag));
             }
             // Right-only ⇒ Delete, keyed by the TARGET table (see the table-delete note above).
@@ -320,6 +324,26 @@ namespace Semanticus.Engine
                 deletes.Add((r, delItem));
             }
             CoupleReplacements(deletes, creates);
+            MarkCarriedByRename(deletes, creates);
+        }
+
+        // A right-only Delete and a left-only Create that are the same relationship, ends matched by identity (lineage tag, name fallback) and every property equal (an ignore note or waiver on it does not count), differ
+        // only by a rename of a key column or table. Both are marked, one to one, so the page and the publish can treat the renamed columns as carrying them.
+        private static void MarkCarriedByRename(List<(TOM.Relationship rel, ModelDiffItem item)> deletes, List<(TOM.Relationship rel, ModelDiffItem item)> creates)
+        {
+            var taken = new HashSet<int>();
+            foreach (var (del, delItem) in deletes)
+            {
+                if (!(del is TOM.SingleColumnRelationship d && d.FromColumn != null && d.ToColumn != null)) continue;
+                for (var ci = 0; ci < creates.Count; ci++)
+                {
+                    if (taken.Contains(ci)) continue;
+                    if (!(creates[ci].rel is TOM.SingleColumnRelationship c && c.FromColumn != null && c.ToColumn != null)) continue;
+                    if (!SameEndpoint(d.FromColumn, c.FromColumn) || !SameEndpoint(d.ToColumn, c.ToColumn) || !RelEqualIgnoringNotes(c, d, ignoreOwnedNotes: true)) continue;
+                    taken.Add(ci); delItem.CarriedByRename = true; creates[ci].item.CarriedByRename = true;
+                    break;
+                }
+            }
         }
 
         // BLOCKER 1 (replacement coupling): couple right-only Deletes to the left-only Creates that RE-POINT the same
@@ -442,7 +466,10 @@ namespace Semanticus.Engine
         // an Update here (correct) rather than a false Create+Delete; two relationships on the EXACT same column pair
         // (one active + one inactive) would share a signature, but Power BI disallows duplicate column-pair
         // relationships (role-playing dims use DIFFERENT columns → different signatures), so that can't arise.
-        private static bool RelEqual(TOM.Relationship a, TOM.Relationship b)
+        private static bool RelEqual(TOM.Relationship a, TOM.Relationship b) => RelEqualIgnoringNotes(a, b, ignoreOwnedNotes: false);
+
+        // ignoreOwnedNotes: the rename match asks "is this the same relationship?", and an ignore note or waiver written onto it is not part of that answer.
+        private static bool RelEqualIgnoringNotes(TOM.Relationship a, TOM.Relationship b, bool ignoreOwnedNotes)
         {
             if (a.IsActive != b.IsActive) return false;
             // MAJOR 3: an OWNED-annotation-only change (finding waivers / BPA ignore rules) must read as Update, else a
@@ -451,7 +478,7 @@ namespace Semanticus.Engine
             // what LiveDeploy.DeployOwnedAnnotations would deploy on a relationship: a foreign annotation is never carried
             // (so it must not manufacture a phantom Update the deploy can't apply), and a live-only owned annotation is
             // never deleted (absence never deletes), so it is not a source-introduced change.
-            if (OwnedAnnotationsIntroduceChange(a, b)) return false;
+            if (!ignoreOwnedNotes && OwnedAnnotationsIntroduceChange(a, b)) return false;
             if (a is TOM.SingleColumnRelationship sa && b is TOM.SingleColumnRelationship sb)
                 return sa.CrossFilteringBehavior == sb.CrossFilteringBehavior
                     && sa.SecurityFilteringBehavior == sb.SecurityFilteringBehavior
@@ -500,6 +527,13 @@ namespace Semanticus.Engine
                 }
                 catch (Exception ex) { outcome.Failed.Add((it.Ref, ex.Message)); }
             }
+            // A relationship the rename carries is not listed, so its own row is never ticked. A note written onto it (an accepted warning) still has to go with the
+            // columns it follows, so it is copied onto the target's relationship once the renamed ends resolve there (UAT recheck 19 Oct, D1).
+            foreach (var carried in diff.Items.Where(it => it.ObjectType == "Relationship" && it.Action == "Create" && it.CarriedByRename && (selected == null || !selected.Contains(it.Ref))))
+            {
+                try { CarryRenamedRelationshipNotes(left, right, carried.Ref); }
+                catch (Exception ex) { outcome.Failed.Add((carried.Ref, ex.Message)); }
+            }
             // A table's calendars name its columns, so they copy after every column change has landed. One that cannot be
             // copied whole fails its own table change only; the rest of the push goes on.
             foreach (var (tableRef, source, target) in calendarsLater)
@@ -512,6 +546,20 @@ namespace Semanticus.Engine
                 }
             }
             return outcome;
+        }
+
+        private static void CarryRenamedRelationshipNotes(TOM.Model left, TOM.Model right, string relRef)
+        {
+            var sig = relRef.StartsWith("relationship:") ? relRef.Substring("relationship:".Length) : relRef;
+            var lo = left.Relationships.Cast<TOM.Relationship>().FirstOrDefault(x => RelSig(x) == sig);
+            var ro = right.Relationships.Cast<TOM.Relationship>().FirstOrDefault(x => RelSig(x) == sig);   // only once the renames reached the target
+            if (lo == null || ro == null) return;
+            if (!OwnedAnnotationsIntroduceChange(lo, ro)) return;
+            foreach (var a in lo.Annotations.Cast<TOM.Annotation>().Where(a => a?.Name != null && LiveDeploy.IsOwnedAnnotation(a.Name)))
+            {
+                if (ro.Annotations.Contains(a.Name)) ro.Annotations[a.Name].Value = a.Value;
+                else ro.Annotations.Add(new TOM.Annotation { Name = a.Name, Value = a.Value });
+            }
         }
 
         private static int ApplyRank(ModelDiffItem it)
@@ -1171,7 +1219,46 @@ namespace Semanticus.Engine
             var root = ParseObject(Ser(measure));
             Remove(root, "name", "description", "isHidden", "formatString", "displayFolder", "expression",
                 "lineageTag", "changedProperties", "annotations");
+            // A note on the measure's KPI goes with the measure like a note on the measure (LiveDeploy writes it), so it is no uncarried residual.
+            if (Get(root, "kpi") is Newtonsoft.Json.Linq.JObject kpi) Remove(kpi, "annotations");
             return ("{}", root.ToString(Newtonsoft.Json.Formatting.None));
+        }
+
+        /// <summary>What a live push cannot carry on a matched hierarchy. The push writes the hierarchy's name, text, folder, visibility,
+        /// hide-members flag, its levels (name, order, column, description) and the annotations it owns; a lineage tag is identity the live
+        /// copy keeps. Anything left is residual: the push names it and does not claim the hierarchy.</summary>
+        internal static (string Supplement, string Residual) LiveHierarchyState(TOM.Hierarchy hierarchy)
+        {
+            var root = ParseObject(Ser(hierarchy));
+            Remove(root, "name", "description", "isHidden", "displayFolder", "hideMembers", "lineageTag", "changedProperties", "annotations", "levels");
+            return ("{}", root.ToString(Newtonsoft.Json.Formatting.None));
+        }
+
+        /// <summary>Are two matched hierarchies the same to a person? What the live push never writes is not a difference: a level's
+        /// lineage tag and an annotation nobody here owns. Everything else is, a cleared level text included: a hierarchy that shows
+        /// as changed is one the push can carry.</summary>
+        internal static bool HierarchyEqual(TOM.Hierarchy mine, TOM.Hierarchy theirs)
+        {
+            var a = ParseObject(Ser(mine)); var b = ParseObject(Ser(theirs));
+            foreach (var root in new[] { a, b })
+            {
+                DropForeignAnnotations(root);
+                if (!(Get(root, "levels") is Newtonsoft.Json.Linq.JArray levels)) continue;
+                foreach (var level in levels.OfType<Newtonsoft.Json.Linq.JObject>())
+                {
+                    Remove(level, "lineageTag");
+                    DropForeignAnnotations(level);
+                }
+            }
+            return JsonSemanticEqual(a.ToString(Newtonsoft.Json.Formatting.Indented), b.ToString(Newtonsoft.Json.Formatting.Indented));
+        }
+
+        private static void DropForeignAnnotations(Newtonsoft.Json.Linq.JObject o)
+        {
+            if (!(Get(o, "annotations") is Newtonsoft.Json.Linq.JArray list)) return;
+            foreach (var x in list.OfType<Newtonsoft.Json.Linq.JObject>().ToList())
+                if (!LiveDeploy.IsOwnedAnnotation((string)Get(x, "name"))) x.Remove();
+            if (!list.HasValues) Remove(o, "annotations");
         }
 
         private static Newtonsoft.Json.Linq.JObject Select(Newtonsoft.Json.Linq.JObject source, params string[] names)

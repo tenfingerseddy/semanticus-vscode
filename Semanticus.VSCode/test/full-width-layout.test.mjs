@@ -9,7 +9,6 @@ const styles = read('webview/src/styles.css');
 const app = read('webview/src/App.tsx');
 const tests = read('webview/src/tests.tsx');
 const permissions = read('webview/src/permissions.tsx');
-const search = read('webview/src/search.tsx');
 const optimize = read('webview/src/optimize.tsx');
 const docs = read('webview/src/documentation.tsx');
 const mcode = read('webview/src/mcode.tsx');
@@ -27,11 +26,10 @@ assert.equal((app.match(/sem-centered-page/g) ?? []).length, 0, 'Size fills the 
 // 24px page margin, full width, so their cards line up with every other page's columns. A 1420px centred measure
 // put their edges 10px off the grid at 1440.
 assert.equal((tests.match(/sem-centered-page/g) ?? []).length, 0, 'Validation is on the 12-column page grid, and Reports rides inside it');
-assert.match(tests, /<main className="sem-page">/, 'Validation is one sem-page grid');
+assert.match(tests, /<main className="sem-page vc-page"/, 'Validation is one sem-page grid (Validation C, 1.6)');
 // Edit History retired in slice 11 (lane R2); History is a view inside the Plan page and brings no page shell of its own.
 assert.ok(!/className="sem-page"/.test(read('webview/src/plan-history.tsx')), 'the Plan History rides inside the Plan page');
 assert.doesNotMatch(tests, /export function EvidenceBody\(\)[\s\S]{0,900}sem-centered-page/, 'the Reports tab brings no page shell of its own');
-assert.match(search, /sem-centered-page" data-readable/, 'Find and replace is a reading list: it keeps the measure and says so');
 for (const [name, source] of Object.entries({ Permissions: permissions, 'Change Plan': optimize }))
   assert.doesNotMatch(source, /sem-centered-page/, `${name} fills the window under the space rule`);
 

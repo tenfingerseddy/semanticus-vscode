@@ -22,6 +22,9 @@ namespace Semanticus.Engine
         /// <summary>True when the query was stopped before it finished. <see cref="Error"/> is <see cref="StoppedMessage"/>.</summary>
         public bool Cancelled { get; set; }
 
+        /// <summary>One plain line about the run itself, never about the rows (for example, that the Query notebook could not keep it). Null when there is nothing to say.</summary>
+        public string Note { get; set; }
+
         public const string StoppedMessage = "The query was stopped.";
 
         /// <summary>Plain announcement for both doors. A capped grid must never read as a complete count.</summary>

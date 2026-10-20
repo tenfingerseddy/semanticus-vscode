@@ -10,7 +10,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react';
 import { linkWork, type LinkState, type LinkWork } from './link-state';
 import { setPersonalityPoster, usePersonalitySettings, type PersonalitySettingMessage } from './settings';
-import { VERB_HOLD_MS, verbFor } from './verbs';
+import { STUCK_MS, VERB_HOLD_MS, WAITING, WAITING_DEFAULT, verbFor } from './verbs';
 
 export type { LinkState } from './link-state';
 
@@ -235,8 +235,13 @@ export function WorkLink({ size = 16 }: { size?: number }) {
 const clock = (ms: number) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 
 /** What the status line says for one moment. Pure, so the tests can read it. */
-export function statusWords(work: LinkWork, step: number, quiet: boolean): string {
-  if (work.state === 'working' || work.state === 'thinking') return verbFor(work.group, step, quiet, work.job * 3);
+export function statusWords(work: LinkWork, step: number, quiet: boolean, elapsedMs = 0): string {
+  if (work.state === 'working' || work.state === 'thinking') {
+    // Humour is for work that moves. Work that has shown no progress for a few seconds says what it waits on: no joke while something may be stuck.
+    // The line names a step the person can see waiting. Jev working in the background on the plan has nothing on screen to wait for, so it keeps its verb.
+    if (elapsedMs >= STUCK_MS && !work.progress && !(work.jev && work.who !== 'person')) return work.group ? WAITING[work.group] : WAITING_DEFAULT;
+    return verbFor(work.group, step, quiet, work.job * 3);
+  }
   if (work.state === 'success') return work.words ? `Done. ${work.words}` : 'Done';
   if (work.state === 'error') return work.error ? `Stopped. ${work.error}` : 'Stopped';
   return '';
@@ -285,8 +290,8 @@ export function LinkStatus() {
   const step = useStepper(running, VERB_HOLD_MS, work.job);
   const tick = useStepper(running, 1000, work.job);
   void tick;
-  const words = statusWords(work, step, quiet);
   const elapsed = running && work.startedAt !== null ? Date.now() - work.startedAt : 0;
+  const words = statusWords(work, step, quiet, elapsed);
   const title = work.state === 'idle' ? 'Semanticus is ready' : undefined;
   return <div className="sem-status-link" data-testid="link-status" data-link-work={work.state} title={title}>
     {/* The Link is last, at the bar's very end, so a longer or shorter verb never moves it: the words grow to its left. */}

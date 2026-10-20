@@ -189,6 +189,8 @@ namespace Semanticus.Engine
                 };
             }
 
+            // Every table with no mapping of its own counts against the model's endpoint, so a new link makes every old count old.
+            ForgetTableCounts();
             await PublishActivityAsync(new ActivityEvent
             {
                 Kind = "set_model_sql_endpoint", Origin = origin,

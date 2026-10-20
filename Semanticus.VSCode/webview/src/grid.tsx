@@ -66,7 +66,7 @@ interface Sort { col: number; dir: 1 | -1 }
  * view-only — `rows` are never mutated, and nothing re-queries the engine. `filterable={false}` hides the
  * whole filter bar (and the funnels) — used for tiny embedded grids.
  */
-export function ResultGrid({ columns, rows, height = 460, filterable = true, showTypeGlyph = false, onColumnMenu, menuCol, subHeader, onCellMenu, truncated = false, framed = true, friendly = false, countElsewhere = false }: {
+export function ResultGrid({ columns, rows, height = 460, filterable = true, showTypeGlyph = false, onColumnMenu, menuCol, subHeader, onCellMenu, onCellClick, truncated = false, framed = true, friendly = false, countElsewhere = false }: {
   columns: GridColumn[]; rows: unknown[][]; height?: number | string; filterable?: boolean; truncated?: boolean;
   // A grid on the page is its own card: a hairline box whose first column starts one card padding in. Inside a
   // card that already frames it (DAX Lab's result, the Power Query preview) it draws no box of its own, because
@@ -89,6 +89,8 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
   // Return TRUE when the cell was handled: only then is the browser's default context menu suppressed —
   // label/dimension cells with no explanation keep their normal menu (PR #92 review, Finding C).
   onCellMenu?: (row: unknown[], colIndex: number, anchor: { x: number; y: number }) => boolean;
+  // Pressing a number explains it (the Query page's Explain this number card). Same row-values contract as onCellMenu.
+  onCellClick?: (row: unknown[], colIndex: number) => void;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [sort, setSort] = useState<Sort | null>(null);
@@ -206,8 +208,8 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter rows…" spellCheck={false} aria-label="Filter rows"
               className="sem-field sem-field-sm w-56" />
             {(!countElsewhere || view.length !== rows.length) && <span className="sem-text-meta sem-num">
-              {view.length === rows.length ? `${rows.length.toLocaleString()} rows` : `${view.length.toLocaleString()} of ${rows.length.toLocaleString()}`}
-              {truncated ? '. More rows exist.' : ''}
+              {view.length === rows.length ? `${rows.length.toLocaleString()} rows` : `${view.length.toLocaleString()} of ${rows.length.toLocaleString()}${truncated ? ' loaded' : ''}`}
+              {truncated ? '. More rows exist, and the filter searches only these.' : ''}
             </span>}
             {dirty && (
               <button onClick={resetAll} className="sem-btn sem-btn-sm sem-btn-quiet">Reset</button>
@@ -301,8 +303,9 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
                           // dimension/label cell has no explanation, so it keeps the normal context menu.
                           if (onCellMenu(row, ci, { x: e.clientX, y: e.clientY })) { e.preventDefault(); e.stopPropagation(); }
                         } : undefined}
-                        style={{ width: colW, borderBottom: '1px solid var(--sem-rule)', color: 'var(--sem-fg)' }}
-                        title={cell(v, columns[ci]?.format) + (onCellMenu && isNum(v) ? '\nRight-click: explain this number' : '')}>
+                        onClick={onCellClick && row && isNum(v) ? () => onCellClick(row, ci) : undefined}
+                        style={{ width: colW, borderBottom: '1px solid var(--sem-rule)', color: 'var(--sem-fg)', cursor: onCellClick && isNum(v) ? 'pointer' : undefined }}
+                        title={cell(v, columns[ci]?.format) + ((onCellMenu || onCellClick) && isNum(v) ? '\nPress to explain this number' : '')}>
                         {friendly && !(isNum(v) && formatNumber(v as number, columns[ci]?.format)) ? (columns[ci]?.format && dateText(v, columns[ci]?.format)) || formatters[ci](v) : cell(v, columns[ci]?.format)}
                       </div>
                     );

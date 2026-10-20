@@ -17,7 +17,21 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "list_interview_questions"), Description("INTERVIEW: list the OPEN model's saved interview question pack: each question with its tier ('value' = answer vs a trusted number; 'paraphrase' = the same question asked two ways must agree; 'refusal' = the model cannot answer it and the honest outcome is declining), its recorded oracle, and the LAST graded outcome (Correct | Refused | SilentlyWrong | Unverified). Packs are BOUND to the model they were authored against, so `questions` is THIS model's pack only; `otherModelQuestions` and `unattributedQuestions` (legacy, saved before binding, in a shared store) are surfaced separately and are NOT run against the open model. The pack lives in plain JSONL (`.semanticus/interview/questions.jsonl` beside the model; '~/.semanticus/interview/' for scope 'global'): the user's own data. Reports the count of any corrupt lines it skipped (the store never bricks). Free, read-only.")]
         public static Task<InterviewListResult> ListInterviewQuestions(IEngine engine,
             [Description("'project' | 'global'; omit for both")] string scope = null)
-            => engine.ListInterviewQuestionsAsync(scope);
+            => HideHeldBack(engine.ListInterviewQuestionsAsync(scope));
+
+        // The Copilot test holds back every fifth question: its words, its DAX and its right answer are not handed to the assistant that tunes the model, so the
+        // held-back score cannot be learned. The Studio page (the person) reads the same list through listInterviewQuestions with nothing hidden.
+        private static async Task<InterviewListResult> HideHeldBack(Task<InterviewListResult> read)
+        {
+            var r = await read;
+            if (r?.Questions == null) return r;
+            foreach (var q in r.Questions)
+            {
+                if (!q.HeldBack) continue;
+                q.Question = "(held back for the final score)"; q.Query = null; q.ExpectedValue = null; q.ExpectedMatrix = null; q.LastRun = null;
+            }
+            return r;
+        }
 
         [McpServerTool(Name = "add_interview_question"), Description("INTERVIEW: SAVE a question to the model's interview pack so it replays as a regression check on every future edit (and as the 'interview_replay' workflow verify kind). run_interview grades an inline question without saving, and both are free. Fields by tier: 'value': `query` (a FULL EVALUATE, e.g. EVALUATE ROW(\"v\", CALCULATE([Total Sales], 'Date'[Year]=2024))) + `expectedValue` (the trusted number, confirmed by the user or a verified answer) or `expectedMatrixJson` (rows, order-insensitive); 'paraphrase': `scalarExpr` + `paraphraseExpr` (the SAME question answered two ways as SCALAR expressions, not EVALUATE queries) with optional `groupBy`/`filters` for a per-context proof; 'refusal': just the question. It asserts the model CANNOT answer it, so an assistant that produces a number is confidently wrong. `fixRuleId` maps a failure to the AI-readiness rule that prevents it (a data-table fallback applies when omitted). `seedSource` records where the question came from ('user' | 'claude' | 'verified-answer'). Validation is fail-loud so a saved question is always runnable.")]
         public static Task<InterviewQuestion> AddInterviewQuestion(IEngine engine,

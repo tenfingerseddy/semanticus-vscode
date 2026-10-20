@@ -14,10 +14,10 @@
 
 export const LIMITS = {
     /** The whole request body. The engine caps its snapshot at 64 KB (JevDecisionOracle.MaxSnapshotBytes).
-     *  Kane, 13 Oct 2026: 30 questions per request. A question is a name plus a small schema, about 150 bytes
-     *  (the largest declared shape is a choice with a few options), so 30 of them are under 5 KB; with the
-     *  64 KB snapshot and the criteria and framing text that is about 75 KB. 192 KB leaves a 2.5x margin and
-     *  is still a small body for a worker. */
+     *  Kane, 13 Oct 2026: 30 questions per request for a point that does not say otherwise (the batched points, compose.draft,
+     *  query.summarize and cleanup.suggest carry their own, larger bound: m16/jev-batch). The engine builds a request to at most 120 KB
+     *  (JevTableBatch.MaxBodyBytes: Jev's own limit is 64,000 tokens a request for the state and every question), with the state at most
+     *  64 KB, so 192 KB leaves a margin of more than half and is still a small body for a worker. */
     maxRequestBytes: 196_608,
     maxSnapshotBytes: 65_536,
     maxQuestions: 30,
@@ -57,10 +57,11 @@ export const LIMITS = {
  *                   item ids (PlanRankPoint.QuestionFor); compose.draft asks one include per step
  *                   template and one pick per listed argument, named by template (JevDraftBuilder.Q)
  *   maxQuestions    that point's own bound, when it differs from the general one
- *   batched         for a point whose fixed questions may also be asked ONE PER OBJECT OF A TABLE (m11/jev-batch): the
- *                   name is then "<question>:<object ref>" ("summarize_by:column:Sales/Amount"), each with something
- *                   after the colon, and maxQuestions is what one chunk of a table needs (the engine's ChunkSize times
- *                   the questions each object carries). The fixed names stay valid, so a per-object request still passes.
+ *   batched         for a point whose fixed questions may also be asked ONE PER OBJECT (m11/jev-batch, then for a whole model in m16/jev-batch):
+ *                   the name is then "<question>:<object ref>" ("summarize_by:column:Sales/Amount"), each with something
+ *                   after the colon, and maxQuestions is what one request of the engine may carry
+ *                   (JevTableBatch.MaxQuestions, 400: the body budget, JevTableBatch.MaxBodyBytes, bites first). The fixed names stay
+ *                   valid, so a per-object request still passes.
  *
  * `tools/relay/test/drift.test.mjs` reads DecisionRegistry.cs, PlanRankPoint.cs and AskRoutePoint.cs and
  * fails on any difference from the table below, so this copy cannot fall behind the engine in silence.
@@ -71,10 +72,10 @@ export const TEMPLATES = {
         schemaVersion: 2,
         fields: ['measure_name', 'measure_formula_facts', 'references_measures', 'table_name', 'table_columns', 'sibling_measures', 'measures'],
         questions: ['display_folder', 'format_family'],
-        // m11/jev-batch: the Plan asks a table's measures in one request, up to MeasuresFamily.ChunkSize (15) measures, a folder
-        // and a format question for each. propose_measure_defaults still asks one measure (two questions).
+        // m16/jev-batch: the Plan asks the measures of every table in one request, a folder and a format question for each, as many as
+        // Jev's context holds (JevTableBatch.MaxQuestions). propose_measure_defaults still asks one measure (two questions).
         batched: true,
-        maxQuestions: 30,
+        maxQuestions: 400,
     },
     'plan.rank': {
         schemaVersion: 1,
@@ -110,7 +111,7 @@ export const TEMPLATES = {
         fields: ['draft_words', 'table_names'],
         questions: [],
         questionPrefix: 'step:',
-        maxQuestions: 64,
+        maxQuestions: 100,
     },
     'query.summarize': {
         // Jev question-to-DAX (Kane, 26 Sep): the parts of a data question. The names carry the part they settle
@@ -126,12 +127,13 @@ export const TEMPLATES = {
         fields: ['question_words', 'model_fields', 'value_matches', 'stated_reading'],
         questions: [],
         questionPrefix: 'q:',
-        maxQuestions: 24,
+        maxQuestions: 64,
     },
     'queries.chart_kind': {
-        // D6: Jev's chart pick for a Queries result, OFF until its replay clears docs/queries-chart-pick-bar.md.
-        // The words and the result's shape (split names, date or not, distinct counts, number and row counts), never rows.
-        schemaVersion: 1,
+        // D6: Jev's visual pick for a Query result, OFF until its replay clears docs/queries-chart-pick-bar.md.
+        // The words and the result's shape (split names, date or not, distinct counts, the number names, row count, same unit,
+        // any negative), never rows. 1.6 (schema 2): the options are the shared visual set, not the old chart kinds.
+        schemaVersion: 2,
         fields: ['question_words', 'result_shape'],
         questions: ['chart_kind'],
     },
@@ -147,9 +149,9 @@ export const TEMPLATES = {
         schemaVersion: 1,
         fields: ['table_name', 'column_name', 'column_facts', 'table_columns', 'columns'],
         questions: ['format_family'],
-        // m11/jev-batch: a table's columns in one request, up to ColumnFormatFamily.ChunkSize (30), one question each.
+        // m16/jev-batch: the columns of every table in one request, one question each (JevTableBatch.MaxQuestions).
         batched: true,
-        maxQuestions: 30,
+        maxQuestions: 400,
     },
     'relationship.join': {
         // T268, M4 point 2: one column per call, the key columns it may join listed by the engine. The engine
@@ -164,9 +166,9 @@ export const TEMPLATES = {
         schemaVersion: 1,
         fields: ['table_name', 'object_kind', 'object_name', 'object_facts', 'table_fields', 'objects'],
         questions: ['ai_schema'],
-        // m11/jev-batch: a table's objects in one request, up to AiSchemaFamily.ChunkSize (30), one question each.
+        // m16/jev-batch: the objects of every table in one request, one question each (JevTableBatch.MaxQuestions).
         batched: true,
-        maxQuestions: 30,
+        maxQuestions: 400,
     },
     'column.category': {
         // T268, the fair replay: one visible text or number column per call, names, types and derived shares only.
@@ -179,9 +181,9 @@ export const TEMPLATES = {
         schemaVersion: 1,
         fields: ['table_name', 'column_name', 'column_facts', 'table_columns', 'model_tables', 'table_facts', 'columns'],
         questions: ['summarize_by'],
-        // m11/jev-batch: a table's columns in one request, up to ColumnSummarizeFamily.ChunkSize (30), one question each.
+        // m16/jev-batch: the columns of every table in one request, one question each (JevTableBatch.MaxQuestions).
         batched: true,
-        maxQuestions: 30,
+        maxQuestions: 400,
     },
     'cleanup.suggest': {
         // m11/plan-harm round 5: the Plan's cleanup row. One question per unused column that would start ticked, all in a
@@ -192,6 +194,28 @@ export const TEMPLATES = {
         questions: [],
         questionPrefix: 'cleanup:',
         // The engine sends at most this many columns per call (CleanupSuggest.MaxPerCall).
+        maxQuestions: 120,
+    },
+    'copilot.misses': {
+        // 1.5.1, the Copilot test (Kane, 15 Oct 2026): the misses of one test round, all in one call, one question per practice miss named
+        // "miss:<number>" and answered with a "cause:fix" pair from a fixed list. The words of each question and the names of the fields
+        // involved only: no value, no formula, no held-back question. Every sentence a person reads is the engine's (CopilotCauseRules).
+        schemaVersion: 1,
+        fields: ['question_words', 'miss_kinds', 'student_fields', 'right_fields', 'filter_differences'],
+        questions: [],
+        questionPrefix: 'miss:',
+        // The engine sends at most this many misses per call (CopilotMissPoint.MaxPerCall).
+        maxQuestions: 120,
+    },
+    'checks.visual_kind': {
+        // 1.6, the Validation page: which visual each check opens with. One question per check, all in one call, each named
+        // "visual:<check id>" and each answered with one of the visuals the page's rules leave, or "rules". Check names, measure
+        // names, a kind word, a status word and counts only. The engine writes every reason (Testing/JevCheckVisuals.cs).
+        schemaVersion: 1,
+        fields: ['check_words', 'check_shapes'],
+        questions: [],
+        questionPrefix: 'visual:',
+        // The engine asks about at most this many checks in one call (JevCheckVisuals.MaxChecks).
         maxQuestions: 40,
     },
     'date.table': {

@@ -22,6 +22,13 @@
 // App.tsx and holds it to this catalogue minus the entries flagged IsTab, so the next tool added fails a
 // test instead of quietly never being routed to.
 //
+// ONE QUERY PAGE (1.6). Explore > Query replaced two pages, Ask your data and Queries. The catalogue, and
+// everything that leaves the engine, names the one page: id "query", label "Query". The routing underneath still
+// tells two things apart, a question about the numbers and a request to write or create a calculation, because
+// they behave differently (a question reads two ways and depends on the tier; a create request goes straight to
+// the page with a Create command). Those are the two WORD GROUPS (WordGroups), and PageOf turns either one into
+// the page at the edge. A saved plan or a link that still names an old page id is answered with the Query page.
+//
 // WHAT A CRITERION IS. The wording rule from Decisions/MeasureDefaultsPoint.cs applies here too: a criterion
 // describes THE WORLD, never the product's state and never the answer we hope for. A tool's criterion is its
 // own label and its own guide line and nothing else. No criterion mentions how often a tool is chosen, what
@@ -89,6 +96,11 @@ namespace Semanticus.Engine
             IsTab = isTab;
         }
 
+        /// <summary>A WORD GROUP: the words of one reading of a page that has two (AskRouteCatalog.WordGroups). Not a page, not on
+        /// the strip and not in <see cref="AskRouteCatalog.Tools"/>; the scoring and the service's options run over it.</summary>
+        internal static AskRouteTool Group(string id, string label, string guide, AskRouteWords words) =>
+            new AskRouteTool(id, "explore", label, guide, words);
+
         /// <summary>The stable tool id the extension routes on, for example "lineage".</summary>
         public string Id { get; }
 
@@ -120,12 +132,22 @@ namespace Semanticus.Engine
         /// who asks something no tool covers is owed the menu, not a wrong door.</summary>
         public const string NoTool = "none";
 
-        /// <summary>Where a question about the numbers is answered (Ask your data), and where a query is written by
-        /// hand on every tier (Queries). Named once because the question reading of a line always names one of them
-        /// (AskRoutePoint.Readings): Ask your data where the tier has it, Queries where it does not.</summary>
+        /// <summary>The one page a person is sent to for a question about the numbers and for writing a query: Explore >
+        /// Query. It replaced two pages in 1.6 (Ask your data and Queries), and it is the only id of the two that ever
+        /// leaves the engine. Every answer, reading, plan jump, field page and create thing names this id.</summary>
+        public const string QueryPage = "query";
+
+        /// <summary>THE TWO WORD GROUPS BEHIND THE QUERY PAGE. They are not pages. The words of a question about figures
+        /// ("total sales by region") and the words of a request to write or create a calculation ("create a measure")
+        /// are still told apart, because the first reads two ways (a task or a question, Pro or free) and the second
+        /// goes straight to the page with a Create command. So the scoring and the service's options keep two groups
+        /// with these two ids, and <see cref="PageOf"/> turns either into <see cref="QueryPage"/> at the edge. Keeping
+        /// the ids also keeps the options the service is shown byte for byte what its recorded answers were made from.
+        /// Nothing outside the engine's routing reads these two: the strip, a link, a jump and a tool result say Query.</summary>
         public const string DataTool = "askdata";
         /// <summary>The Data page: sample rows to browse, which answers no question.</summary>
         public const string RowsTool = "data";
+        /// <summary>The word group for writing and creating calculations; see <see cref="DataTool"/>.</summary>
         public const string QueriesTool = "daxlab";
 
         /// <summary>The six areas, in strip order. Read by the tests rather than retyped there, so an area
@@ -134,7 +156,30 @@ namespace Semanticus.Engine
         public static readonly IReadOnlyList<string> Areas =
             new[] { "plan", "explore", "edit", "review", "publish", "workflows" };
 
-        private static readonly AskRouteTool[] AllTools =
+        // THE TWO WORD GROUPS OF THE QUERY PAGE. Declared before the pages because the Query page's own words are theirs together.
+        // The label and the guide are only what the decision service reads as each option's criterion, kept exactly as its
+        // recorded answers were made from them; no person is ever shown either (the page is Query).
+
+        // The QUESTION group (was the Ask your data page; Kane, 26 September): a question about the model's numbers. The box only
+        // NAVIGATES; the Query page asks. It claims the words of a question about figures ("total sales by region"), which the
+        // writing group (where DAX is written) and Data (where rows are browsed) do not.
+        private static readonly AskRouteTool QuestionGroup = AskRouteTool.Group("askdata", "Ask your data",
+            "Type a question about your numbers, or choose a measure and the columns to split it by. Semanticus builds, checks and runs the query, and keeps the question.",
+            new AskRouteWords(
+                // Phrases, not the bare nouns: "Total Sales" is also a measure a person renames or traces, so
+                // "sales" alone would pull those asks here. "sales by" is a question about the figures.
+                nouns: "ask your data, data question, top, bottom, breakdown, how much, "
+                     + "sales by, revenue by, units by, margin by, profit by, cost by, orders by, total by",
+                verbs: "by, per, split by, broken down by"));
+
+        // The WRITING group (was the Queries page): create or write a calculation, try one, tune a slow query.
+        private static readonly AskRouteTool WritingGroup = AskRouteTool.Group("daxlab", "Queries",
+            "Try calculations, compare answers and investigate slow queries. Experiments here do not change the saved model.",
+            new AskRouteWords(
+                nouns: "measure, kpi, dax, formula, calculation, expression, query, calculated column, calc column, calculated table, calc table, function, udf, slow query",
+                verbs: "create, add, new, make, write, edit, try, optimise, optimize, speed up, tune"));
+
+        private static readonly AskRouteTool[] AllPages =
         {
             // The Overview retired in slice 11 (Plan-heart lane R1). Its words route to the Plan, which is the
             // start page and carries the model's facts and the selected object's actions now.
@@ -182,9 +227,9 @@ namespace Semanticus.Engine
                 "See what a calculation uses and what relies on it. Check what a change would affect, and find what nothing uses any more.",
                 new AskRouteWords(
                     nouns: "lineage, dependency, dependencies, impact, downstream, upstream, break, blast radius, knock on",
-                    // "rename" stays an ordinary verb: it is the THING being asked for on Find and replace
-                    // and only the verb in a question about impact, and those two numbers are what tell
-                    // "rename Total Sales" from "what breaks if I rename Total Sales" apart.
+                    // "rename" is only the verb in a question about impact ("what breaks if I rename Total Sales").
+                    // A bare "rename Total Sales" has no page of its own any more (Find and replace left the Studio);
+                    // one verb is worth less than the two points a page needs, so it goes to the assistant.
                     verbs: "rename",
                     relations: "use, used, depend, affect, affected, breaks if, reference, referenced, feed, relies on, rely on")),
             new AskRouteTool("stats", "explore", "Size",
@@ -195,27 +240,15 @@ namespace Semanticus.Engine
                     // Size says so in its own words rather than by a rule about who wins ties.
                     nouns: "size, memory, most memory, mb, gb, kb, big, large, footprint, heaviest",
                     verbs: "shrink, reduce")),
-            // Ask your data (Kane, 26 September): a question about the model's numbers. The box only NAVIGATES here;
-            // the page asks. It claims the words of a question about figures ("total sales by region"), which Queries
-            // (where DAX is written) and Data (where rows are browsed) do not.
-            new AskRouteTool("askdata", "explore", "Ask your data",
-                "Type a question about your numbers, or choose a measure and the columns to split it by. Semanticus builds, checks and runs the query, and keeps the question.",
+            // ONE PAGE FOR TWO READINGS (1.6). Explore > Query replaced Ask your data and Queries. A person is sent here by
+            // the id and the label below whichever reading won; the words of the two readings stay apart as QuestionGroup
+            // and WritingGroup, because a question about figures reads two ways and a create request does not. The guide
+            // is the page's `lead` in help.tsx, word for word (AskRouteTests holds it).
+            new AskRouteTool("query", "explore", "Query",
+                "Ask a question about your numbers in plain words, or write and run a query. Semanticus shows how it read the question, runs it, and keeps the answer.",
                 new AskRouteWords(
-                    // Phrases, not the bare nouns: "Total Sales" is also a measure a person renames or traces, so
-                    // "sales" alone would pull those asks here. "sales by" is a question about the figures.
-                    nouns: "ask your data, data question, top, bottom, breakdown, how much, "
-                         + "sales by, revenue by, units by, margin by, profit by, cost by, orders by, total by",
-                    verbs: "by, per, split by, broken down by")),
-            new AskRouteTool("search", "edit", "Find and replace",
-                "Find names, descriptions and formulas across the model. Review replacements before changing anything.",
-                new AskRouteWords(
-                    nouns: "rename, search, replacement, find and replace, replace",
-                    verbs: "find, look for, sweep")),
-            new AskRouteTool("daxlab", "edit", "Queries",
-                "Try calculations, compare answers and investigate slow queries. Experiments here do not change the saved model.",
-                new AskRouteWords(
-                    nouns: "measure, kpi, dax, formula, calculation, expression, query, calculated column, calc column, calculated table, calc table, function, udf, slow query",
-                    verbs: "create, add, new, make, write, edit, try, optimise, optimize, speed up, tune")),
+                    nouns: string.Join(", ", QuestionGroup.Words.Nouns.Concat(WritingGroup.Words.Nouns)),
+                    verbs: string.Join(", ", QuestionGroup.Words.Verbs.Concat(WritingGroup.Words.Verbs)))),
             // Model notes is a TAB on AI instructions since Kane folded the two together (23 September). Same
             // label, same words, reached through AI instructions rather than from the strip.
             new AskRouteTool("knowledge", "edit", "Model notes",
@@ -259,6 +292,12 @@ namespace Semanticus.Engine
                 new AskRouteWords(
                     nouns: "readiness, ai readiness, description, synonym, copilot, ai, q and a, grounding",
                     verbs: "describe, prep for ai")),
+            new AskRouteTool("copilottest", "review", "Copilot test",
+                "Ask a small model the questions people will ask Copilot, see which it gets wrong, and change the instructions until it gets them right.",
+                new AskRouteWords(
+                    // "copilot" on its own belongs to AI readiness, so this place claims the phrase and the words of the loop.
+                    nouns: "copilot test, question bank, student model, held back, round of questions, will copilot answer",
+                    verbs: "rehearse, try questions")),
             new AskRouteTool("tests", "review", "Validation",
                 "Check that calculations return the answers you trust, and that tables connect and count correctly.",
                 new AskRouteWords(
@@ -296,16 +335,38 @@ namespace Semanticus.Engine
                     verbs: "repeat, automate")),
         };
 
-        /// <summary>Every place, in the order the area strips list them. The order is fixed so a recorded
-        /// replay and a live call present the options identically.</summary>
-        public static IReadOnlyList<AskRouteTool> Tools => AllTools;
+        /// <summary>Every place a person can be sent, in the order the area strips list them. The order is fixed so a
+        /// recorded replay and a live call present the options identically. The Query page is ONE entry here.</summary>
+        public static IReadOnlyList<AskRouteTool> Tools => AllPages;
+
+        /// <summary>The word groups the scoring and the service's options run over: the pages, except that the Query
+        /// page is its two groups (a question about the numbers, and writing a calculation). Order is fixed.</summary>
+        public static IReadOnlyList<AskRouteTool> WordGroups { get; } =
+            AllPages.SelectMany(t => string.Equals(t.Id, QueryPage, StringComparison.Ordinal)
+                ? new[] { QuestionGroup, WritingGroup } : new[] { t }).ToArray();
 
         /// <summary>The places the area strip can show directly: every tool that is not a tab inside another
         /// page. This is what TAB_GROUPS in App.tsx must carry, and AskRouteTests compares the two.</summary>
-        public static IReadOnlyList<AskRouteTool> StripTools => AllTools.Where(t => !t.IsTab).ToArray();
+        public static IReadOnlyList<AskRouteTool> StripTools => AllPages.Where(t => !t.IsTab).ToArray();
 
-        public static AskRouteTool Find(string id) =>
-            id == null ? null : AllTools.FirstOrDefault(t => string.Equals(t.Id, id, StringComparison.Ordinal));
+        /// <summary>The page, by id. The two retired page ids answer with the Query page, because a saved plan, a link or an
+        /// older extension may still name them. Anything this build does not know is null.</summary>
+        public static AskRouteTool Find(string id)
+        {
+            if (id == null) return null;
+            id = PageOf(id);
+            return AllPages.FirstOrDefault(t => string.Equals(t.Id, id, StringComparison.Ordinal));
+        }
+
+        /// <summary>A word group by its own id, for the service's answer: the options it was shown are the groups.</summary>
+        public static AskRouteTool FindGroup(string id) =>
+            id == null ? null : WordGroups.FirstOrDefault(t => string.Equals(t.Id, id, StringComparison.Ordinal));
+
+        /// <summary>The page a word group (or a retired page id) is answered on: Query for the two Query groups, the
+        /// id itself for every other place. The one edge every id passes through before it leaves the engine.</summary>
+        public static string PageOf(string id) =>
+            string.Equals(id, DataTool, StringComparison.Ordinal) || string.Equals(id, QueriesTool, StringComparison.Ordinal)
+                ? QueryPage : id;
 
         /// <summary>The area a tool belongs to, or null when the id is not one of them. A router answer
         /// naming anything else is dropped rather than passed on, which is why this returns null instead of
@@ -350,29 +411,34 @@ namespace Semanticus.Engine
         /// thing added here with nowhere to make it fails there rather than going quiet.</summary>
         public sealed class AskCreateThing
         {
-            public AskCreateThing(string name, string tool, string nouns)
+            public AskCreateThing(string name, string tool, string nouns, string group = null)
             {
                 Name = name;
                 Tool = tool;
+                Group = group ?? tool;
                 Nouns = nouns.Split(',').Select(w => w.Trim()).Where(w => w.Length > 0).ToArray();
             }
 
             /// <summary>The thing, in the words a person would say it: "measure", "calendar", "role".</summary>
             public string Name { get; }
 
-            /// <summary>The tool whose page holds it. Only a winner that IS this tool may carry this thing, so
-            /// a create word cannot smuggle a second destination into an answer.</summary>
+            /// <summary>The page that holds it. This is the id that leaves the engine.</summary>
             public string Tool { get; }
+
+            /// <summary>The word group whose win may carry this thing (the same id as <see cref="Tool"/> except for the
+            /// Query page, where only the writing group may: a question about figures that happens to say "measure"
+            /// must not smuggle a Create command into its answer). Never shown.</summary>
+            public string Group { get; }
 
             public IReadOnlyList<string> Nouns { get; }
         }
 
         private static readonly AskCreateThing[] AllCreateThings =
         {
-            new AskCreateThing("measure", "daxlab", "measure, kpi"),
-            new AskCreateThing("calculated column", "daxlab", "calculated column, calc column"),
-            new AskCreateThing("calculated table", "daxlab", "calculated table, calc table"),
-            new AskCreateThing("function", "daxlab", "function, udf"),
+            new AskCreateThing("measure", "query", "measure, kpi", "daxlab"),
+            new AskCreateThing("calculated column", "query", "calculated column, calc column", "daxlab"),
+            new AskCreateThing("calculated table", "query", "calculated table, calc table", "daxlab"),
+            new AskCreateThing("function", "query", "function, udf", "daxlab"),
             new AskCreateThing("calculation item", "advmodels", "calculation item, calc item"),
             new AskCreateThing("table", "spec", "table"),
             new AskCreateThing("relationship", "diagram", "relationship, join, link"),

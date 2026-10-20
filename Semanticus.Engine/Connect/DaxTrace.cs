@@ -252,10 +252,13 @@ namespace Semanticus.Engine
         // DAXEvaluationLog (135) and VertiPaqSEQueryCacheMatch (85) all accept SPID (id 41) — verified directly
         // against a live engine — so without it here the SPID filter silently dropped the query plan + EVALUATEANDLOG
         // events (only the SPID-bearing QueryEnd survived). It also lets us read our own SPID off any of these events.
-        private static readonly AS.TraceColumn[] MarkerCols =
+        // DatabaseName (id 28) is REQUIRED on the Power BI service: measured 17 Oct on a real service endpoint, the same query sent NO
+        // DAXQueryPlan event with the columns above alone and a logical + physical plan once this column was added (QueryBegin/End and
+        // the SE scans arrive either way, which is why only the plan went missing). DAX Studio 2.9.0 added it for the same reason.
+        internal static readonly AS.TraceColumn[] MarkerCols =
         {
             AS.TraceColumn.EventClass, AS.TraceColumn.EventSubclass, AS.TraceColumn.TextData,
-            AS.TraceColumn.SessionID, AS.TraceColumn.Spid,
+            AS.TraceColumn.SessionID, AS.TraceColumn.Spid, AS.TraceColumn.DatabaseName,
         };
 
         // Scope the trace to OUR session (and our ApplicationName, "Semanticus", as a fallback match) — this is
@@ -320,6 +323,31 @@ namespace Semanticus.Engine
             }
             sw.Stop();
             clearCaptured();
+            anySeen.Reset();
+            return -1;
+        }
+
+        // The plan capture's warm-up: each ping carries a unique tag in its text, so the trace can tell the ping's own QueryEnd from the
+        // query's. Returns once a ping has reported its end (a ping's plan and end arrive late, and used to land in the query's window).
+        private static long WarmUpTagged(LiveConnection live, ManualResetEventSlim anySeen, PlanCollector plans)
+        {
+            var sw = Stopwatch.StartNew();
+            var pings = 0;
+            while (sw.Elapsed < TimeSpan.FromSeconds(8))
+            {
+                pings++;
+                try { live.ExecuteWithinExclusiveAsync($"EVALUATE ROW(\"{plans.PingTag}_{pings}\", 1)", 1, 30).GetAwaiter().GetResult(); } catch { }
+                if (!anySeen.Wait(TimeSpan.FromMilliseconds(1500))) continue;
+                var end = Stopwatch.StartNew();
+                while (plans.PingEnds < 1 && end.Elapsed < TimeSpan.FromSeconds(3)) Thread.Sleep(25);   // a ping's own end, or give up waiting
+                Thread.Sleep(plans.PingEnds < 1 ? 300 : 150);                                           // let a slower earlier ping's tail flush
+                sw.Stop();
+                plans.Reset();
+                anySeen.Reset();
+                return sw.ElapsedMilliseconds;
+            }
+            sw.Stop();
+            plans.Reset();
             anySeen.Reset();
             return -1;
         }
@@ -494,9 +522,9 @@ namespace Semanticus.Engine
 
         // DAXEvaluationLog (event 135) is picky: it has no EventSubclass — just the JSON in TextData. It DOES carry
         // SPID (verified against a live engine) — required so the SPID trace-filter actually matches it.
-        private static readonly AS.TraceColumn[] EvalLogCols =
+        internal static readonly AS.TraceColumn[] EvalLogCols =
         {
-            AS.TraceColumn.EventClass, AS.TraceColumn.TextData, AS.TraceColumn.SessionID, AS.TraceColumn.Spid,
+            AS.TraceColumn.EventClass, AS.TraceColumn.TextData, AS.TraceColumn.SessionID, AS.TraceColumn.Spid, AS.TraceColumn.DatabaseName,
         };
 
         private static void AddEvent(TOM.Trace trace, AS.TraceEventClass cls, AS.TraceColumn[] cols)
@@ -521,13 +549,10 @@ namespace Semanticus.Engine
 
         private static QueryPlanResult CapturePlan(LiveConnection live, string query)
         {
-            const int PlanCap = 20000;
             live.EnsureSpid();                               // resolve the SPID (universal filter key) before building the filter
-            var logical = new System.Text.StringBuilder();
-            var physical = new System.Text.StringBuilder();
+            var plans = new PlanCollector("semwarm_" + Guid.NewGuid().ToString("N").Substring(0, 8));
             var raw = new int[1];                            // total events seen (any class) — for diagnostics
             var spidHolder = new string[1];                  // SPID read off a trace event — fallback if the DMV never resolved it
-            var gotQueryEnd = new ManualResetEventSlim(false);
             var anySeen = new ManualResetEventSlim(false);   // set on ANY trace event — confirms the subscription is live
             TOM.Server server = null; TOM.Trace trace = null; var traceUp = false;
             try
@@ -542,17 +567,13 @@ namespace Semanticus.Engine
                     System.Threading.Interlocked.Increment(ref raw[0]);
                     anySeen.Set();
                     if (spidHolder[0] == null) { var sp = e.Spid; if (!string.IsNullOrEmpty(sp)) spidHolder[0] = sp; }
-                    if (e.EventClass == AS.TraceEventClass.QueryEnd) { gotQueryEnd.Set(); return; }
+                    if (e.EventClass == AS.TraceEventClass.QueryEnd) { plans.OnQueryEnd(SafeText(e)); return; }
                     if (e.EventClass != AS.TraceEventClass.DAXQueryPlan) return;
-                    var txt = SafeText(e);
-                    if (string.IsNullOrEmpty(txt)) return;
                     // Route by the subclass NAME, not a magic int: the real values are DAXVertiPaqLogicalPlan=216 /
                     // DAXVertiPaqPhysicalPlan=217 (+ DAXDirectQuery* variants) — the old 1/2 guess matched neither, so
                     // BOTH plans fell into the logical bucket and Physical was always empty. Verified against a live engine.
                     string subName = null; try { subName = e.EventSubclass.ToString(); } catch { }
-                    var isPhysical = subName != null && subName.IndexOf("Physical", StringComparison.OrdinalIgnoreCase) >= 0;
-                    var sb = isPhysical ? physical : logical;
-                    lock (sb) { if (sb.Length < PlanCap) sb.AppendLine(txt); }
+                    plans.OnPlan(subName != null && subName.IndexOf("Physical", StringComparison.OrdinalIgnoreCase) >= 0, SafeText(e));
                 };
                 trace.Update(); trace.Start(); traceUp = true;
             }
@@ -569,21 +590,27 @@ namespace Semanticus.Engine
             }
 
             // Confirm the subscription is live before running the real query (the plan events fire FIRST, so an
-            // un-warmed trace misses them entirely — see WarmUpTrace), then drop the ping's own plan.
-            var warmupMs = WarmUpTrace(live, anySeen, () => { lock (logical) logical.Clear(); lock (physical) physical.Clear(); System.Threading.Interlocked.Exchange(ref raw[0], 0); });
-            gotQueryEnd.Reset();
+            // un-warmed trace misses them entirely — see WarmUpTrace), then drop the ping's own plan and end.
+            var warmupMs = WarmUpTagged(live, anySeen, plans);
             if (!string.IsNullOrEmpty(spidHolder[0])) live.SetSpid(spidHolder[0]);   // cache SPID for the NEXT capture's filter
 
             var sw = Stopwatch.StartNew();
             ResultSet rs;
-            try { rs = live.ExecuteWithinExclusiveAsync(query, 1, 120).GetAwaiter().GetResult(); sw.Stop(); gotQueryEnd.Wait(TimeSpan.FromSeconds(6)); Thread.Sleep(150); }
+            try
+            {
+                rs = live.ExecuteWithinExclusiveAsync(query, 1, 120).GetAwaiter().GetResult(); sw.Stop();
+                // This query's own end, then both plans (or a short quiet spell): the plan events can land after the end.
+                var wait = Stopwatch.StartNew();
+                while (!plans.GotQueryEnd && wait.Elapsed < TimeSpan.FromSeconds(6)) Thread.Sleep(25);
+                wait.Restart();
+                while (!plans.GotBothPlans && wait.Elapsed < TimeSpan.FromSeconds(3) && !(wait.ElapsedMilliseconds >= 400 && plans.SinceLastEvent >= TimeSpan.FromMilliseconds(400))) Thread.Sleep(25);
+            }
             finally { Cleanup(server, trace, traceUp); }
 
             if (!string.IsNullOrEmpty(rs.Error)) return new QueryPlanResult { Error = rs.Error, TraceAvailable = true };
 
-            string lp, pp;
-            lock (logical) lp = logical.ToString().TrimEnd();
-            lock (physical) pp = physical.ToString().TrimEnd();
+            var lp = plans.Logical;
+            var pp = plans.Physical;
             var available = lp.Length > 0 || pp.Length > 0;
             return new QueryPlanResult
             {

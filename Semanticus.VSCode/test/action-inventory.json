@@ -25,18 +25,6 @@
   "querywells.tsx::onConfig({ ...config, filters: next })::setEditFilter(null)": {
    "why": "onConfig sets the page's own query config (local state, nothing is written to the engine); the filter editor holds no typed words"
   },
-  "search.tsx::saveState('searchFind', v)::setPreview(null)": {
-   "why": "saveState keeps the page's own settings; the preview is derived, no words are lost"
-  },
-  "search.tsx::saveState('searchPower', v)::setPreview(null)": {
-   "why": "saveState keeps the page's own settings; the preview is derived, no words are lost"
-  },
-  "search.tsx::saveState('searchReplace', v)::setPreview(null)": {
-   "why": "saveState keeps the page's own settings; the preview is derived, no words are lost"
-  },
-  "search.tsx::saveState(scopeKey, value)::setPreview(null)": {
-   "why": "saveState keeps the page's own settings; the preview is derived, no words are lost"
-  },
   "tests-authoring.tsx::onPick(shape)::setOpen(false)": {
    "why": "a menu of authoring shapes: a pick, no typed words"
   },

@@ -84,11 +84,6 @@
    "class": "outage-deferred",
    "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
   },
-  "askdata.tsx::AskDataView::input::words": {
-   "class": "held",
-   "how": "persisted-state",
-   "why": "the page keeps it in its persisted state under a key, so a remount and a reload find it"
-  },
   "askdata.tsx::ChipMenu::input::find": {
    "class": "search",
    "why": "a search or filter box: a typed query is not work to keep"
@@ -186,11 +181,12 @@
    "class": "parent",
    "why": "the value is a prop: the parent owns the words"
   },
-  "daxlab.tsx::DaxLabView::DaxEditor::query": {
-   "class": "search",
-   "why": "a search or filter box: a typed query is not work to keep"
+  "query.tsx::DaxBody::DaxEditor::q.query": {
+   "class": "held",
+   "how": "persisted-state",
+   "why": "persisted-state: the query text is kept per model under lab.bq (the hook in daxlab.tsx)"
   },
-  "daxlab.tsx::SpeedView::input::runs": {
+  "query.tsx::SpeedBody::input::q.runs": {
    "class": "held",
    "how": "persisted-state",
    "why": "persisted-state: the run count is kept under lab.runs"
@@ -450,14 +446,6 @@
    "how": "draft-store",
    "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
   },
-  "search.tsx::SearchView::input::find": {
-   "class": "search",
-   "why": "a search or filter box: a typed query is not work to keep"
-  },
-  "search.tsx::SearchView::input::replace": {
-   "class": "search",
-   "why": "the replace half of the search page"
-  },
   "sendtask.tsx::RuleCheckBox::input::check": {
    "class": "outage-deferred",
    "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
@@ -529,7 +517,7 @@
    "class": "parent",
    "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
   },
-  "tests-authoring.tsx::TrustedAnswerForm::input::expected": {
+  "tests-authoring.tsx::TrustedAnswerForm::input::expectedShown": {
    "class": "parent",
    "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
   },
@@ -553,10 +541,6 @@
    "class": "parent",
    "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
   },
-  "tests-authoring.tsx::CompareWithSourceForm::textarea::sql": {
-   "class": "parent",
-   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
-  },
   "tests-authoring.tsx::CompareWithSourceForm::textarea::filterDax": {
    "class": "parent",
    "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
@@ -575,7 +559,7 @@
    "how": "draft-store",
    "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
   },
-  "tests.tsx::SavedChecks::input::query": {
+  "tests.tsx::ValidationBoard::input::passFilter": {
    "class": "search",
    "why": "a search or filter box: a typed query is not work to keep"
   },
@@ -662,6 +646,26 @@
   "propage.tsx::TrialOffer::input::p.trialEmail ?? ''": {
    "class": "parent",
    "why": "the value is a prop: the parent owns the words"
+  },
+  "tests-authoring.tsx::CompareWithSourceForm::textarea::sqlText": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-addsource.tsx::SqlSourceAddForm::input::name": {
+   "class": "transient",
+   "why": "a one-gesture form inside the check drawer: it takes a source's name, server and database and saves it at once, or is cancelled; nothing typed there is a check"
+  },
+  "tests-addsource.tsx::SqlSourceAddForm::input::server": {
+   "class": "transient",
+   "why": "a one-gesture form inside the check drawer: it takes a source's name, server and database and saves it at once, or is cancelled; nothing typed there is a check"
+  },
+  "tests-addsource.tsx::SqlSourceAddForm::input::database": {
+   "class": "transient",
+   "why": "a one-gesture form inside the check drawer: it takes a source's name, server and database and saves it at once, or is cancelled; nothing typed there is a check"
+  },
+  "tests.tsx::CheckDetail::input::waiveNote": {
+   "class": "transient",
+   "why": "the optional one-line note for one Waive press: typed for that gesture and cleared when the press is made"
   }
  },
  "scopes": {

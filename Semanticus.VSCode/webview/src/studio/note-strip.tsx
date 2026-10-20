@@ -3,7 +3,7 @@
 // and carries Show me, Skip to now, the waiting count and What I did. Presses are the cursor's (cursor.tsx); this file
 // only reads and drives the queue (notes-store.ts).
 import { notesStore, useNotes, useNotesWire } from './notes-runtime';
-import { WhatIDid } from './what-i-did';
+import { WhatIDidNow } from './what-i-did';
 import { Suggest } from './suggest';
 import './studio-notes.css';
 import { upgradeToPro } from '../pro';
@@ -46,7 +46,7 @@ export function NoteStrip() {
           <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" data-testid="note-what-i-did" onClick={() => notesStore.setListOpen(true)}>What I did</button>
         </div>
       ) : null}
-      {listOpen && <WhatIDid log={log} unread={unread} onShow={showLog} onClose={() => notesStore.setListOpen(false)} />}
+      {listOpen && <WhatIDidNow log={log} unread={unread} onShow={showLog} onClose={() => notesStore.setListOpen(false)} />}
       {suggestion && <Suggest view={suggestion} />}
     </div>
   );

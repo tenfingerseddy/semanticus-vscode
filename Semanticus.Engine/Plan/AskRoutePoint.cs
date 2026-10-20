@@ -138,7 +138,16 @@ namespace Semanticus.Engine
     /// test that can only see the winner cannot tell a confident match from a coin toss.</summary>
     public sealed class AskWordMatch
     {
+        /// <summary>The PAGE the words place the line on. The Query page is "query" whichever of its two word groups won;
+        /// this is the id that is allowed to leave the engine.</summary>
         public string Tool { get; set; }
+
+        /// <summary>The word group that won (AskRouteCatalog.WordGroups): "askdata" for the words of a question about the
+        /// numbers, "daxlab" for the words of writing or creating a calculation, and the page's own id for every other
+        /// place. It decides how the line is READ (a question reads two ways, a create request does not) and is never
+        /// shown to a person or sent to the assistant.</summary>
+        public string Group { get; set; }
+
         public string Create { get; set; }
         public int Score { get; set; }
         public int RunnerUp { get; set; }
@@ -175,7 +184,7 @@ namespace Semanticus.Engine
         /// which is fixed, because the order is part of the request digest.</summary>
         public static IReadOnlyList<DecisionQuestion> Questions()
         {
-            var options = AskRouteCatalog.Tools
+            var options = AskRouteCatalog.WordGroups
                 .Select(t => new DecisionOption(t.Id, t.Criterion))
                 .ToList();
 
@@ -229,7 +238,9 @@ namespace Semanticus.Engine
             confidence = answer.Confidence;
             if (answer.Confidence < bar) return null;
             if (string.Equals(answer.Choice, AskRouteCatalog.NoTool, StringComparison.Ordinal)) return null;
-            return AskRouteCatalog.Find(answer.Choice) == null ? null : answer.Choice;
+            // The choice is one of the word groups the service was shown (AskRouteCatalog.WordGroups), not yet a page: the
+            // caller reads a question group differently from a create group and then names the page (PageOf).
+            return AskRouteCatalog.FindGroup(answer.Choice) == null ? null : answer.Choice;
         }
 
         /// <summary>The three questions the engine's own state answers, and the place each one belongs to.
@@ -274,8 +285,9 @@ namespace Semanticus.Engine
         /// HOW IT SCORES. A noun is worth 2, a verb 1 and a RELATION 4, a phrase is worth one more than a
         /// single word, and a tool matching both a noun and a verb takes a further 2. That last bonus is the
         /// whole point of splitting the lists: it puts one noun plus one verb (5) above two nouns (4), so
-        /// "what breaks if I rename Total Sales" lands on Lineage while "rename Total Sales" lands on Find
-        /// and replace. A relation counts as a verb for that bonus, because it is one.
+        /// "what breaks if I rename Total Sales" lands on Lineage while a bare "rename Total Sales" lands on
+        /// no page (Find and replace left the Studio in 1.5.1, so the assistant takes it).
+        /// A relation counts as a verb for that bonus, because it is one.
         ///
         /// WHEN IT ANSWERS. Only on a clear winner: at least 2, and strictly ahead of the runner-up. A tie is
         /// not a near miss to be broken by a rule of thumb, it is two plausible doors, and the second pass (or
@@ -301,11 +313,11 @@ namespace Semanticus.Engine
         public static AskWordMatch MatchWords(string text)
         {
             var catalog = MatchCatalog(text);
-            if (catalog != null && string.Equals(catalog.Tool, AskRouteCatalog.DataTool, StringComparison.Ordinal))
+            if (catalog != null && string.Equals(catalog.Group, AskRouteCatalog.DataTool, StringComparison.Ordinal))
                 return catalog;
-            if (catalog != null && string.Equals(catalog.Tool, AskRouteCatalog.RowsTool, StringComparison.Ordinal)
+            if (catalog != null && string.Equals(catalog.Group, AskRouteCatalog.RowsTool, StringComparison.Ordinal)
                 && (DataQuestionMatch(text) != null || AsksForAnAmount(text)))
-                return new AskWordMatch { Tool = AskRouteCatalog.DataTool, Score = catalog.Score, RunnerUp = catalog.RunnerUp };
+                return Matched(AskRouteCatalog.DataTool, catalog.Score, catalog.RunnerUp);
             return catalog ?? DataQuestionMatch(text);
         }
 
@@ -326,9 +338,9 @@ namespace Semanticus.Engine
             // A request to make a model from a source is the Model Spec's, whatever else the words mention: "connect to SQL and
             // create a model" also says "connect", and Diagram is what that word alone finds (AskMakeIntent).
             if (AskMakeIntent.Classify(text) == MakeIntent.Yes)
-                return new AskWordMatch { Tool = ModelSpecTool, Score = MakeIntentWorth, RunnerUp = 0, Create = CreateThing(words, ModelSpecTool) };
+                return Matched(ModelSpecTool, MakeIntentWorth, 0, CreateThing(words, ModelSpecTool));
 
-            foreach (var tool in AskRouteCatalog.Tools)
+            foreach (var tool in AskRouteCatalog.WordGroups)
             {
                 var nouns = tool.Words.Nouns.Sum(w => Hit(words, w, NounWorth));
                 var verbs = tool.Words.Verbs.Sum(w => Hit(words, w, VerbWorth))
@@ -341,14 +353,18 @@ namespace Semanticus.Engine
 
             if (best.Tool == null || best.Score < 2 || best.Score <= runnerUp) return null;
 
-            return new AskWordMatch
-            {
-                Tool = best.Tool,
-                Score = best.Score,
-                RunnerUp = runnerUp,
-                Create = CreateThing(words, best.Tool),
-            };
+            return Matched(best.Tool, best.Score, runnerUp, CreateThing(words, best.Tool));
         }
+
+        /// <summary>One word match, named for the group that won and for the page that group is answered on.</summary>
+        private static AskWordMatch Matched(string group, int score, int runnerUp, string create = null) => new AskWordMatch
+        {
+            Tool = AskRouteCatalog.PageOf(group),
+            Group = group,
+            Score = score,
+            RunnerUp = runnerUp,
+            Create = create,
+        };
 
         /// <summary>The thing being made, when a create verb and exactly one known thing are both present and
         /// that thing belongs to the page that won. Anything less is null: "add a note about the sales role"
@@ -358,7 +374,7 @@ namespace Semanticus.Engine
         /// letter of the list, "calculated table" and "table", and they are not two candidates: one of them is
         /// a word inside the other. The most words matched wins, and only a single winner at that length
         /// counts, so a real pair of things still answers with nothing.</summary>
-        private static string CreateThing(string[] words, string tool)
+        private static string CreateThing(string[] words, string group)
         {
             if (!AskRouteCatalog.CreateVerbs.Any(v => Hit(words, v, VerbWorth) > 0)) return null;
 
@@ -377,7 +393,7 @@ namespace Semanticus.Engine
             var longest = named.Max(x => x.Length);
             var best = named.Where(x => x.Length == longest).ToList();
             if (best.Count != 1) return null;
-            return string.Equals(best[0].Thing.Tool, tool, StringComparison.Ordinal) ? best[0].Thing.Name : null;
+            return string.Equals(best[0].Thing.Group, group, StringComparison.Ordinal) ? best[0].Thing.Name : null;
         }
 
         /// <summary>The words split a number by something: "by", "per", "for each", or a comparison ("vs", "versus"),
@@ -394,7 +410,7 @@ namespace Semanticus.Engine
                 var split = w == "per" || w == "vs" || w == "versus"
                     || (w == "by" && words[i + 1] != "default")
                     || (w == "each" && words[i - 1] == "for" && i > 1);
-                if (split) return new AskWordMatch { Tool = AskRouteCatalog.DataTool, Score = NounWorth };
+                if (split) return Matched(AskRouteCatalog.DataTool, NounWorth, 0);
             }
             return null;
         }
@@ -517,7 +533,7 @@ namespace Semanticus.Engine
         public static AskRouteTool TaskPlace(string text)
         {
             var match = MatchCatalog(text);
-            if (match?.Tool == null || string.Equals(match.Tool, AskRouteCatalog.DataTool, StringComparison.Ordinal))
+            if (match?.Tool == null || string.Equals(match.Group, AskRouteCatalog.DataTool, StringComparison.Ordinal))
                 return null;
             return AskRouteCatalog.Find(match.Tool);
         }
@@ -551,12 +567,13 @@ namespace Semanticus.Engine
                 Confidence = place == null ? 0 : 1,
                 Line = place == null ? KeepAsATask + " " + NoPageForATask : KeepAsATask + " It is done on " + place.Label + ".",
             };
-            var asked = askDataGranted ? AskRouteCatalog.DataTool : AskRouteCatalog.QueriesTool;
+            // Both tiers are sent to the same page: the Query page asks the question where the tier has that, and runs a
+            // query written by hand where it does not (the Pro line below says so).
             var question = new AskReading
             {
                 Kind = QuestionReading,
-                Tool = asked,
-                Area = AskRouteCatalog.AreaOf(asked),
+                Tool = AskRouteCatalog.QueryPage,
+                Area = AskRouteCatalog.AreaOf(AskRouteCatalog.QueryPage),
                 Confidence = questionConfidence,
                 Line = askDataGranted ? AskItAsAQuestion : AskItAsAQuestion + " " + DataQuestionProLine,
             };
@@ -606,7 +623,7 @@ namespace Semanticus.Engine
             var matched = MatchWords(text);
             if (matched == null) return null;
             result.Asked = false;
-            if (string.Equals(matched.Tool, AskRouteCatalog.DataTool, StringComparison.Ordinal))
+            if (string.Equals(matched.Group, AskRouteCatalog.DataTool, StringComparison.Ordinal))
                 return Readings(result, text, askDataGranted, questionConfidence: 1);
             result.Tool = matched.Tool;
             result.Area = AskRouteCatalog.AreaOf(matched.Tool);
@@ -633,7 +650,7 @@ namespace Semanticus.Engine
 
         /// <summary>The line a data question reads where Ask your data is not part of this session's tier.</summary>
         public const string DataQuestionProLine =
-            "Ask your data is part of Semanticus Pro. Queries runs any query you write, on every tier.";
+            "Asking in plain words is part of Semanticus Pro. Query runs any query you write, on every tier.";
 
         private static bool Contains(string[] words, string[] phrase)
         {
@@ -648,9 +665,9 @@ namespace Semanticus.Engine
         }
 
         /// <summary>What one matched word is worth. A NOUN is the thing a page is about and is worth twice a
-        /// VERB, which on its own is nearly always ambiguous: "rename" is Find and replace when it is the
-        /// thing being asked for and Lineage when it is only the verb in a question about impact, and these
-        /// two numbers are the whole of what tells those two asks apart.
+        /// VERB, which on its own is nearly always ambiguous: "rename" is Lineage when it is the verb
+        /// in a question about impact and no page when it stands alone, and these two numbers are the whole of what
+        /// tells those two asks apart.
         ///
         /// A RELATION beats them both, and 4 rather than 3 is deliberate: a two-word noun PHRASE is worth 3,
         /// so at 3 a relation only ties with one and "what uses the date table" would answer nobody. A

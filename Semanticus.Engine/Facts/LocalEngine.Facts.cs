@@ -136,6 +136,8 @@ namespace Semanticus.Engine
             if (seam != null) execute = (sql, max) => seam(target.Server, target.Database, sql, max);
             else
             {
+                var hostRefusal = await SqlHostRefusalAsync(target.Server, target.Database, target.AuthMode, target.TenantId, origin, typedByPerson: false).ConfigureAwait(false);
+                if (hostRefusal != null) return Facts.SourceSample.Refuse(target, tables, hostRefusal, budget);
                 string token;
                 try { token = SourceSampleTokenForTest != null ? SourceSampleTokenForTest() : await AcquireSqlTokenAsync(target.AuthMode, target.TenantId, origin, ct).ConfigureAwait(false); }
                 catch (Exception ex) { return Facts.SourceSample.Refuse(target, tables, "Could not sign in to read a sample: " + ScrubSchemaError(ex.Message), budget); }
