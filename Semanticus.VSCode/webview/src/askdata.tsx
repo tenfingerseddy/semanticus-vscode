@@ -146,7 +146,7 @@ export function AnswerBody({ answer, parts, connected, view, viz = 'bar', onViz,
               // The passed checks fold into this one line (their words are its tooltip and "Show checks"). A failed
               // check never folds: it prints in full below. A capped answer says so here, in the engine's own words.
               <span className="sem-num" title={passed.map((c) => c.line).join(' ')}>
-                ✓ Checked{o === 'answered' ? ` · ${answer.truncated && rowsCheck ? rowsCheck.line : rowCountWord(answer.rowCount ?? rs.rows.length)}` : ''}
+                {o === 'answered' ? 'Query ran' : 'Query built'}{o === 'answered' ? ` · ${answer.truncated && rowsCheck ? rowsCheck.line : rowCountWord(answer.rowCount ?? rs.rows.length)}` : ''}
                 {o === 'answered' && typeof answer.elapsedMs === 'number' ? ` · ${answer.elapsedMs} ms` : ''}
               </span>
             )}
@@ -331,7 +331,7 @@ export function SaveChooser({ answer, value, onChange, onCancel, onContinue, rea
   useSurfaceEscape(onCancel);
   return (
     <div className="sem-inset sem-stack" data-testid="askdata-save" role="group" aria-label="Save as a check">
-      <span className={meta}>A check keeps one number. Pick the number and the row it should stay at. It runs with your other checks in Validation.</span>
+      <span className={meta}>A check keeps one number. Pick the number and the row it should stay at. It runs with your other checks in Checks.</span>
       <div className="sem-inline flex-wrap">
         {measures.length > 1 && (
           <label className={`sem-inline ${meta}`}>Number

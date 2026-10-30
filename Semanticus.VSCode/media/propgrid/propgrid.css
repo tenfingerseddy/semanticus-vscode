@@ -1,9 +1,11 @@
 /* The Properties grid reads the visual-language tokens (media/studio/tokens.css, linked before this file).
    Every length is a token (Instrument, 23 September 2026). The grid is a dense VS Code side panel, so rows use the
    smallest steps: a row is split from the next by one --sem-space-1, and a category label is sentence case. */
-body { font: var(--sem-text-body)/var(--sem-lh-body) var(--sem-font-ui); color: var(--vscode-foreground); margin: 0; }
+body { font: var(--sem-text-body)/var(--sem-lh-body) var(--sem-font-ui); color: var(--vscode-foreground); margin: 0; padding: 0; }
 .empty { padding: var(--sem-space-3); color: var(--vscode-descriptionForeground); font-size: var(--sem-text-body); }
-.hdr { padding: 0 var(--sem-space-3); line-height: var(--sem-control-h); font-weight: 600; font-size: var(--sem-text-body); background: var(--vscode-sideBar-background); position: sticky; top: 0; z-index: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hdr { display: flex; align-items: center; gap: var(--sem-space-1); padding: 0 var(--sem-space-3); line-height: var(--sem-control-h); font-weight: 600; font-size: var(--sem-text-body); background: var(--vscode-sideBar-background); position: sticky; top: 0; z-index: 2; overflow: hidden; white-space: nowrap; }
+.hdr-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hdr .ck-grid-mark { flex: none; }
 .multi { color: var(--vscode-charts-blue, var(--vscode-textLink-foreground)); }
 .search { position: sticky; top: var(--sem-control-h); z-index: 2; padding: var(--sem-space-1) var(--sem-space-3) var(--sem-space-2); background: var(--vscode-sideBar-background); border-bottom: 1px solid var(--vscode-panel-border); }
 .search input { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); height: var(--sem-control-h-sm); padding: 0 var(--sem-space-2); font-size: var(--sem-text-body); border-radius: var(--sem-radius-control); }
@@ -75,3 +77,5 @@ input:focus, select:focus, textarea:focus { outline: 1px solid var(--vscode-focu
 /* The Enter hint is for the box being typed in, so it shows only while the row has focus. */
 .enter-hint { display: none; }
 .rowx:focus-within > .enter-hint { display: block; }
+/* The shared mark stays with the selected measure's name. */
+.ck-grid-mark { display: inline-flex; max-width: 100%; margin-left: var(--sem-space-2); font-weight: normal; }

@@ -56,7 +56,7 @@ namespace Semanticus.Tests
                 var refs = new[] { "table:Sales", ms[0], column, hierarchy };
                 if (!hidden) await engine.SetObjectPropertiesAsync(refs, "IsHidden", "true", "human");
                 var commits = new List<ChangeNotification>();
-                sm.Bus.Changed += commits.Add;
+                sm.Bus.Changed += n => { if (n.IsCommit) commits.Add(n); };
                 var revision = sm.Current.Revision;
                 await engine.SetObjectPropertiesAsync(refs, "IsHidden", hidden.ToString(), "human");
                 Assert.Single(commits);
@@ -95,7 +95,7 @@ namespace Semanticus.Tests
 
                 // Subscribe AFTER setup so the ONLY counted notification is the set_properties under test.
                 var seen = new List<ChangeNotification>();
-                Action<ChangeNotification> handler = n => seen.Add(n);
+                Action<ChangeNotification> handler = n => { if (n.IsCommit) seen.Add(n); };
                 sm.Bus.Changed += handler;
                 try
                 {

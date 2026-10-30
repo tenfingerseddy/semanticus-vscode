@@ -268,6 +268,11 @@ namespace Semanticus.Engine
         /// how it was closed so a redo of that same edit closes it again. Null otherwise (UAT S01-j2-007).</summary>
         public PlanTaskTakenBack TakenBack { get; set; }
 
+        /// <summary>The edit step this task was made alongside, set on the rows "Your standard" Apply sends to the Plan: when History takes
+        /// that step back, the row leaves the Plan with it, and a redo brings it back. Null on every other task.</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public PlanTaskStep MadeByStep { get; set; }
+
         /// <summary>Kept only on a migrated or newly typed AIM, so the goal filter "Your aims" still files it.
         /// Null on every other task.</summary>
         public string Section { get; set; }
@@ -284,6 +289,13 @@ namespace Semanticus.Engine
         /// <summary>Old ids that still name this task: a migrated target keeps its slug and its
         /// "target/slug" item id here, so a skip, an assistant or a saved link naming either still resolves.</summary>
         public string[] Aliases { get; set; } = Array.Empty<string>();
+    }
+
+    /// <summary>The edit step (session and revision) a task was made alongside. See <see cref="PlanTask.MadeByStep"/>.</summary>
+    public sealed class PlanTaskStep
+    {
+        public string SessionId { get; set; }
+        public long Revision { get; set; }
     }
 
     /// <summary>How a task was closed before History took its edit back (<see cref="PlanTask.TakenBack"/>).</summary>

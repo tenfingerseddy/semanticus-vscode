@@ -10,12 +10,12 @@ using ModelContextProtocol.Server;
 
 namespace Semanticus.Engine
 {
-    /// <summary>Has the build installed beside this process moved away from the build this process is running?
+    /// <summary>Has the original installed build moved away from the build this process is running?
     ///
     /// Kane, 25 September: an in-place reinstall of the same version left older engines running, and the assistant's
     /// connection from that morning was one of them. The assistant cannot see that from the outside; this process can,
     /// by comparing the build it started from (<see cref="BuildIdentity.Current"/>, read first thing in Main) with the
-    /// files in its folder now. A folder that is gone counts as updated: VS Code removes an old version's folder once
+    /// files in its original install now. A folder that is gone counts as updated: VS Code removes an old version's folder once
     /// a newer one is installed.
     ///
     /// Asked on every tool call, so it is cheap: the hash is recomputed only when a Semanticus assembly's size or write
@@ -85,9 +85,9 @@ namespace Semanticus.Engine
             + "Restart the assistant to finish (in Claude Code, reconnect with /mcp). Tell the person the same if they ask why something looks out of date.";
 
         private static readonly Lazy<InstalledBuildWatch> _installed =
-            new Lazy<InstalledBuildWatch>(() => new InstalledBuildWatch(AppContext.BaseDirectory, BuildIdentity.Current));
+            new Lazy<InstalledBuildWatch>(() => new InstalledBuildWatch(EngineCache.InstallationDirectory, BuildIdentity.Current));
 
-        /// <summary>This process's own watch: its load folder against the build it started from.</summary>
+        /// <summary>This process's original install against the build it started from, even when it loads from a retained copy.</summary>
         public static bool InstalledBuildMoved()
         {
             try { return _installed.Value.Updated(); }

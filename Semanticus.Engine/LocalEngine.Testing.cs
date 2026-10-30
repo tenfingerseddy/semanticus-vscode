@@ -456,12 +456,13 @@ namespace Semanticus.Engine
 
         private async Task<ResultSet> ReconcileSqlAsync(string server, string database, string token, string sql, int maxRows)
         {
-            await _sqlLane.WaitAsync().ConfigureAwait(false);
+            var cancellation = measureRunCancellation.Value;
+            await _sqlLane.WaitAsync(cancellation).ConfigureAwait(false);
             try
             {
                 var seam = ReconcileSqlForTests;
                 if (seam != null) return seam(server, database, sql) ?? new ResultSet();
-                return await FabricSqlQuery.ExecuteAsync(server, database, token, sql, maxRows, 120, CancellationToken.None).ConfigureAwait(false);
+                return await FabricSqlQuery.ExecuteAsync(server, database, token, sql, maxRows, 120, cancellation).ConfigureAwait(false);
             }
             finally { _sqlLane.Release(); }
         }

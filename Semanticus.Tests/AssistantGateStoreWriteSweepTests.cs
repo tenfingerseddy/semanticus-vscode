@@ -38,6 +38,7 @@ namespace Semanticus.Tests
         {
             ["DaxLibUninstallAsync"] = "needs a package installed from the DaxLib registry (a network call); it edits the model's functions and the install record in the model's own annotations (audit: full table)",
             ["OptimizeMeasureAsync"] = "needs a live connection to race the candidates; it writes one model edit and the audit record in the model's own annotations, and with apply it appends one line to the vitals log .semanticus/vitals/vitals.jsonl (audit: full table)",
+            ["AddTimeMeasuresAsync"] = "needs a calendar made by setup_calendars and a measure that wraps a time function; it writes only model measures and their lineage note, in the model (CalendarPlanTests proves it is one undo step)",
             ["SubmitWorkflowStepAsync"] = "needs a started workflow run; run state is engine memory and a step's writes are model edits (audit: full table)",
         };
 
@@ -181,6 +182,7 @@ namespace Semanticus.Tests
             ["CreateHierarchyAsync"] = r => R("tableRef", "table:Product", "name", "H", "levelColumns", new[] { "Name", "ProductId" }),
             ["CreateImportTableAsync"] = r => R("name", "Imp", "mExpression", "let Source = 1 in Source"),
             ["CreateLinguisticSchemaAsync"] = r => R("culture", "en-US"),
+            ["CleanupMeaningAnnotationsAsync"] = r => R(),
             ["CreateMeasureAsync"] = r => R("tableRef", "table:Sales", "name", "Extra", "expression", "1"),
             ["CreateNamedExpressionAsync"] = r => R("name", "Another", "expression", "1"),
             ["CreatePerspectiveAsync"] = r => R("name", "Second"),
@@ -190,6 +192,7 @@ namespace Semanticus.Tests
             ["DefineCalendarAsync"] = r => R("tableRef", "Dates", "name", "Cal2", "mappings", new[] { new CalendarMappingSpec { Column = "Date", TimeUnit = "Date" } }),
             ["DefineCalendarFromTemplateAsync"] = r => R("template", "gregorian", "tableName", "Dates", "dateColumn", "Date", "fiscalStartMonth", 1, "startExpr", "DATE(2020,1,1)", "endExpr", "DATE(2021,12,31)", "calendarName", "Standard"),
             ["DeleteCalendarAsync"] = r => R("tableRef", "Dates", "name", "Cal"),
+            ["SetupCalendarsAsync"] = r => R("dateTable", "Dates", "calendars", new[] { "year" }, "fiscalStartMonth", 0, "levels", (CalendarLevelChoice[])null, "moveMeasures", true),
             ["DeleteInterviewQuestionAsync"] = r => R("id", r.QuestionId),
             ["DeleteObjectAsync"] = r => R("objRef", "measure:Sales/Margin"),
             ["DeleteObjectsAsync"] = r => R("objRefs", new[] { "measure:Sales/Margin" }),
@@ -231,8 +234,11 @@ namespace Semanticus.Tests
             ["SetDisplayFolderAsync"] = r => R("refs", new[] { "measure:Sales/Margin" }, "folder", "Money"),
             ["SetDocSectionAsync"] = r => R("objRef", "measure:Sales/Total", "sectionKey", "purpose", "markdown", "It sums the sales."),
             ["SetIncrementalRefreshPolicyAsync"] = r => R("tableRef", "table:IR", "dateColumn", "OrderDate", "rollingWindowPeriods", (int?)5, "rollingWindowGranularity", "Year", "incrementalPeriods", (int?)10, "incrementalGranularity", "Day", "incrementalPeriodsOffset", (int?)0, "mode", "Import", "autoWire", true),
+            ["SetMeasureFiltersOnPurposeAsync"] = r => R("measureRef", "measure:Sales/Total", "onPurpose", true),
             ["SetMeasureFormatAsync"] = r => R("objRef", "measure:Sales/Total", "formatString", "0.00"),
             ["SetMeasureFormatExpressionAsync"] = r => R("objRef", "measure:Sales/Total", "formatExpression", "\"0.00\""),
+            ["SetMeasurePerformanceAsync"] = r => R("settings", new MeasurePerformanceSettings { SlowThresholdMs = 123 }, "measureRef", "measure:Sales/Total", "includePerformance", true),
+            ["SetMeasureTotalsAsync"] = r => R("settings", new TotalsSettings { SumFitBelow = .04 }, "measureRef", "measure:Sales/Total", "expected", true),
             ["SetModelSqlEndpointAsync"] = r => R("sqlSourceId", r.SqlSourceId),
             ["SetObjectPropertiesAsync"] = r => R("objRefs", new[] { "measure:Sales/Total", "measure:Sales/Margin" }, "propertyName", "Description", "value", "Same words"),
             ["SetObjectPropertyAsync"] = r => R("objRef", "measure:Sales/Total", "propertyName", "Description", "value", "Words"),

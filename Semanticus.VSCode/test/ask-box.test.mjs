@@ -262,7 +262,7 @@ const catalog = catalogSrc.split('new AskRouteTool(').slice(1).map((chunk) => {
   const head = /^"([^"]+)", "([^"]+)", "([^"]+)",/.exec(chunk);
   return head ? { id: head[1], area: head[2], label: head[3], isTab: /\bisTab:\s*true\b/.test(chunk) } : null;
 }).filter(Boolean);
-assert.equal(catalog.length, 21, 'the catalogue is every place the box can send anybody. It was twenty '
+assert.equal(catalog.length, 22, 'the catalogue is every place the box can send anybody, including Your standard in 1.7. It was twenty '
   + 'until 22 September, when Plan was found to be in the strip and in no catalogue, then twenty-two when '
   + 'the seven areas landed with AI instructions and Reports, then twenty-one when the Overview retired in slice 11, '
   + 'then twenty-two again when Ask your data became a page under Explore (26 September), then twenty-one when Find and replace left the Studio (15 October), then twenty-two when the Copilot test joined Review (15 October), then twenty-one when Ask your data and Queries became the one Query page (1.6).');
@@ -291,7 +291,8 @@ const strip = new Map([...groupsBlock[0].matchAll(/\{ id: '([a-z]+)', label: '([
 // Twenty-one until 23 September, then eighteen: minus Pending changes and Model Spec (folded into Plan)
 // and minus Model notes (a tab on AI instructions). Sixteen since slice 11: minus the Overview and Edit History.
 // Seventeen since 26 September: plus Ask your data, after Data in Explore. Seventeen again since 15 October: Find and replace left, the Copilot test joined Review. Sixteen in 1.6: Ask your data and Queries became Query.
-assert.equal(strip.size, 16, `the strip is the catalogue minus the places that are a tab, found ${strip.size}`);
+// Seventeen in 1.7: Your standard joined Review.
+assert.equal(strip.size, 17, `the strip is the catalogue minus the places that are a tab, found ${strip.size}`);
 assert.deepEqual([...strip.keys()].sort(), stripEntries.map((t) => t.id).sort(),
   'every catalogue entry that is not a tab is on the strip, and every strip tool is in the catalogue');
 for (const tool of stripEntries) {

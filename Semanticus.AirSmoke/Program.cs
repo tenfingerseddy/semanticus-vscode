@@ -2118,7 +2118,7 @@ namespace Semanticus.AirSmoke
                                 var vx = await engine.ExportVpaxAsync(vpaxPath);
                                 Check("live model: export_vpax enriches with LIVE storage statistics (Exported, tables>0, Note says LIVE)",
                                     vx != null && vx.Exported && vx.Tables > 0 && (vx.Note ?? "").Contains("LIVE"));
-                                var content = Dax.Vpax.Tools.VpaxTools.ImportVpax(vpaxPath, importDatabase: false);
+                                var content = global::Dax.Vpax.Tools.VpaxTools.ImportVpax(vpaxPath, importDatabase: false);
                                 var card = content.DaxModel.Tables.SelectMany(t => t.Columns).Sum(c => c.ColumnCardinality);
                                 Check("live model: the exported .vpax carries real column statistics (sum of cardinality > 0)", card > 0);
                             }

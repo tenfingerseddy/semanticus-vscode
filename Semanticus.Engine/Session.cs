@@ -29,6 +29,7 @@ namespace Semanticus.Engine
     {
         private readonly ChangeBus _bus;
         private List<ChangeDelta> _pending;   // non-null only while a tracked op runs (dispatcher thread)
+        private string _descriptionAuthor;   // null during undo/redo; annotations must replay unchanged
         private ChangeWords _pendingWords;
 
         // Every object a tracked commit of THIS session added, by reference, so a rename does not lose it. The Plan's
@@ -387,17 +388,32 @@ namespace Semanticus.Engine
         public string KeptCopyPath => _keptCopyRevision == Revision ? _keptCopyPath : null;
         public void NoteKeptCopy(string path) { _keptCopyPath = path; _keptCopyRevision = Revision; }
 
-        // Files this session wrote as copies of the model. A later copy to the same file replaces it (the assistant keeps one copy fresh); a file this
-        // session did not write is never replaced (LocalEngine.RefuseCopyOverExisting).
-        private readonly HashSet<string> _copyFiles = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-        public void NoteCopyFile(string path) { if (!string.IsNullOrEmpty(path)) lock (_copyFiles) _copyFiles.Add(System.IO.Path.GetFullPath(path)); }
-        public bool WroteCopyFile(string path) { if (string.IsNullOrEmpty(path)) return false; lock (_copyFiles) return _copyFiles.Contains(System.IO.Path.GetFullPath(path)); }
+        // A copy can be refreshed only while its bytes still match the staged file this session wrote.
+        private readonly Dictionary<string, string> _copyFiles = new Dictionary<string, string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        public void NoteCopyFile(string path, string hash) { if (!string.IsNullOrEmpty(path)) lock (_copyFiles) _copyFiles[System.IO.Path.GetFullPath(path)] = hash; }
+        public bool WroteCopyFile(string path) { if (string.IsNullOrEmpty(path)) return false; lock (_copyFiles) return _copyFiles.ContainsKey(System.IO.Path.GetFullPath(path)); }
+        public bool CopyFileUnchanged(string path, string displacedPath = null)
+        {
+            string written;
+            lock (_copyFiles) if (!_copyFiles.TryGetValue(System.IO.Path.GetFullPath(path), out written)) return false;
+            return written != null && written == FileRecord(displacedPath ?? path);
+        }
+
+        internal static string FileRecord(string path)
+        {
+            try
+            {
+                using var stream = new System.IO.FileStream(path, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite | System.IO.FileShare.Delete);
+                return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
+            }
+            catch (Exception ex) when (ex is System.IO.IOException || ex is UnauthorizedAccessException) { return null; }
+        }
 
         // A TMDL copy is a folder, and a folder is the person's the moment anything in it changes. For each copy folder this session wrote, what it wrote:
         // every file with a hash of its bytes, and every sub-folder. The next copy to that path replaces the folder only when it is still exactly this.
         private readonly System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>> _copyFolders =
             new System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<string, string>>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-        public void NoteCopyFolder(string path) { if (!string.IsNullOrEmpty(path)) { var written = TreeRecord(path); lock (_copyFolders) _copyFolders[System.IO.Path.GetFullPath(path)] = written; } }
+        public void NoteCopyFolder(string path, Dictionary<string, string> written) { if (!string.IsNullOrEmpty(path)) lock (_copyFolders) _copyFolders[System.IO.Path.GetFullPath(path)] = written; }
         public bool WroteCopyFolder(string path) { if (string.IsNullOrEmpty(path)) return false; lock (_copyFolders) return _copyFolders.ContainsKey(System.IO.Path.GetFullPath(path)); }
         /// <summary>True when the folder holds exactly what this session wrote there: nothing added, edited, removed or put back by someone else.
         /// Anything unreadable counts as changed, so a doubt keeps the folder.</summary>
@@ -406,13 +422,18 @@ namespace Semanticus.Engine
             System.Collections.Generic.Dictionary<string, string> written;
             if (string.IsNullOrEmpty(path)) return false;
             lock (_copyFolders) if (!_copyFolders.TryGetValue(System.IO.Path.GetFullPath(path), out written)) return false;
+            return TreeUnchanged(path, written);
+        }
+
+        internal static bool TreeUnchanged(string path, Dictionary<string, string> written)
+        {
             var now = TreeRecord(path);
-            if (now == null || now.Count != written.Count) return false;
+            if (now == null || written == null || now.Count != written.Count) return false;
             foreach (var entry in written) if (!now.TryGetValue(entry.Key, out var hash) || hash != entry.Value) return false;
             return true;
         }
 
-        private static System.Collections.Generic.Dictionary<string, string> TreeRecord(string root)
+        internal static System.Collections.Generic.Dictionary<string, string> TreeRecord(string root)
         {
             var record = new System.Collections.Generic.Dictionary<string, string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
             try
@@ -541,6 +562,10 @@ namespace Semanticus.Engine
                 Before = before,
                 After = after,
             });
+            // History must name the person's Description edit before its supporting provenance annotation.
+            if (_descriptionAuthor != null && e.TabularObject is Measure measure && e.PropertyName == "Description"
+                && !_model.Undo.Replaying)
+                measure.SetAnnotation(LocalEngine.DescriptionProvenanceAnnotation, _descriptionAuthor);
         }
 
         // A deleted object may no longer be able to name itself (its parent link is gone), so its ref is taken while
@@ -627,9 +652,24 @@ namespace Semanticus.Engine
             if (delta != null) _pending?.Add(delta);
         }
 
+        // TMDL restores raw metadata without property events. Keep its invalidation in the same
+        // undo batch so undo, redo and history walks publish the original affected scope.
+        internal void RecordReplayDelta(ChangeDelta delta)
+        {
+            RecordDelta(delta);
+            TabularEditor.TOMWrapper.Utils.SidecarUndo.Register(Model, "model change",
+                () => RecordDelta(delta), () => RecordDelta(delta));
+        }
+
         internal void RecordWords(ChangeWords words) => _pendingWords = words;
 
-        private async Task<long> MutateAsync(string origin, string label, Action<Model> work, List<CascadeWarning> cascadeSink, bool keepsModelSaved)
+
+        // The caller must hold AcquireModelFileWriteLeaseAsync. This edit joins the normal undo timeline
+        // before serialization, without trying to acquire the same model state lease twice.
+        internal Task<long> MutateBeforeSaveAsync(string origin, string label, Action<Model> work)
+            => MutateAsync(origin, label, work, null, keepsModelSaved: false, modelStateLeaseHeld: true);
+
+        private async Task<long> MutateAsync(string origin, string label, Action<Model> work, List<CascadeWarning> cascadeSink, bool keepsModelSaved, bool modelStateLeaseHeld = false)
         {
             // Read the ambient dry-run scope on the CALLER's thread, BEFORE the dispatcher hop — AsyncLocal need
             // not flow to the dispatcher's dedicated thread, so we capture the collector here and never rely on it
@@ -671,7 +711,7 @@ namespace Semanticus.Engine
                         finally { (_model.Undo as IRedoPreserve)?.RestoreRedo(redo); }
                         throw;
                     }
-                })).ConfigureAwait(false);
+                }, modelStateLeaseHeld: modelStateLeaseHeld)).ConfigureAwait(false);
         }
 
         /// <summary>Run a bulk call's items inside the call's batch with ONE whole-model snapshot for all of them, not one per item.
@@ -990,8 +1030,43 @@ namespace Semanticus.Engine
             throw new InvalidOperationException(gate.Refuse(origin, label));
         }
 
-        private async Task<long> TrackAsync(string origin, string label, Action action, string replay = null, Func<string> replayForCommit = null)
+        private readonly object _editGate = new object();
+        private int _admittedEdits;
+        private TaskCompletionSource<bool> _editsDrained;
+
+        private IDisposable AdmitEdit()
         {
+            lock (_editGate)
+                if (++_admittedEdits == 1) _editsDrained = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            return new EditLease(this);
+        }
+
+        private Task WaitForAdmittedEditsAsync()
+        {
+            lock (_editGate) return _editsDrained?.Task ?? Task.CompletedTask;
+        }
+
+        private void ReleaseEdit()
+        {
+            TaskCompletionSource<bool> drained = null;
+            lock (_editGate)
+            {
+                if (--_admittedEdits == 0) { drained = _editsDrained; _editsDrained = null; }
+            }
+            drained?.TrySetResult(true);
+        }
+
+        private sealed class EditLease : IDisposable
+        {
+            private Session _owner;
+            internal EditLease(Session owner) => _owner = owner;
+            public void Dispose() => Interlocked.Exchange(ref _owner, null)?.ReleaseEdit();
+        }
+
+        private async Task<long> TrackAsync(string origin, string label, Action action, string replay = null, Func<string> replayForCommit = null, bool modelStateLeaseHeld = false)
+        {
+            // Closing must see edits waiting for model state too, before they have changed the dirty flag.
+            using var edit = AdmitEdit();
             // THE ONE PLACE A MODEL EDIT COMMITS, and the sink every assistant edit ends at. An assistant's edit is asked about at
             // the assistant's door (AssistantEngine), before the inner engine sees it, and arrives here carrying the person's
             // approval as a ticket. With no ticket, and a policy that asks (Locked) or denies, it is refused here and nothing is
@@ -1007,7 +1082,7 @@ namespace Semanticus.Engine
             var writer = correlationId != null ? ChangeJournal.InProcessReader : ChangeWriter.Current;
             // Contract 8.4: the cause (plan item, run, draft, task) is captured the same way and stamped on THIS commit.
             var cause = ChangeCause.Current;
-            using var modelStateLease = await AcquireModelStateLeaseAsync("edited").ConfigureAwait(false);
+            using var modelStateLease = (modelStateLeaseHeld ? null : await AcquireModelStateLeaseAsync("edited").ConfigureAwait(false));
             return await OnDispatcher(() =>
                 {
                     // The approval is for the model as the person saw it: re-checked here, in the turn that commits, so an edit that
@@ -1021,6 +1096,7 @@ namespace Semanticus.Engine
                     foreach (var o in observers) { try { o.BeforeCommit(Model); } catch { /* isolated: never fail an edit */ } }
                     _pending = new List<ChangeDelta>();
                     _pendingWords = null;
+                    _descriptionAuthor = replay == null && replayForCommit == null ? (origin == "agent" ? "ai" : "person") : null;
                     var stepsBefore = _model.Undo.UndoSteps;
                     var sizeBefore = _model.Undo.UndoSize;
                     try
@@ -1029,12 +1105,18 @@ namespace Semanticus.Engine
                     }
                     catch
                     {
+                        _descriptionAuthor = null;
                         _pending = null;
                         _deleting.Clear();
                         throw;
                     }
                     replay = replayForCommit?.Invoke() ?? replay;
+                    _descriptionAuthor = null;
                     var deltas = replay == null ? WithAdds(_pending, sizeBefore, builtHere: true) : _pending;
+                    // A raw metadata step can restore the model without emitting any property events.
+                    // A no-op undo/redo does not move the stack and needs no invalidation.
+                    if (replay != null && deltas.Count == 0 && _model.Undo.UndoSteps != stepsBefore)
+                        deltas.Add(new ChangeDelta { Kind = "structure", Ref = "model" });
                     _pending = null;
                     _deleting.Clear();
                     var rev = System.Threading.Interlocked.Increment(ref _revision);

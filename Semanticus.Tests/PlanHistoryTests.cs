@@ -181,7 +181,7 @@ namespace Semanticus.Tests
             Assert.Contains(view.Rows, r => r.Kind == "decision");   // the proposals, which wrote nothing
 
             var commits = 0;
-            Action<ChangeNotification> count = _ => commits++;
+            Action<ChangeNotification> count = n => { if (n.IsCommit) commits++; };
             f.Sessions.Bus.Changed += count;
             try { await f.Engine.UndoToEntryAsync(person, "agent"); }
             finally { f.Sessions.Bus.Changed -= count; }
@@ -391,7 +391,7 @@ namespace Semanticus.Tests
             Assert.True(batch.Undoable);
 
             var commits = 0;
-            Action<ChangeNotification> count = _ => commits++;
+            Action<ChangeNotification> count = n => { if (n.IsCommit) commits++; };
             f.Sessions.Bus.Changed += count;
             try { await f.Engine.UndoToEntryAsync(batch.Id, "human"); }
             finally { f.Sessions.Bus.Changed -= count; }

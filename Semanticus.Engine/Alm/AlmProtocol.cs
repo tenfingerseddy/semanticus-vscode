@@ -171,6 +171,8 @@ namespace Semanticus.Engine
         // A relationship is matched by its ends, so a rename reads as "new" plus "only on the service". The renamed columns carry it: it is not a change of its own,
         // the page does not list it, and a publish that sent every other change went whole (verifier 18 Oct).
         public bool CarriedByRename { get; set; }
+        // Column renames that need this measure update to keep its live formula valid. The person may untick it.
+        public string[] RenameDependencies { get; set; } = Array.Empty<string>();
         // RETAG / REPUBLISH: a same-NAMED object exists on both sides but with DIFFERENT non-empty LineageTags. Match
         // (correctly) does NOT pair them, so the SAME logical object surfaces as a right-only Delete + a left-only
         // Create. Applying that Delete against a published model DROPS the live object and its data (partitions, rows)
@@ -381,6 +383,10 @@ namespace Semanticus.Engine
         public string Description { get; set; }
         public string Type { get; set; }              // Personal | Workspace | AdminWorkspace (open enum)
         public string CapacityId { get; set; }        // null unless assigned to a capacity
+        // Set only when the person listed as a chosen account (another account, or a saved one by id): the saved account
+        // profile and its user name, so the picker can say who it lists as and open the model as the same account (si2).
+        public string AccountProfileId { get; set; }
+        public string Account { get; set; }
     }
 
     // One semantic model in a workspace (Fabric "List Semantic Models"). The Connections picker lists these so a

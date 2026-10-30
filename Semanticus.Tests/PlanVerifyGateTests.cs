@@ -91,7 +91,9 @@ namespace Semanticus.Tests
         {
             var live = LiveConnection.ForTest("xmla", Endpoint, Database, query =>
             {
-                g.Queries.Add(query);
+                // Edit observers also query now. These assertions count only the plan's equivalence proof.
+                if (query.Contains("\"__A\"", StringComparison.Ordinal) && query.Contains("\"__B\"", StringComparison.Ordinal))
+                    g.Queries.Add(query);
                 return respond(query);
             });
             if (trusted) g.Sessions.Current.LiveOrigin = new LiveOrigin(Endpoint, Database, null);

@@ -536,7 +536,8 @@ namespace Semanticus.Tests
             var grant = view.NeedsYou.Single(n => n.Kind == "grant");
             Assert.Contains("Sales", grant.Text); Assert.Contains("DimDate", grant.Text); Assert.Contains("Payroll", grant.Text);
             Assert.Contains("counts and patterns", grant.Text);
-            Assert.Contains("never the rows", grant.Text);
+            // fx7 (27 Oct): the band says only what is true; source sample rows stay on the computer, and Jev sees counts and patterns
+            Assert.Contains("Source sample rows stay on your computer", grant.Text);
             Assert.Contains("refused the sample for Payroll", grant.Text);
         }
 

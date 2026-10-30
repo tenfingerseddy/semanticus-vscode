@@ -290,21 +290,23 @@ namespace Semanticus.Tests
             Assert.Equal(ProFeature.AskData, feature);
         }
 
-        /// <summary>Consent is per point (DecisionConsent.Covers checks the point's own fields), so the version stays 6 and a person who
-        /// agreed under it is not shown the card again; the new point just reads as not covered until they agree.</summary>
+        /// <summary>Totals requires version 7. Within that version, an optional point asks for its own fields only when it becomes live.</summary>
         [Fact]
-        public async Task A_version_6_permission_without_the_new_fields_is_still_current_and_the_card_is_not_shown_again()
+        public async Task A_version_7_permission_without_the_optional_visual_fields_is_current_until_the_point_is_live()
         {
             using var f = new DecisionFixture();
             await f.BuildModelAsync();
             var consent = await f.Engine.GetConsentAsync();
-            Assert.Equal(6, consent.SchemaVersionInForce);
+            Assert.Equal(7, consent.SchemaVersionInForce);
+            var legacy = DecisionConsent.Grant(consent.FieldsInForce, 6, DateTimeOffset.UtcNow);
+            Assert.False(legacy.Covers(null, DecisionRegistry.ConsentSchemaVersion, out var legacyReason));
+            Assert.Contains("has changed since you agreed", legacyReason, StringComparison.Ordinal);
             var mine = DecisionRegistry.Require(DecisionRegistry.CheckVisualKind).SnapshotFields.Select(x => DecisionRegistry.CheckVisualKind + ":" + x).ToArray();
             foreach (var field in mine) Assert.Contains(field, consent.FieldsInForce);
 
-            // What a person agreed to before this point existed: version 6, every field except the new point's.
-            var before = await f.Engine.SetConsentAsync(consent.FieldsInForce.Except(mine).ToArray(), 6, "human");
-            Assert.True(before.Current, "a version 6 permission from before this point must still count: " + before.Reason);
+            // The current card covers every field except this optional point's fields.
+            var before = await f.Engine.SetConsentAsync(consent.FieldsInForce.Except(mine).ToArray(), 7, "human");
+            Assert.True(before.Current, "a version 7 permission must cover the other points: " + before.Reason);
             Assert.True((await f.Engine.GetConsentAsync()).Current, "no new card on upgrade while the point is off");
 
             // Once the point is live (its bar cleared) the card is asked once for its fields.
@@ -314,7 +316,7 @@ namespace Semanticus.Tests
             Assert.Contains("check_words", live.Reason, StringComparison.Ordinal);
 
             var point = DecisionRegistry.Require(DecisionRegistry.CheckVisualKind);
-            var record = DecisionConsent.Grant(consent.FieldsInForce.Except(mine), 6, DateTimeOffset.UtcNow);
+            var record = DecisionConsent.Grant(consent.FieldsInForce.Except(mine), 7, DateTimeOffset.UtcNow);
             Assert.False(record.Covers(point, DecisionRegistry.ConsentSchemaVersion, out var reason));
             Assert.Contains("check_words", reason, StringComparison.Ordinal);
             Assert.True(record.Covers(null, DecisionRegistry.ConsentSchemaVersion, out _));

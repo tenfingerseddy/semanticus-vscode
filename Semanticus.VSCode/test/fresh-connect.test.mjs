@@ -85,13 +85,13 @@ const view = (extra = {}) => renderToStaticMarkup(h(V.WorkspacePickerView, {
   assert.match(ext, /if \(!conn\) \{ await waitForEngine\(\); \}|if \(!conn && !\(await waitForEngine\(\)\)\)/, 'a page\'s call waits for a start or retry that is running before it is refused');
   assert.match(ext, /engineFailureReason/, 'the host keeps why the last start failed');
   assert.match(ext, /type: 'engineState', connected: false, reason: \(engineFailureReason = /, 'and sends the reason with the not-connected state');
-  assert.match(ext, /type: 'engineState', connected: !!conn, reason: /, 'a page that opens late is told the reason too');
+  assert.match(ext, /type: 'engineState', connected: !!conn && !engineStarting, starting: engineStarting, reason: /, 'a page that opens late gets the pending start and failure reason too');
   // The two doors a new person uses first wait for a starting engine and say why when it cannot start.
   assert.match(ext, /async function quickOpenModelCommand[\s\S]{0,200}if \(!conn\) await waitForEngine\(\);/, 'Open a model waits for a starting engine');
   assert.match(ext, /async function openConnectionsManager[\s\S]{0,700}if \(!conn\) await waitForEngine\(\);/, 'Connections waits for a starting engine');
   assert.match(ext, /function warnNoEngine\(\) \{\s+void vscode\.window\.showWarningMessage\(engineFailureReason \?\? 'Semanticus engine not connected\.', 'Restart engine'\)/, 'and the warning carries the reason when there is one');
   const br = read('webview', 'src', 'bridge.ts');
-  assert.match(br, /onEngineState\(fn: \(connected: boolean, reason\?: string\) => void\)/, 'the bridge passes the reason on');
+  assert.match(br, /onEngineState\(fn: \(connected: boolean, reason\?: string, starting\?: boolean\) => void\)/, 'the bridge passes the reason and starting state on');
 }
 
 // ---- (b) the account menu with nothing saved is one Sign in press --------------------------------------------------------

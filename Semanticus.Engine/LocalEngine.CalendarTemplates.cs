@@ -84,7 +84,7 @@ namespace Semanticus.Engine
                     }
 
                     var cal = new TOM.Calendar { Name = calName, LineageTag = Guid.NewGuid().ToString() };
-                    ApplyMappings(tom, cal, plan.Mappings(dateColName), mapped);
+                    ApplyMappings(tom, cal, WithoutSortByAssociations(tom, plan.Mappings(dateColName)), mapped);
                     tom.Calendars.Add(cal);
                 }
 

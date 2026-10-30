@@ -27,14 +27,16 @@ const goesLines = [...goes[1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
 assert.deepEqual(goesLines, [
   'table, column and measure names',
   'data types, formats, folders',
-  'counts and relationships',
+  'counts, relationships and facts about formulas',
   'the questions you type into the ask box',
   'the words you type to describe a task',
   'the words of your data questions',
   'measure and column descriptions, when you ask about your data',
   'other names the model gives a measure, when your data question uses one',
   'how a data question was read, in the words of the question, with no values or dates',
-], 'the "What goes" list is not the nine lines (the ratified five, and the data questions, descriptions, synonyms and stated-reading lines for Kane\'s sweep)');
+  'the name, Description and formula for the Description score and Totals',
+  'for the Totals Fit question: the expected total rule, grouping column, calculated facts, probe rows and total. Each probe row contains a member name and a measure value.',
+], 'the "What goes" list must name the Description score fields and the Totals Fit probe fields');
 
 // The ask box really does send typed words, so the line is true rather than decorative.
 assert.match(registry, /"ask_text"/, 'the ask box no longer sends typed words; the card line would then overclaim');
@@ -54,17 +56,17 @@ assert.match(registry, /one of the model's own other names for a "\s*\+\s*"measu
 assert.match(registry, /"stated_reading"/, 'query.summarize no longer declares the stated reading; the card line would then overclaim');
 assert.match(registry, /the reading told in the question's own words, with "\s*\+\s*"no value, date, row or count/, 'query.summarize no longer says the stated reading holds no value or date; the card line would then overclaim');
 
-// ---- the formula text is not sent, so the card needs no line for it (F-229) -----------------------
+// ---- folder and format suggestions still send derived facts (F-229) -----------------------------
 assert.doesNotMatch(registry, /"measure_expression"/, 'the measure point still declares the formula text');
 assert.match(registry, /"measure_formula_facts"/, 'the measure point does not declare its derived formula facts');
 
 // ---- the version bumped, so a person who agreed to the old card sees it once more -----------------
 const version = /public const int ConsentSchemaVersion = (\d+);/.exec(registry);
 assert.ok(version, 'the engine consent version could not be read');
-assert.equal(Number(version[1]), 6, 'the consent version stays 6 in 1.5.1: copilot.misses ships off and sends nothing, so adding it must not make every Pro person agree again (bump it when the point is switched on)');
+assert.equal(Number(version[1]), 7, 'Totals sends probe values under the version 7 card');
 
 // The driver fakes the engine, so its version has to be the engine's or it proves the old card.
-assert.match(driver, /setConsentVersion !== 6/, 'the consent driver does not check that OK sends version 6');
+assert.match(driver, /setConsentVersion !== 7/, 'the consent driver checks that OK sends version 7');
 assert.doesNotMatch(driver, /schemaVersionInForce: [23]\b/, 'the consent driver still fakes an old version as the version in force');
 assert.match(driver, /the questions you type into the ask box/, 'the consent driver does not check the new card line');
 

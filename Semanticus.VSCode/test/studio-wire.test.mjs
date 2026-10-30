@@ -39,7 +39,7 @@ const CONTRACT_IDS = [
   'plan', 'plan/start', 'plan/history', 'plan/changes',
   'explore/data', 'explore/ask', 'explore/diagram', 'explore/lineage', 'explore/size',
   'edit/queries', 'edit/properties', 'edit/instructions', 'edit/advanced', 'edit/power-query',
-  'review/model-quality', 'review/ai-readiness', 'review/copilot-test', 'review/validation', 'review/docs',
+  'review/model-quality', 'review/ai-readiness', 'review/copilot-test', 'review/validation', 'review/docs', 'review/standard',
   'publish/changes', 'publish/new-model', 'publish/data-agent', 'workflows', 'connections', 'help',
 ];
 assert.deepEqual(places.map((p) => p.id), CONTRACT_IDS, 'the place ids are the contract\'s (adding or renaming one needs a line in the lane report)');

@@ -67,6 +67,21 @@ export const LIMITS = {
  * fails on any difference from the table below, so this copy cannot fall behind the engine in silence.
  */
 export const TEMPLATES = {
+    'measure.totals_type': {
+        schemaVersion: 1,
+        fields: ['name', 'description', 'formula'],
+        questions: ['rule'],
+    },
+    'measure.totals_fit': {
+        schemaVersion: 1,
+        fields: ['name', 'description', 'formula', 'probe', 'expected_total_rule'],
+        questions: ['fits'],
+    },
+    'measure.description_match': {
+        schemaVersion: 1,
+        fields: ['description', 'formula', 'name'],
+        questions: ['match', 'detail'],
+    },
     'measure.folder_and_format': {
         // 2 (F-229): the formula text became facts worked out from it on the person's computer.
         schemaVersion: 2,

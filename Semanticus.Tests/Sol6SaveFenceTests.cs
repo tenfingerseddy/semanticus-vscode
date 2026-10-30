@@ -62,6 +62,35 @@ namespace Semanticus.Tests
             Assert.Contains("Nothing was written", ex.Message);
         }
 
+        [Theory]
+        [InlineData("")]
+        [InlineData("Contoso original Description.")]
+        public async Task Concurrent_Description_saves_keep_the_first_write_and_refuse_the_stale_write(string original)
+        {
+            using var e = await FreshAsync();
+            var reference = await e.CreateMeasureAsync("table:T", "Contoso Amount", "1", "human");
+            await e.SetDescriptionAsync(reference, original, "human");
+            var rpc = new EngineRpcTarget(e);
+            var saves = new[]
+            {
+                rpc.setDescription(reference, "Contoso first Description.", "human", original),
+                rpc.setDescription(reference, "Contoso second Description.", "human", original),
+            };
+            try { await Task.WhenAll(saves); } catch (InvalidOperationException) { }
+            Assert.Single(saves.Where(t => t.IsCompletedSuccessfully));
+            var refused = Assert.Single(saves.Where(t => t.IsFaulted));
+            Assert.Contains(Moved, refused.Exception.GetBaseException().Message);
+            Assert.Contains("Nothing was written", refused.Exception.GetBaseException().Message);
+            var winner = saves[0].IsCompletedSuccessfully ? "Contoso first Description." : "Contoso second Description.";
+            Assert.Equal(winner, await Prop(e, reference, "Description"));
+            await e.UndoAsync("human");
+            Assert.Equal(original, await Prop(e, reference, "Description"));
+            var saved = await rpc.setDescription(reference, "Contoso current Description.", "human", original);
+            Assert.True(saved.Changed);
+            await e.SetDescriptionAsync(reference, "Contoso agent Description.", "agent");
+            Assert.Equal("Contoso agent Description.", await Prop(e, reference, "Description"));
+        }
+
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Calculation_item_format_save_names_what_it_replaces()

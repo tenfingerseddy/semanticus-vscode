@@ -451,6 +451,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   const pro = planRankingOf(useTier()) === 'granted';
   const [openConfirm, setOpenConfirm] = useState(false);       // second-step consent when opening another model over unsaved work
   const [pendingOpen, setPendingOpen] = useState<ConnectionRecord | null>(null);
+  const [openSaveFormat, setOpenSaveFormat] = useState<string | null>(null);   // the format a plain save of the open model uses; null when it has no file yet (a save would ask where)
   const [envEditId, setEnvEditId] = useState<string | null>(null);   // the row whose environment label is being changed
   // ---- SQL endpoints ---------------------------------------------------------------------------------------------
   const [endpoints, setEndpoints] = useState<ModelEndpointList | null>(null);   // null = not read (or the read failed)
@@ -501,7 +502,10 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   const setView = (v: MainView) => { setViewState(v); setMenuId(null); setJobPick(null); if (v !== 'open') setPanel('none'); };
   // True only when a button opened the workspace picker; a deep link (goTo) leaves it false, so that first list read stays automatic.
   const pickerPressed = useRef(false);
-  const openPicker = () => { pickerPressed.current = true; setView('workspace'); };
+  // anotherAccount: the picker starts with a new sign-in for another account, not a list as the saved one (si2). A new key
+  // each time, so a press while the picker is already up starts it again in the mode asked for.
+  const [pickerAsk, setPickerAsk] = useState({ another: false, key: 0 });
+  const openPicker = (anotherAccount = false) => { pickerPressed.current = true; setPickerAsk((p) => ({ another: anotherAccount, key: p.key + 1 })); setView('workspace'); };
   // The press belongs to the picker the button drew. It is spent when the hub closes or the person leaves the picker, so reopening the hub on this view reads automatically.
   useEffect(() => { pickerPressed.current = pickerStillPressed(pickerPressed.current, shown, view); }, [shown, view]);
   const goTo = (section: string) => { pickerPressed.current = false; const r = routeSection(section); setViewState(r.view); setPanel(r.panel); setMenuId(null); setJobPick(null); };
@@ -689,7 +693,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     setBusyId('open:' + r.id); setError(null); setRowError(null); setMenuId(null); setJobPick(null);
     try {
       const s = await rpc<SessionInfo>('sessionInfo').catch(() => null);
-      if (s?.hasUnsavedChanges && !openConfirm) { setPendingOpen(r); setOpenConfirm(true); setBusyId(null); return null; }
+      if (s?.hasUnsavedChanges && !openConfirm) { setPendingOpen(r); setOpenSaveFormat(s.source ? (/\.bim$/i.test(s.source) ? 'BIM' : 'TMDL') : null); setOpenConfirm(true); setBusyId(null); return null; }
       const discard = !!s?.hasUnsavedChanges;
       if (r.kind === 'localDesktop') await rpc('openLocal', r.endpoint, r.database || null, discard);
       else if (r.kind === 'file') await rpc('open', r.endpoint, discard);
@@ -713,6 +717,13 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       return failure;
     }
     finally { setBusyId(null); }
+  };
+  // The person's own save, then the open: the work they were asked about is kept and nothing is thrown away. A save that fails stays on the question and says why.
+  const saveThenOpen = async (r: ConnectionRecord) => {
+    setBusyId('open:' + r.id); setError(null);
+    try { await rpc('save', null, openSaveFormat, false); }
+    catch (e) { setError(String((e as Error).message ?? e)); setBusyId(null); return; }
+    await openModel(r);
   };
   // Route an account choice by the ROLE the target plays. A QUERY-only live model switches ONLY its query connection
   // (connectXmla) and NEVER replaces the editing session; every other target opens/reopens for editing (openLive).
@@ -790,9 +801,11 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   // Connect on a model picker, and the address form, OPEN the model (the editing session), the same as Open on a saved
   // row does. They used to attach it for tests and queries only, so the Studio stayed on the old model (UAT F12, F3). The Tests target changes
   // only where the person asks for one.
-  const openByAddress = async (c: { endpoint: string; database: string; authMode: string; tenantId: string | null; label?: string }): Promise<string | null> => {
+  const openByAddress = async (c: { endpoint: string; database: string; authMode: string; tenantId: string | null; label?: string; accountProfileId?: string | null }): Promise<string | null> => {
     setError(null);
-    const failure = await openModel({ id: 'new:' + c.endpoint, kind: 'xmla', endpoint: c.endpoint, database: c.database, authMode: c.authMode, tenantId: c.tenantId } as ConnectionRecord);
+    // A model picked from a list read as a chosen account opens as that account, never as the saved default.
+    const failure = await openModel({ id: 'new:' + c.endpoint, kind: 'xmla', endpoint: c.endpoint, database: c.database, authMode: c.authMode, tenantId: c.tenantId } as ConnectionRecord,
+      c.accountProfileId ? { accountProfileId: c.accountProfileId } : undefined);
     if (failure) return failure || 'The connection did not complete.';
     if (c.label) {
       const recs = await rpc<ConnectionRecord[]>('listConnections').catch(() => [] as ConnectionRecord[]);
@@ -1286,7 +1299,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         {defaultConfirm}
         <div className="hub-pop-rule" />
         {switchable && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-switch-account" disabled={busy} onClick={() => openAccountChoice(switchable)}>Use another account for {nameOf(switchable)}</button>}
-        {profiles.length > 0 && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-another-top" disabled={busy} onClick={() => { if (switchable) signInAnother(switchable); else openPicker(); }}>Sign in another account</button>}
+        {profiles.length > 0 && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-another-top" disabled={busy} onClick={() => openPicker(true)}>Sign in another account</button>}
         <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-other-sign-in" onClick={() => openAddView()}>Other ways to sign in</button>
         <div className="hub-pop-item"><button className={BTN_QUIET} onClick={() => viewHistoryFor(null)}>History</button></div>
       </div>
@@ -1649,7 +1662,8 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
               <div className="mt-2 text-xs leading-5 note-line note-warn">Opening another model throws those changes away unless you save first.</div>
               <div className="mt-3 flex justify-end gap-2">
                 <button className={BTN} onClick={() => { setOpenConfirm(false); setPendingOpen(null); }}>Cancel</button>
-                <button className={BTN_PRIMARY} data-testid="hub-open-discard" disabled={busy} onClick={() => { const p = pendingOpen; if (p) void openModel(p); }}>Discard</button>
+                <button className={openSaveFormat ? BTN : BTN_PRIMARY} data-testid="hub-open-discard" disabled={busy} onClick={() => { const p = pendingOpen; if (p) void openModel(p); }}>Discard</button>
+                {openSaveFormat && <button className={BTN_PRIMARY} data-testid="hub-open-save" disabled={busy} onClick={() => { const p = pendingOpen; if (p) void saveThenOpen(p); }}>Save and open</button>}
               </div>
             </div>
           )}
@@ -1685,7 +1699,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           {view === 'add' && AddView()}
           {view === 'work' && WorkView()}
           {view === 'desktop' && <DesktopPicker onBack={() => setView('open')} onUseForTests={useDesktopForTests} onOpen={openDesktop} />}
-          {view === 'workspace' && <WorkspacePicker account={signedInAccount || workingWay?.label} {...(({ authMode, tenantId }) => ({ initialAuthMode: authMode, initialTenant: tenantId }))(signInToReuse(records, liveConnId))} pressedFirst={pickerPressed.current} onBack={() => setView('open')}
+          {view === 'workspace' && <WorkspacePicker key={pickerAsk.key} anotherAccount={pickerAsk.another} account={signedInAccount || workingWay?.label} {...(({ authMode, tenantId }) => ({ initialAuthMode: authMode, initialTenant: tenantId }))(signInToReuse(records, liveConnId))} pressedFirst={pickerPressed.current} onBack={() => setView('open')}
             onPasteAddress={() => openAddView()} onConnect={connectPicked} />}
       </div>
       {error && !switchTarget && <div className="hub-error" role="alert">{error}</div>}

@@ -78,7 +78,7 @@ try {
   await page.click('[data-testid="said-undo"]');
   await page.waitForFunction(() => window.__uishotHarness.messages.some((m) => m.method === 'undo'));
   const undo = await page.evaluate(() => window.__uishotHarness.messages.find((m) => m.method === 'undo'));
-  assert.deepEqual(undo.params, ['human', 'edit-108']);
+  assert.deepEqual(undo.params, ['human', 'edit-108', 108]);   // Undo sends the last revision as a third argument (said2, 1.4)
   await page.waitForFunction(() => !document.querySelector('[data-testid="said-line"]'));
   await call('later-writer');
   await change(109, ['measure:Sales/Net Sales']);

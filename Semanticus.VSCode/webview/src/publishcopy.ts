@@ -32,6 +32,22 @@ export interface ChangeRow {
   leftText?: string | null; rightText?: string | null;
   /** The engine's own word that a relationship is the same one with only its key columns renamed (ModelDiffItem.CarriedByRename). Absent from an older engine. */
   carriedByRename?: boolean;
+  /** Renames that break this measure on the destination unless its formula update goes too. */
+  renameDependencies?: string[];
+}
+
+export function togglePublishRow(rows: readonly ChangeRow[], picked: ReadonlySet<string>, ref: string, on: boolean): Set<string> {
+  const next = new Set(picked);
+  if (on) {
+    next.add(ref);
+    for (const row of rows) if (row.renameDependencies?.includes(ref)) next.add(row.ref);
+  } else next.delete(ref);
+  return next;
+}
+
+export function renameBreakLine(row: ChangeRow, rows: readonly ChangeRow[], picked: ReadonlySet<string>, destination: string): string | null {
+  if (picked.has(row.ref) || !row.renameDependencies?.some((ref) => picked.has(ref) && rows.some((r) => r.ref === ref))) return null;
+  return `Publishing this rename without ${row.name} breaks ${row.name} on ${destination}.`;
 }
 
 export const isRemoval = (row: ChangeRow): boolean => row.action === 'Delete';

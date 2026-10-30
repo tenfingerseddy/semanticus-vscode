@@ -42,7 +42,8 @@ function splitTop(text, sep = ',') {
   return parts.map((p) => p.trim());
 }
 const engine = new Map();   // rpc name -> parameter names
-for (const file of ['EngineRpcTarget.cs', 'HumanGovernanceRpcTarget.cs']) {
+for (const file of readdirSync(join(repo, 'Semanticus.Engine'))
+  .filter(name => /^(EngineRpcTarget(?:\.[^.]+)?|HumanGovernanceRpcTarget)\.cs$/.test(name)).sort()) {
   const cs = readFileSync(join(repo, 'Semanticus.Engine', file), 'utf8');
   for (const m of cs.matchAll(/public\s+Task(?:<[^\n(]*?>)?\s+([a-z]\w*)\(([^)]*)\)\s*=>/g)) {
     const params = splitTop(m[2]).map((p) => p.replace(/=.*$/s, '').trim().split(/\s+/).pop());
@@ -116,15 +117,29 @@ const GOVERNANCE = 'a person-only control on the assistant\'s own governance (pl
 const REVIEWED_BATCH = 'one press that runs a batch the person reviewed in this view; no typed draft is held, and the batch is judged against the model as it runs';
 const TWO_STEP = 'two steps: the first call only previews (nothing is written), and the second writes only what that preview showed the person';
 const GRID = 'the Properties grid write, built in src/propSet.ts (gridSetCalls) so it can be tested without VS Code: it passes the value the words were typed over, or each object\'s own (expectedAll), and the model; test/drafts-sol-host.test.mjs holds every route';
+const MARKS_DECLARATION = 'a method name in the Properties marks allow-list, not a call with stored values; the shared marks-panel.tsx calls are scanned separately and still need their own fence or reason';
 const ALLOW = [
+  { setter: 'setDescription', site: /^const MARKS_GRID_METHODS = new Set\(\[/, reason: MARKS_DECLARATION },
+  ...['saveTest', 'setMeasurePerformance', 'setMeasureTotals'].map(setter => ({
+    setter, site: /'getChecksPage'\]\);$/, reason: MARKS_DECLARATION,
+  })),
+  { setter: 'saveTest', site: /^\('saveTest', \{ id: '', kind: 'measureValue',/,
+    reason: 'the mark card creates a new trusted number with an empty id; the engine assigns a new id, so no existing check or typed draft is replaced' },
+  ...['setMeasurePerformance', 'setMeasureTotals'].map(setter => ({
+    setter, site: new RegExp("^\\('" + setter + "', null, reference, true\\)$"), reason: CHOICE,
+  })),
+  { setter: 'setMeasureFiltersOnPurpose', site: /'keepMeasureEdit', 'setMeasureFiltersOnPurpose',$/, reason: MARKS_DECLARATION },
+  { setter: 'setMeasureFiltersOnPurpose', site: /^\('setMeasureFiltersOnPurpose', reference, on\)$/,
+    reason: 'a press of It is on purpose or It is not on purpose: one yes or no annotation on the measure, on the undo timeline, and no typed text is written' },
   // ---- choices and switches (CHOICE) ----
   ...['setColumnMetadata', 'setColumnObjectPermission', 'setTableObjectPermission', 'setRolePermission', 'setRoleMember', 'setPerspectiveMember', 'setRelationship',
-    'setRelationshipCardinality', 'setCompatibilityLevel', 'setDefaultAccountProfile', 'setPublishDestination', 'setModelSqlEndpoint', 'setReportScope',
+    'setRelationshipCardinality', 'setDefaultAccountProfile', 'setPublishDestination', 'setModelSqlEndpoint', 'setReportScope',
     'setWorkflowActivation', 'setWorkflowBinding', 'setWorkflowEnabled', 'setWorkflowEnforcement'].map((setter) => ({ setter, reason: CHOICE })),
   // ---- person-only governance ----
   ...['setAgentPolicyCell', 'setAgentPolicyEnabled', 'setAgentPolicyPreset', 'setAssistantQueue', 'setPlanItemDoer', 'setPlanRepeat', 'setPlanTaskNote'].map((setter) => ({ setter, reason: GOVERNANCE })),
   // ---- reviewed batches and previews ----
-  ...['applyPlan', 'applyPlanItems', 'applySafeFixes', 'applySchemaUpdate'].map((setter) => ({ setter, reason: REVIEWED_BATCH })),
+  ...['applyPlan', 'applyPlanItems', 'applySafeFixes', 'applySchemaUpdate', 'applyStandard'].map((setter) => ({ setter, reason: REVIEWED_BATCH })),
+  { setter: 'setStandard', reason: 'a preset, one choice, or the source file address; the patch changes only the chosen setting, with no text editor holding an older standard' },
   { setter: 'applyFix', reason: 'runs one rule\'s fix on the object a scan found it on; the fix is worked out from the live object when it runs, and no text is typed' },
   { setter: 'applyDiff', reason: TWO_STEP + ' (the second carries the preview\'s confirm token)' },
   { setter: 'applyLicense', reason: 'a licence the person pasted or chose to apply; it replaces the old licence on purpose and is verified before it is stored, with no draft of the old one held' },

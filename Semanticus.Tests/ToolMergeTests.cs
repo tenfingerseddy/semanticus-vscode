@@ -273,9 +273,11 @@ namespace Semanticus.Tests
             // 399 = 398 plus get_trial_tally from the free Pro month lane (1.5).
             // 405 = 402 plus get_personality_settings, set_personality_settings and start_trial from the trial-fixes lane (1.5.1, F-292 and F-293).
             // 400 = 399 plus connect_assistant from the connect-any lane (1.5, 12 Oct 2026).
-            // 412 = 411 plus query_notebook (the Query notebook, lane m16/query-c, 16 Oct).
+            // 415 = 412 plus propose_calendar, setup_calendars and add_time_measures (the Calendars page, lane m17/calendar-ui, 18 Oct); 412 = 411 plus query_notebook (16 Oct).
             // 411 = 410 plus pick_check_visuals (Jev picks each check's visual on Validation, 1.6).
-            Assert.Equal(412, tools.Length);
+            // 421 = 418 plus propose_calendar, setup_calendars and add_time_measures (lane m17/calendar-ui). 418 = 412 plus six (18 Oct 2026, m17/engine-groundwork): the four standard tools and the two calendar checks.
+            // 438 = 435 of rc23 plus stop_measure_run and keep_measure_edit (L1, 1.7) and set_measure_filters_on_purpose (L2, 1.7).
+            Assert.Equal(438, tools.Length);
             foreach (var old in RetiredTools)
             {
                 Assert.DoesNotContain(old, tools);

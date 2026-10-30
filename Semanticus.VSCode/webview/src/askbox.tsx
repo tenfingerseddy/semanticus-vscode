@@ -95,9 +95,9 @@ export interface AskReading {
  * and landing on a tab called "Reports" is the page contradicting itself in two adjacent clicks.
  *
  * The engine's four stale labels were closed on 22 September, when the seven areas landed: the catalogue
- * now says Validation, AI readiness, Reports and Pending changes, the same words as the strip. This map
+ * now says Checks, AI readiness, Reports and Pending changes, the same words as the strip. This map
  * is still the page's own, because one entry has no strip button to read a name off: Reports is a TAB on
- * Validation, so its name comes from the catalogue instead. test/ask-box.test.mjs holds both halves.
+ * Checks, so its name comes from the catalogue instead. test/ask-box.test.mjs holds both halves.
  */
 export const ASK_TOOL_LABEL: Record<string, string> = {
   plan: 'Plan',
@@ -111,9 +111,10 @@ export const ASK_TOOL_LABEL: Record<string, string> = {
   mcode: 'Power Query',
   docs: 'Docs',
   copilottest: 'Copilot test',
+  standard: 'Your standard',
   knowledge: 'Model notes',
   instructions: 'AI instructions',
-  tests: 'Validation',
+  tests: 'Checks',
   bpa: 'Model quality (BPA)',
   readiness: 'AI readiness',
   evidence: 'Reports',

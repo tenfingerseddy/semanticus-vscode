@@ -17,6 +17,16 @@ namespace Semanticus.Engine
         public bool LiveConnected { get; set; }   // a unified live open (open_local / open_live) also bound the query engine
         public string Account { get; set; }       // the account (UPN) this open signed in as, when known — null = "account unknown" (azcli/sp/local)
         public string Note { get; set; }          // one plain line when the open had something to say (a copy saved inside the model folder was left out); null otherwise
+        public SavedCopyOffer SavedCopy { get; set; }   // a live open only: a saved file of this published model holds work the service copy lacks (UAT 1.7 D3); null otherwise
+    }
+
+    /// <summary>A saved file of the published model just opened that holds measures, calculated columns or tables the opened copy lacks.</summary>
+    public sealed class SavedCopyOffer
+    {
+        public string Path { get; set; }
+        public string Name { get; set; }
+        public int Extra { get; set; }            // how many things it holds that the opened copy does not
+        public string[] Names { get; set; }       // the first few, measures first
     }
 
     /// <summary>The non-secret coordinates of the live model a session was opened from (open_live/open_local bind it).
@@ -975,6 +985,8 @@ namespace Semanticus.Engine
         public string Status { get; set; }   // ok | error | unfaithful
         public string Error { get; set; }
         public string Dax { get; set; }      // echoed verbatim — diff against the real visual
+        public string ErrorKind { get; set; } // context | measure; null on older evidence
+        public string ContextError { get; set; } // failure of the same context with no measure evaluation
         public ProbeRow[] Rows { get; set; } = System.Array.Empty<ProbeRow>();
         public ProbeCoverage Coverage { get; set; }
         public string Additivity { get; set; }   // additive | non-additive | undefined
@@ -1511,10 +1523,29 @@ namespace Semanticus.Engine
     /// <summary>A ready-to-paste prompt for the user's Claude Code to remediate one AI-content finding.</summary>
     public sealed class FixPrompt
     {
+        public RatioFixOffer RatioOffer { get; set; }
         public string ObjectRef { get; set; }
         public string RuleId { get; set; }
         public string Tool { get; set; }        // the MCP tool the agent should call (e.g. set_description)
         public string Prompt { get; set; }      // the natural-language instruction (copy to Claude Code)
+    }
+
+    public sealed class RatioFixOffer
+    {
+        public string SessionId { get; set; }
+        public long Revision { get; set; }
+        public string OriginalExpression { get; set; }
+        public string Expression { get; set; }
+        public string GroupedBy { get; set; }
+        public string Problem { get; set; }
+        public RatioComparisonRow[] Rows { get; set; } = Array.Empty<RatioComparisonRow>();
+    }
+
+    public sealed class RatioComparisonRow
+    {
+        public string Scope { get; set; }
+        public double? Before { get; set; }
+        public double? After { get; set; }
     }
 
     // ---- the Studio wire (1.4, Claude drives; contract sections 1, 4, 5 and 6) -----------------------------------------------

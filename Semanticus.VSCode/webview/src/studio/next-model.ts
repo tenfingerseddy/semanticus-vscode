@@ -27,10 +27,10 @@ export function askRequest(view: Pick<NextStepView, 'id'>, step: Pick<NextStepSt
 }
 
 /** The engine call behind "Do it", by op. Null for an op this Studio does not know (then no "Do it" is drawn). */
-export type DoItCall = { kind: 'save' } | { kind: 'rpc'; method: string; params: unknown[] };
+export type DoItCall = { kind: 'save' } | { kind: 'rpc'; method: string; params: unknown[] } | { kind: 'page'; tab: string };
 export function doItCall(op: string, step: Pick<NextStepStep, 'prompt' | 'ask'>): DoItCall | null {
   if (op === 'save') return { kind: 'save' };
-  if (op === 'run_checks') return { kind: 'rpc', method: 'runTests', params: [false, 'human', null, null] };
+  if (op === 'run_checks') return { kind: 'page', tab: 'tests' };
   if (op === 'draft_workflow') return { kind: 'rpc', method: 'composeTask', params: [(step.prompt ?? '').trim() || step.ask] };
   return null;
 }

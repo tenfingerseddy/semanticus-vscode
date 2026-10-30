@@ -18,6 +18,7 @@ import { checkFieldsOfDax } from './query-check-fields';
 import { axisDims, foldSortColumns } from './axisorder';
 import { useQueriesAsk, NO_ASK } from './queriesask';
 import { squash } from './daxsquash';
+import { tryCalculationQuery, calculationFailureWord, type TryMeasure, type TryColumn } from './try-calculation';
 import { withMeasureFormats, editingFormatsApply, measuresNotShadowed, queriesLinkedCopy, measureFormatsFromDmv, sentFormatsNow, MEASURE_FORMATS_DMV, type SentFormats } from './resultformats';
 import { notesStore } from './studio/notes-runtime';
 import { answerOwnsResult, producedByOf } from './resultownership';
@@ -303,7 +304,7 @@ export function DaxLabTabStateProvider({ children }: { children: React.ReactNode
   );
 }
 
-export interface QueryPageProps { navTarget?: { ref: string; dax?: string; nonce: number } | null; navWords?: { words: string; nonce: number } | null; onNavConsumed?: (nonce: number) => void; onOpenTests?: () => void }
+export interface QueryPageProps { navTarget?: { ref: string; dax?: string; nonce: number; run?: boolean } | null; navWords?: { words: string; nonce: number } | null; onNavConsumed?: (nonce: number) => void; onOpenTests?: () => void }
 // The Query page's state and handlers (Ask your data and Queries became one page on 1.6). query.tsx draws it.
 export function useQueryPage({ navTarget, navWords, onNavConsumed, onOpenTests }: QueryPageProps) {
   const { conn, session, context, connectXmla, busy: connBusy } = useConnection();
@@ -330,6 +331,7 @@ export function useQueryPage({ navTarget, navWords, onNavConsumed, onOpenTests }
   // A deliberate measure action seeds a runnable query. Ordinary tree selection never reaches this effect, so it
   // cannot overwrite a Queries draft. The nonce makes a repeated action explicit.
   useEffect(() => {
+    if (navTarget?.run) return; // Try calculation owns its execution and acknowledgment below.
     // Open in Queries from Ask your data: the engine's DAX text, taken as the query once, then acknowledged so
     // coming back through area memory cannot replay it over what the person has typed since.
     if (navTarget?.dax) {
@@ -369,7 +371,7 @@ export function useQueryPage({ navTarget, navWords, onNavConsumed, onOpenTests }
   // owns both; the page only reads the one and calls the other, so a run made here lands in the row the person is looking at.
   const activeRow = useRef<string | null>(null);
   const onRecorded = useRef<((id: string) => void) | null>(null);
-  const onSeeded = useRef<(() => void) | null>(null);
+  const onSeeded = useRef<((run?: boolean) => void) | null>(null);
   // The last headline each row said. recordQueryRun clears a row's headline when it runs again, so the "$" it said is read from here (hero 26 N8).
   const saidHeadline = useRef<Record<string, SaidHeadline>>({});
   const measureRefOf = (field?: PivotConfig['values'][number]) => field?.table ? `measure:${field.table}/${field.name}` : '';
@@ -552,7 +554,7 @@ export function useQueryPage({ navTarget, navWords, onNavConsumed, onOpenTests }
     } catch { /* not proven: the numbers show plain */ }
   }
   // `record` false: the run only refreshes the open row's answer (Fields on a question), so it never adds a row of its own.
-  async function runQuery(q: string, record = true) {
+  async function runQuery(q: string, record = true, calculation = false) {
     if (!q.trim()) { setErr('Nothing to run yet. Choose a number in Fields, or write a query in DAX.'); return; }
     const gen = ++runGen.current;
     // The context this query goes out in. The rows are formatted for THAT, however the connection changes while it runs.
@@ -564,7 +566,7 @@ export function useQueryPage({ navTarget, navWords, onNavConsumed, onOpenTests }
       const r = await rpc<ResultSet>('runDax', q, 50000);
       if (gen !== runGen.current) return;
       if (r.cancelled) { setErr(r.error || 'The query was stopped.'); return; }
-      if (r.error) { setErr(r.error); setRes(null); setResQuery(null); }
+      if (r.error) { setErr(calculation ? calculationFailureWord(r.error) : r.error); setRes(null); setResQuery(null); }
       else {
         const rs = { ...r, query: r.query || q };
         setRes(rs); setResQuery(rs.query); noteSent(rs, sent);
@@ -575,7 +577,7 @@ export function useQueryPage({ navTarget, navWords, onNavConsumed, onOpenTests }
       }
     } catch (e) {
       if (gen !== runGen.current) return;
-      setErr(String((e as Error).message ?? e));
+      setErr(calculation ? calculationFailureWord(e) : String((e as Error).message ?? e));
     } finally { if (gen === runGen.current) setBusy(null); }
   }
   function stopQuery() {
@@ -588,6 +590,32 @@ export function useQueryPage({ navTarget, navWords, onNavConsumed, onOpenTests }
   // Run is the person's own: over an assistant's result it brings their query back and runs it, as Back to my fields does.
   // Over an assistant's row it runs the DAX the DAX view shows (the assistant's own), never the person's query behind it.
   function run() { setTab('result'); void runQuery(assistantShown && assistantDax ? assistantDax : personQuery()); }
+  const takenCalculation = useRef<number | null>(null);
+  useEffect(() => {
+    // A cold Studio can receive the action before the model's persisted query state has its session key.
+    if (!session?.sessionId || !navTarget?.run || !navTarget.ref.startsWith('measure:') || takenCalculation.current === navTarget.nonce) return;
+    takenCalculation.current = navTarget.nonce;
+    const ref = navTarget.ref;
+    const gen = ++runGen.current;
+    // Detach from any open notebook row before recording this deliberate new calculation.
+    onSeeded.current?.(true);
+    setMode('query'); setEntryRaw('dax'); setTestMeasureRef(ref); setTab('result');
+    setRes(null); setResQuery(null); setAssistantDax(null); setErr(null); setBusy('run');
+    onNavConsumed?.(navTarget.nonce);
+    void (async () => {
+      try {
+        const [measures, columns] = await Promise.all([rpc<TryMeasure[]>('listMeasures'), rpc<TryColumn[]>('listColumns')]);
+        if (gen !== runGen.current) return;
+        const dax = tryCalculationQuery(ref, measures, columns);
+        setQuery(dax); setGeneratedQuery(dax);
+        // Use the same run and notebook path as Run. MCP run_dax reaches the same engine operation.
+        await runQuery(dax, true, true);
+      } catch (error) {
+        if (gen !== runGen.current) return;
+        setErr(calculationFailureWord(error)); setBusy(null);
+      }
+    })();
+  }, [navTarget?.nonce, session?.sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
   async function debug(q?: string) {
     const gen = ++runGen.current;
     const ran = q ?? (mode === 'visual' && !chipsHere ? buildInstrumentedQuery(config) : currentQuery());

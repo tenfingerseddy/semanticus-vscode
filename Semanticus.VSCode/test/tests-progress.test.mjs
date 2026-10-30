@@ -29,6 +29,7 @@ assert.deepEqual(state, { runId: 'page-1', done: 0, total: 691 });
 state = foldRunProgress(state, ev(312, 691), 'page-1');
 assert.equal(runProgressText(state), '312 of 691 checks');
 assert.equal(runProgressPercent(state), 45);
+assert.equal(foldRunProgress(null, ev(2, 9, { note: 'measures' }), 'page-1').note, 'measures', 'the Checked page can name the measure phase');
 
 assert.equal(foldRunProgress(state, ev(100, 691), 'page-1'), state, 'a late event never moves the count backwards');
 assert.equal(foldRunProgress(state, { ...ev(500, 691), runId: 'assistant-9' }, 'page-1'), state, 'another run does not move this page\'s count');
@@ -55,5 +56,13 @@ assert.match(page, /onProgress\(\(event\) => setProgress\(\(current\) => foldRun
 assert.match(page, /ownRunId\.current = null; setProgress\(null\); setBusy\(false\)/, 'a finished run clears the count');
 assert.match(page, /const running = busy \|\| assistantRun\.phase === 'running';/, 'the page counts the assistant\'s run as busy too');
 assert.match(page, /run=\{run\} running=\{running\} progress=\{progress\}/, 'the board shows the count in place of the verdict line');
-assert.match(page, /running\s*\? <RunProgressLine progress=\{progress\} \/>/, 'the verdict line shows it while a run goes');
+const checkedPage = readFileSync(resolve(root, 'webview/src/checks-page.tsx'), 'utf8');
+// d1 4.2: "Running checks: 3 of 12" and its bar moved from the header into the run plan line ("Checking 3 of 12.").
+const runPlan = readFileSync(resolve(root, 'webview/src/run-plan.tsx'), 'utf8');
+assert.match(checkedPage, /<RunPlan [^\n]*progress=\{busy \? progress : null\}/, 'the Checked page shows progress while the run goes');
+assert.match(runPlan, /running \? `Checking \$\{done \?\? 0\} of \$\{total \?\? 0\}\.` : sentence/,
+  'the run plan line shows the real completed and total counts');
+assert.match(runPlan, /<progress max=\{total \|\| 1\} value=\{done \?\? 0\}/,
+  'the progress indicator uses the same counts');
+assert.match(runPlan, /const shown = running && progress \? progress : /, 'the engine counts win while the page runs');
 console.log('tests-progress: ok');

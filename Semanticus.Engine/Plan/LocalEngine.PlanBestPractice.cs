@@ -331,7 +331,7 @@ namespace Semanticus.Engine
 
         private static ModelPlanItem BpaFixItem(PlanFacts f)
         {
-            var lines = f.BpaLines;
+            var lines = f.BpaLines?.Where(l => !StandardChecksFilter.IsOff(f.StandardChecks, l.RuleId)).ToList();   // a rule the standard turns off never reaches the Plan
             if (lines == null || lines.Count == 0) return null;
             // One touch per object, naming every fix on it, so the table detail counts what Touches counts.
             var touches = lines.GroupBy(l => l.ObjectRef ?? "", StringComparer.Ordinal)

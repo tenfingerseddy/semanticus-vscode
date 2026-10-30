@@ -12,6 +12,27 @@ namespace Semanticus.Tests
     {
         private static LocalEngine NewEngine() => new LocalEngine(new SessionManager(), TestEntitlements.Pro);
 
+        [Theory]
+        [InlineData("IF(1 IN {1,2,3}, 4, 5)")]
+        [InlineData("SWITCH(TRUE(), 1 IN {1,2,3}, IF(TRUE(), 4, 5), 0)")]
+        [InlineData("CALCULATE(IF(1 IN {1,2,3}, 4, 5))")]
+        [InlineData("IF(IF(TRUE(), 1, 0) IN {1,2,3}, 4, 5)")]
+        [InlineData("IF(\"a\" IN {\"a\",\"b\",\"c\"}, \"yes, () {}\", \"no\")")]
+        [InlineData("IF(ISBLANK(BLANK()), 4, 5)")]
+        [InlineData("IF((1 IN {1,2,3}), 4, 5)")]
+        [InlineData("ISBLANK((1+2))")]
+        [InlineData("COUNTROWS({1,2,3})")]
+        public async Task Dax_writes_accept_constructors_nested_calls_and_strings(string expression)
+        {
+            using var f = new DecisionFixture();
+            await f.Engine.CreateModelAsync("Constructor arguments", 1604);
+            await f.Engine.CreateTableAsync("Sales", "human");
+            var validation = await f.Engine.ValidateDaxAsync(expression);
+            Assert.Empty(validation.Diagnostics);
+            var reference = await f.Engine.CreateMeasureAsync("table:Sales", "M", expression, "human");
+            Assert.Equal(expression, await f.Engine.GetDaxAsync(reference));
+        }
+
         [Fact]
         public async Task Dax_writes_refuse_bad_text_arity_and_unknown_references_without_mutation()
         {

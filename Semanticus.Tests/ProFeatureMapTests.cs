@@ -165,6 +165,8 @@ namespace Semanticus.Tests
         [InlineData("list_report_scope")] [InlineData("analyze_reports")] [InlineData("analyze_cloud_reports")]
         [InlineData("list_reports")] [InlineData("list_pending_approvals")] [InlineData("get_agent_policy")]
         [InlineData("get_model_fingerprint")] [InlineData("list_sql_source_usage")] [InlineData("probe_measure")]
+        [InlineData("set_measure_totals")]
+        [InlineData("set_measure_filters_on_purpose")]
         [InlineData("verify_dax_equivalence")] [InlineData("deploy_gate")]
         [InlineData("cancel_query")] [InlineData("benchmark_cold_warm")]
         [InlineData("label_connection")] [InlineData("set_default_account_profile")]
@@ -185,6 +187,7 @@ namespace Semanticus.Tests
         [InlineData("cancelDax")] [InlineData("clearReferenceBinding")] [InlineData("pullAgentHealth")]
         [InlineData("setConnectionWorkingFolder")] [InlineData("setDefaultAccountProfile")]
         [InlineData("compareModels")] [InlineData("gitStatus")]
+        [InlineData("setMeasureTotals")] [InlineData("setMeasureFiltersOnPurpose")]
         public void The_RPC_only_entries_are_explicitly_free(string rpcMethod)
         {
             Assert.Contains(rpcMethod, FeatureMap.FreeRpcMethods);

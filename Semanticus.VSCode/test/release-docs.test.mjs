@@ -44,7 +44,7 @@ assert.match(changelog, /## \[1\.0\.1\] - 2026-07-14/u);
 assert.notEqual(packageJson.publisher, 'kane', 'package publisher still uses the obsolete placeholder');
 assert.equal(packageJson.version, packageLock.version, 'package.json and package-lock.json versions differ');
 assert.equal(packageJson.version, packageLock.packages[''].version, 'root package-lock entry has a different version');
-assert.equal(packageJson.version, '1.6.0', 'release package version is not 1.6.0');
+assert.equal(packageJson.version, '1.7.0', 'release package version is not 1.7.0');
 assert.match(checklist, new RegExp(`package\\.json.*${packageJson.publisher}`, 'su'),
   'release checklist does not name the package publisher awaiting human ownership verification');
 assert.doesNotMatch(checklist, /replace `?"publisher": "kane"`?/u,
@@ -69,12 +69,16 @@ assert.match(acceptance, /publish\.yml[\s\S]{0,200}?packages and verifies[\s\S]{
 
 // "Model work runs locally" is true, and on its own it hides what Pro sends. Both READMEs say it beside it, in the
 // consent card's own terms: the model's shape goes to the advice service once a person allows it for that model,
-// and rows, values and credentials never go (consent.tsx CARD, DecisionRegistry.cs).
+// including formula text and the chosen Totals probe rows. Source rows and credentials stay local.
 for (const [name, text] of [['README.md', rootReadme], ['Semanticus.VSCode/README.md', marketplaceReadme]]) {
   const para = text.replace(/\s+/g, ' ').match(/Model work runs locally\.[^\n]*?(?=\[|$)/u)?.[0] ?? '';
   assert.match(para, /Pro sends .*model's shape.*advice service/iu, `${name} does not say what Pro sends beside "runs locally"`);
   assert.match(para, /only after you allow it for that model/iu, `${name} does not say Pro asks first`);
-  assert.match(para, /never rows, values or credentials/iu, `${name} does not say what never goes`);
+  assert.match(para, /Description score and Totals also send the name, Description and formula/iu, `${name} omits the score fields`);
+  assert.match(para, /Totals Fit sends chosen probe rows and totals/iu, `${name} omits the probe rows`);
+  assert.match(para, /Each probe row contains a member name and a measure value/iu, `${name} omits the probe row fields`);
+  assert.match(para, /Source table rows themselves and credentials stay on your machine/iu, `${name} does not say what stays local`);
+  assert.doesNotMatch(para, /never rows, values/iu, `${name} denies fields the model permission covers`);
 }
 
 console.log('release documentation contract tests passed');

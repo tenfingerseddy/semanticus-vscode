@@ -436,7 +436,8 @@ namespace Semanticus.Tests
             Assert.True(await sessions.Current.ReadAsync(m => m.Tables["Product"].Columns["ProductId"].IsKey && !m.Tables["Product"].Columns["Name"].IsKey));
             settings.Clear();
             await engine.SetDescriptionAsync("measure:Sales/Total", "plain", "human");
-            Assert.Empty(settings.Sealed);   // an ordinary edit has no seal step
+            // Description now owns an undoable provenance annotation; no extra metadata values need sealing.
+            Assert.Equal(new[] { "annotation " + LocalEngine.DescriptionProvenanceAnnotation }, settings.Sealed);
         }
 
         [Theory]

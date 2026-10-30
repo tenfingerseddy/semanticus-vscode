@@ -13,6 +13,7 @@ using Semanticus.Analysis;
 using RawTom = Microsoft.AnalysisServices.Tabular;
 using RawAs = Microsoft.AnalysisServices;
 using Semanticus.Engine.StartPlan;
+using Semanticus.Engine.MeasureContexts;
 
 // Expose internals to the smoke harnesses so they can fixture-test BuildLiveStats (the COLUMNSTATISTICS parse),
 // the Fabric schema->spec mapper, GitCli, and ModelCompare.
@@ -124,6 +125,8 @@ namespace Semanticus.Engine
         public LocalEngine(SessionManager sessions, Entitlement.IEntitlement entitlement = null, string workspaceDir = null, bool workspaceIsFolder = true)
         {
             _sessions = sessions;
+            sessions.Bus.Changed += DescriptionChanged;
+            sessions.SessionReplaced += ResetDescriptions;
             sessions.SessionReplaced += () => DropHeldLive("the model was replaced");
             _entitlement = entitlement ?? Entitlement.LicenseEntitlement.FromEnvironment();
             _workspaceDir = string.IsNullOrWhiteSpace(workspaceDir) ? null : workspaceDir;
@@ -146,6 +149,8 @@ namespace Semanticus.Engine
             AttachDeployGateTracking();
             AttachEditLedger();
             AttachTrialTally();
+            AttachMeasureMarks();
+            AttachMeasureRuns();
         }
 
         // Agent-health mailbox: ENGINE-level (not session-level) so a model swap mid-call can neither lose a
@@ -182,6 +187,12 @@ namespace Semanticus.Engine
         // gate (ADOMD dispose can block) and log-only (the dispose outcome is already decided).
         public void Dispose()
         {
+            _descriptionStop.Cancel();
+            _sessions.Bus.Changed -= DescriptionChanged;
+            _sessions.SessionReplaced -= ResetDescriptions;
+            ResetDescriptions();
+            StopMeasureRuns();
+            StopMeasureMarks();
             LiveConnection old;
             lock (_liveGate)
             {
@@ -198,6 +209,7 @@ namespace Semanticus.Engine
             // This run is over: another engine on the model may now release the claims its assistant held.
             EngineRunLiveness.Release(EngineRunId);
             StopTrialWork();
+            StopModelPlace();
         }
 
         /// <summary>Adopt the temp dir backing a just-opened live/local snapshot, so it is deleted when this session is
@@ -594,6 +606,12 @@ namespace Semanticus.Engine
         private async Task RecordAnalysisAsync(Session s, VerifiedEditRecord rec)
         {
             if (DryRunScope.Current != null) return;
+            // Automatic comparisons share one check and one History row, including dependent measures.
+            if (rec.Op == "compare_baseline" && markBaselineScope.Value?.Batch is { } batch)
+            {
+                lock (marksLock) batch.Records.Add(rec);
+                return;
+            }
             var ctx = _sessions.CurrentContext;
             var identity = PaneIdentity(s, ReferenceEquals(ctx.Session, s) ? ctx.Live : null);
             AnalysisRecordStore.Append(identity, s.Id, rec);
@@ -829,6 +847,16 @@ namespace Semanticus.Engine
         // working connection, and a slow stale connect/rebind can't resurrect an older endpoint over a newer one.
         private (bool Won, LiveConnection Displaced) SwapLive(LiveConnection next, long ticket, Func<bool> guard = null)
         {
+            var result = SwapLiveLocked(next, ticket, guard, out var moved);
+            // Connected or disconnected: a door holding a record written offline gets it again as it reads now (fx30e F4).
+            // Outside _liveGate, so the check-state lock is never taken under it.
+            if (moved) try { CheckConnectionChanged(); } catch { /* observational: a push never fails a connect */ }
+            return result;
+        }
+
+        private (bool Won, LiveConnection Displaced) SwapLiveLocked(LiveConnection next, long ticket, Func<bool> guard, out bool moved)
+        {
+            moved = false;
             lock (_liveGate)
             {
                 var context = _sessions.CurrentContext;
@@ -843,6 +871,7 @@ namespace Semanticus.Engine
                 if (System.Threading.Interlocked.Read(ref _liveIntent) != ticket || (guard != null && !guard()))
                     return (false, ReferenceEquals(next, current) ? null : next);
                 var old = context.ExchangeLive(next);
+                moved = (old == null) != (next == null);
                 return (true, ReferenceEquals(old, next) ? null : old);
             }
         }
@@ -996,8 +1025,10 @@ namespace Semanticus.Engine
             var unsafeCoordinate = UnsafeCoordinateRefusal(coords);
             if (unsafeCoordinate != null) throw new ArgumentException(unsafeCoordinate, nameof(endpoint));
             var refusal = LoopbackIntakeRefusal(rawEndpoint)
-                ?? AccountSelectionRefusal(origin, forceReauth, repointDefault, accountProfileId)
-                ?? AgentInteractiveRefusal(origin, authMode, tenantId, accountProfileId)
+                ?? AccountSelectionRefusal(origin, forceReauth, repointDefault, accountProfileId);
+            if (refusal != null) throw new InvalidOperationException(refusal);
+            (authMode, tenantId) = PickConnectXmlaSignIn(coords.Endpoint, coords.Database, authMode, tenantId, rawToken, accountProfileId);
+            refusal = AgentInteractiveRefusal(origin, authMode, tenantId, accountProfileId)
                 ?? AccountProfileMismatchRefusal(accountProfileId, authMode, tenantId);
             if (refusal != null) throw new InvalidOperationException(refusal);
             endpoint = coords.Endpoint;
@@ -1075,7 +1106,7 @@ namespace Semanticus.Engine
             // last-known one is a "switch" (item 9), a forced same-account re-sign is a "signin", else a plain "connect".
             // Read the prior account BEFORE RememberConnection overwrites it.
             var priorAccount = ConnectionRegistry.FindByEndpoint(endpoint, conn.Database)?.LastAccount;
-            var record = RememberConnection("xmla", endpoint, conn.Database, conn.Database, tenant, authMode, account);   // resolved identity, only after the swap won
+            var record = RememberConnection("xmla", endpoint, conn.Database, conn.Database, tenant, mode, account);   // resolved identity, only after the swap won
             var accountChanged = !string.Equals(priorAccount, account, StringComparison.OrdinalIgnoreCase);
             var connectKind = forceReauth ? (accountChanged ? "switch" : "signin")
                 : (!string.IsNullOrWhiteSpace(accountProfileId) && accountChanged ? "switch" : "connect");
@@ -1195,9 +1226,11 @@ namespace Semanticus.Engine
             if (string.IsNullOrWhiteSpace(accountProfileId)) return null;
             var profile = EntraToken.FindProfile(accountProfileId);
             if (profile == null) return null;   // not-found → BuildCredentialForProfile handles it (never false-refuse a migration-pending id)
-            var reqFamily = EntraToken.FamilyOf(mode);
-            if (!string.Equals(profile.Family ?? "", reqFamily ?? "", StringComparison.OrdinalIgnoreCase))
-                return $"That saved account signs in a different way ({profile.Family ?? "unknown"}) than this connection ({reqFamily ?? mode}). Pick an account that matches the connection's sign-in method.";
+            var reqFamily = EntraToken.FamilyOf(mode) ?? mode?.Trim().ToLowerInvariant();
+            // An omitted method adopts the saved account's method. Only two named methods can disagree.
+            if (!string.IsNullOrWhiteSpace(profile.Family) && !string.IsNullOrWhiteSpace(reqFamily)
+                && !string.Equals(profile.Family, reqFamily, StringComparison.OrdinalIgnoreCase))
+                return $"That saved account signs in a different way: {SignInWay(profile.Family)}. This connection uses {SignInWay(reqFamily)}. Pick an account with the same sign-in method.";
             var reqTenant = (tenantId ?? "").Trim();
             var profTenant = (profile.TenantId ?? "").Trim();
             // A TENANTLESS request adopts the profile's tenant (the pickers offer same-family profiles for a tenantless
@@ -1207,6 +1240,16 @@ namespace Semanticus.Engine
                 return $"That saved account belongs to a different tenant ({(string.IsNullOrEmpty(profTenant) ? "none recorded" : profTenant)}) than this connection ({reqTenant}). Open it as an account on this connection's tenant.";
             return null;
         }
+
+        private static string SignInWay(string mode) => mode switch
+        {
+            "interactive" => "a browser",
+            "devicecode" => "a device code",
+            "azcli" => "the Azure CLI",
+            "serviceprincipal" or "sp" => "an app registration",
+            "token" => "a supplied token",
+            _ => "another sign-in method",
+        };
 
         // Upsert the account an open/connect actually used into the multi-account profile store (last-use only). NEVER
         // writes the DEFAULT slot — that is done exclusively by CommitAuthRecordOrdered, UNDER the ordered barrier, so the
@@ -2470,10 +2513,11 @@ namespace Semanticus.Engine
                 return new ProbeResult { Status = "no-connection", Fidelity = fid,
                     Message = "probe_measure needs a live model (open_live / open_local). It runs the measure across filter contexts to gather evidence." };
 
+            var contextModel = await ProbeContextModelAsync(live);
             var scen = new List<ProbeScenario>();
             if (scenarios != null) scen.AddRange(scenarios.Where(s => s != null));
             if ((scen.Count == 0 || includeDefaults) && !string.IsNullOrWhiteSpace(primaryAxis))
-                scen.AddRange(await BuildDefaultScenariosAsync(live, primaryAxis.Trim(), rowCap));
+                scen.AddRange(await BuildDefaultScenariosAsync(live, primaryAxis.Trim(), rowCap, contextModel));
             if (scen.Count == 0)
                 return new ProbeResult { Status = "error", Fidelity = fid, Message = "No scenarios: pass scenarios[] or a primaryAxis to auto-generate them." };
 
@@ -2483,7 +2527,7 @@ namespace Semanticus.Engine
             var spec = await BuildQuerySpecAsync(live, null);
             var ev = new List<ScenarioEvidence>();
             var dateColumns = await ProbeDateColumnsAsync(scen);
-            foreach (var sc in scen) ev.Add(await RunScenarioAsync(live, expr, sc, cap, spec, dateColumns));
+            foreach (var sc in scen) ev.Add(await RunScenarioAsync(live, expr, sc, cap, spec, dateColumns, contextModel));
 
             var blanks = new List<int>(); var nonAdd = new List<int>(); var errs = 0;
             for (int i = 0; i < ev.Count; i++)
@@ -2498,29 +2542,32 @@ namespace Semanticus.Engine
 
         // Engine-generated defaults from one axis: grand, by-axis, single-select, multi-select, empty-select, boundary.
         // (Cross-column and subtotal scenarios are agent-supplied — the engine can't infer which second dimension matters.)
-        private static async Task<List<ProbeScenario>> BuildDefaultScenariosAsync(LiveConnection live, string axis, int rowCap)
+        private static async Task<List<ProbeScenario>> BuildDefaultScenariosAsync(LiveConnection live, string axis, int rowCap, ContextModel model = null)
         {
+            var grouping = model?.ExpandGroupBy(new[] { axis }) ?? new[] { axis };
             var list = new List<ProbeScenario>
             {
                 new ProbeScenario { Name = "grand total" },
-                new ProbeScenario { Name = "by " + axis + " (unfiltered)", GroupBy = new[] { axis } },
+                new ProbeScenario { Name = "by " + axis + " (unfiltered)", GroupBy = grouping },
             };
             string[] members = Array.Empty<string>();
             try
             {
-                var rs = await live.ExecuteAsync("EVALUATE TOPN(50, VALUES(" + axis + "))", 50, 60);
+                var membersQuery = grouping.Length == 1 ? "VALUES(" + axis + ")"
+                    : "SUMMARIZECOLUMNS(" + string.Join(", ", grouping) + ")";
+                var rs = await live.ExecuteAsync("EVALUATE TOPN(50, " + membersQuery + ")", 50, 60);
                 if (rs != null && string.IsNullOrEmpty(rs.Error) && rs.Rows != null)
                     members = rs.Rows.Where(r => r != null && r.Length > 0 && r[0] != null)
                         .Select(r => ProbeMemberText(r[0])).Where(s => !string.IsNullOrEmpty(s)).ToArray();
             }
             catch { /* members optional — grand + empty still run */ }
             if (members.Length >= 1)
-                list.Add(new ProbeScenario { Name = "single-select " + axis + "=" + members[0], GroupBy = new[] { axis }, Filters = new[] { new ProbeFilter { Column = axis, Members = new[] { members[0] } } } });
+                list.Add(new ProbeScenario { Name = "single-select " + axis + "=" + members[0], GroupBy = grouping, Filters = new[] { new ProbeFilter { Column = axis, Members = new[] { members[0] } } } });
             if (members.Length >= 2)
-                list.Add(new ProbeScenario { Name = "multi-select " + axis, GroupBy = new[] { axis }, Filters = new[] { new ProbeFilter { Column = axis, Members = members.Take(Math.Min(3, members.Length)).ToArray() } } });
-            list.Add(new ProbeScenario { Name = "empty-select " + axis, GroupBy = new[] { axis }, Filters = new[] { new ProbeFilter { Column = axis, Empty = true } } });
+                list.Add(new ProbeScenario { Name = "multi-select " + axis, GroupBy = grouping, Filters = new[] { new ProbeFilter { Column = axis, Members = members.Take(Math.Min(3, members.Length)).ToArray() } } });
+            list.Add(new ProbeScenario { Name = "empty-select " + axis, GroupBy = grouping, Filters = new[] { new ProbeFilter { Column = axis, Empty = true } } });
             if (members.Length >= 1)
-                list.Add(new ProbeScenario { Name = "boundary " + axis + "=" + members[members.Length - 1], GroupBy = new[] { axis }, Filters = new[] { new ProbeFilter { Column = axis, Members = new[] { members[members.Length - 1] } } } });
+                list.Add(new ProbeScenario { Name = "boundary " + axis + "=" + members[members.Length - 1], GroupBy = grouping, Filters = new[] { new ProbeFilter { Column = axis, Members = new[] { members[members.Length - 1] } } } });
             return list;
         }
 
@@ -2552,21 +2599,47 @@ namespace Semanticus.Engine
         internal async Task<string[]> ProbeFilterArgsAsync(ProbeScenario sc)
         {
             var dates = await ProbeDateColumnsAsync(new[] { sc });
-            return (sc.Filters ?? Array.Empty<ProbeFilter>()).Where(f => f != null && !string.IsNullOrWhiteSpace(f.Column))
-                .Select(f => f.Empty ? DaxBench.CompileEmptyFilter(f.Column) : DaxBench.CompileMemberFilter(f.Column, f.Members, dates.Contains(f.Column))).ToArray();
+            return CompileProbeFilters(sc, dates, await ProbeContextModelAsync(_live));
         }
 
-        private static async Task<ScenarioEvidence> RunScenarioAsync(LiveConnection live, string expr, ProbeScenario sc, int cap, DaxQuerySpec spec = null, HashSet<string> dateColumns = null)
+        private async Task<ContextModel> ProbeContextModelAsync(LiveConnection live)
         {
-            var axis = (sc.GroupBy ?? Array.Empty<string>()).Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()).ToArray();
-            var filterArgs = (sc.Filters ?? Array.Empty<ProbeFilter>()).Where(f => f != null && !string.IsNullOrWhiteSpace(f.Column))
-                .Select(f => f.Empty ? DaxBench.CompileEmptyFilter(f.Column) : DaxBench.CompileMemberFilter(f.Column, f.Members, dateColumns != null && dateColumns.Contains(f.Column))).ToArray();
+            var session = _sessions.Current;
+            // Metadata from a different editing session must not change a query on the connected model.
+            if (live == null || live != _live || session == null || !MarkConnectionMatches(session)) return null;
+            return await session.ReadAsync(ContextModelCapture.Capture);
+        }
+
+        private static string[] CompileProbeFilters(ProbeScenario sc, HashSet<string> dates, ContextModel model) =>
+            (sc.Filters ?? Array.Empty<ProbeFilter>()).Where(f => f != null && !string.IsNullOrWhiteSpace(f.Column))
+                .Select(f => f.Empty ? DaxBench.CompileEmptyFilter(model?.ExpandGroupBy(new[] { f.Column }) ?? new[] { f.Column })
+                    : DaxBench.CompileMemberFilter(f.Column, f.Members, dates?.Contains(f.Column) == true)).ToArray();
+
+        private static async Task<ScenarioEvidence> RunScenarioAsync(LiveConnection live, string expr, ProbeScenario sc, int cap, DaxQuerySpec spec = null, HashSet<string> dateColumns = null, ContextModel contextModel = null, bool checkAdditivity = true)
+        {
+            var axis = contextModel?.ExpandGroupBy(sc.GroupBy) ?? DaxBench.NormalizeGroupBy(sc.GroupBy);
+            var filterArgs = CompileProbeFilters(sc, dateColumns, contextModel);
             var query = DaxBench.BuildProbeQuery(expr, axis, filterArgs, spec, out var fidelityNote);
             var e = new ScenarioEvidence { Name = sc.Name, Dax = query, Status = "ok" };
+            async Task<ScenarioEvidence> Failed(string error)
+            {
+                e.Status = "error"; e.Error = error; e.ErrorKind = "measure";
+                // Keep the grouping and filters, but evaluate no measure or calculation item. A failed control
+                // cannot establish a measure error. Do not classify by error text: the measure can use a bad key itself.
+                try
+                {
+                    using var contextOnly = live.WithMarkQueries(q => q);
+                    var control = await live.ExecuteAsync(DaxBench.BuildProbeQuery("1", axis, filterArgs), 1, 60);
+                    if (control == null || !string.IsNullOrEmpty(control.Error))
+                    { e.ErrorKind = "context"; e.ContextError = control?.Error ?? "no result"; }
+                }
+                catch (Exception ex) { e.ErrorKind = "context"; e.ContextError = ex.Message; }
+                return e;
+            }
             ResultSet rs;
             try { rs = await live.ExecuteAsync(query, cap, 120); }
-            catch (Exception ex) { e.Status = "error"; e.Error = ex.Message; return e; }
-            if (rs == null || !string.IsNullOrEmpty(rs.Error)) { e.Status = "error"; e.Error = rs?.Error ?? "no result"; return e; }
+            catch (Exception ex) { return await Failed(ex.Message); }
+            if (rs == null || !string.IsNullOrEmpty(rs.Error)) return await Failed(rs?.Error ?? "no result");
             e.Truncated = rs.Truncated;
             var vIdx = axis.Length;   // result columns: [axis…], v, __present
             var rows = new List<ProbeRow>(); var nonBlank = 0; double sumLeaf = 0; var allNumeric = true; var anyValue = false;
@@ -2582,7 +2655,7 @@ namespace Semanticus.Engine
             e.Rows = rows.ToArray();
             e.Coverage = new ProbeCoverage { Total = rows.Count, NonBlank = nonBlank, BlankPct = rows.Count == 0 ? 0 : Math.Round((rows.Count - nonBlank) / (double)rows.Count, 4) };
             e.Additivity = "undefined";
-            if (axis.Length > 0 && anyValue && allNumeric)
+            if (checkAdditivity && axis.Length > 0 && anyValue && allNumeric)
             {
                 try
                 {
@@ -2678,7 +2751,7 @@ namespace Semanticus.Engine
             try
             {
                 EnsureContextCurrent(context, live, "Baseline capture");
-                dropped = context.Baselines.Add(state);
+                dropped = BaselinesFor(context).Add(state);
             }
             finally { context.BaselineGate.Release(); }
 
@@ -2820,7 +2893,7 @@ namespace Semanticus.Engine
             try
             {
                 EnsureContextCurrent(context, "Baseline compare");
-                state = context.Baselines.Get(captureId);
+                state = BaselinesFor(context).Get(captureId);
             }
             finally { context.BaselineGate.Release(); }
             if (state == null)
@@ -3276,9 +3349,27 @@ namespace Semanticus.Engine
         // then a ready service principal, and az only when nothing else is ready. A sign-in the caller names, a token or a saved account is theirs.
         internal (string Mode, string Tenant) PickOpenLiveSignIn(string authMode, string tenantId, string rawToken, string accountProfileId)
         {
-            if (!string.IsNullOrWhiteSpace(authMode) || !string.IsNullOrWhiteSpace(rawToken) || !string.IsNullOrWhiteSpace(accountProfileId)) return (authMode, tenantId);
+            if (!string.IsNullOrWhiteSpace(authMode) || !string.IsNullOrWhiteSpace(rawToken)) return (authMode, tenantId);
+            if (!string.IsNullOrWhiteSpace(accountProfileId))
+            {
+                var profile = EntraToken.FindProfile(accountProfileId);
+                return (profile?.Family ?? authMode, string.IsNullOrWhiteSpace(tenantId) ? profile?.TenantId : tenantId);
+            }
             var (mode, tenant) = ResolveSqlListSignIn(null, tenantId);
             return mode == null ? (authMode, tenantId) : (mode, tenant);
+        }
+
+        internal (string Mode, string Tenant) PickConnectXmlaSignIn(string endpoint, string database, string authMode,
+            string tenantId, string rawToken, string accountProfileId)
+        {
+            // A named method or account is the caller's choice. Otherwise reconnect as this saved source did.
+            if (string.IsNullOrWhiteSpace(authMode) && string.IsNullOrWhiteSpace(rawToken) && string.IsNullOrWhiteSpace(accountProfileId))
+            {
+                var saved = ConnectionRegistry.FindByEndpoint(endpoint, database);
+                if (saved?.Kind == "xmla" && !string.IsNullOrWhiteSpace(saved.AuthMode))
+                    return (saved.AuthMode, string.IsNullOrWhiteSpace(tenantId) ? saved.TenantId : tenantId);
+            }
+            return PickOpenLiveSignIn(authMode, tenantId, rawToken, accountProfileId);
         }
 
         public async Task<OpenResult> OpenLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool forceReauth = false,
@@ -3468,6 +3559,12 @@ namespace Semanticus.Engine
             await SafeRebroadcastWorkflowLibraryAsync();   // model + connection.* now exist — re-curate the menu (§10.6)
             var swapped = PublishSessionSwap(open, "open_live");
             await ExtendWindowConsentAsync(origin).ConfigureAwait(false);   // the person's OK in this window carries to the live model the assistant opened (hero19 D11)
+            // A file this published model was saved to may hold work the service copy lacks (UAT 1.7 D3): say so on both doors, and offer it.
+            if (swapped != null && await SavedCopyOfferAsync(session).ConfigureAwait(false) is { } offer)
+            {
+                swapped.SavedCopy = offer;
+                swapped.Note = JoinNotes(swapped.Note, SavedCopyNote(offer));
+            }
             return swapped;
         }
 
@@ -3804,10 +3901,14 @@ namespace Semanticus.Engine
             return rep;
         }
 
-        public Task<TreeNode[]> ListTreeAsync(string parentRef)
+        public async Task<TreeNode[]> ListTreeAsync(string parentRef)
         {
             var s = _sessions.Require();
-            return s.ReadAsync(m => BuildTree(m, parentRef));
+            return await s.ReadAsync(m =>
+            {
+                var nodes = BuildTree(m, parentRef);
+                return nodes;
+            }).ConfigureAwait(false);
         }
 
         private static TreeNode[] BuildTree(Model m, string parentRef)
@@ -4443,8 +4544,17 @@ namespace Semanticus.Engine
                 && (string.IsNullOrWhiteSpace(path) || LiveModelExport.IsInSnapshotRoot(path)))
             {
                 movesToLasting = string.IsNullOrWhiteSpace(path);
-                path = LastingSaveTarget(s, s.SourcePath, path, out ownLastingFile);
+                var workingCopy = s.SourcePath;
+                path = LastingSaveTarget(s, workingCopy, path, out ownLastingFile);
                 firstSaveNote = "Saved to " + path + ", a lasting place. Semanticus keeps its own working copy of the published model in a temporary folder that is not for saving.";
+                // The file this published model was saved to before is its file, unless it holds work this model lacks (UAT 1.7 D3: Ctrl+S on the reopened
+                // service copy wrote over three saved measures). Then it is left alone and this save goes to a file of its own beside it.
+                if (ownLastingFile && (await SavedCopiesHoldingMoreAsync(s).ConfigureAwait(false)).FirstOrDefault(c => SameSavePath(c.Path, path)) is { } holds)
+                {
+                    var left = path;
+                    path = LastingSaveTarget(s, workingCopy, Path.GetFileName(left), out ownLastingFile, reuseOwn: false);
+                    firstSaveNote = $"Saved to {path}. The saved copy at {left} holds {holds.Names.Count} {(holds.Names.Count == 1 ? "thing" : "things")} this model does not have ({string.Join(", ", holds.Names.Take(3))}{(holds.Names.Count > 3 ? ", and more" : "")}), so it was left as it was.";
+                }
             }
             if (!string.IsNullOrEmpty(path) && string.IsNullOrEmpty(s.SourcePath))
                 (path, firstSaveNote) = await FirstSaveTargetAsync(s, path, fmt, pickedInDialog).ConfigureAwait(false);
@@ -4484,6 +4594,12 @@ namespace Semanticus.Engine
             // A copy folder this session wrote is the person's the moment anything in it changes. A refresh replaces it only while it is exactly
             // what was written; otherwise the copy goes beside it under a new name, and the save says where (a redirect, never a refusal).
             string copyMovedNote = null;
+            var refreshesCopyFile = false;
+            if (!replacingOpen && !string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(oldSource) && File.Exists(target) && s.WroteCopyFile(target))
+            {
+                if (s.CopyFileUnchanged(target)) refreshesCopyFile = true;
+                else (target, copyMovedNote) = CopyBesideChangedFile(target);
+            }
             var refreshesCopyFolder = false;
             if (!replacingOpen && !string.IsNullOrEmpty(path) && !string.IsNullOrEmpty(oldSource) && Directory.Exists(target) && s.WroteCopyFolder(target))
             {
@@ -4511,10 +4627,12 @@ namespace Semanticus.Engine
             // Where the undo stack and the revision stood in the turn that marked the model saved: what the History's InFile record is stamped from, below.
             var savedSteps = 0; var savedRevision = -1L;
             Exception switchesNotKept = null;
+            MeaningAnnotationCleanup meaningCleanup = null;
             using (await s.AcquireModelFileWriteLeaseAsync())
             {
                 if (replacingOpen && !overwrite && _loadedDiskStamp != null && ModelDiskChanged(_loadedDiskStamp))
                     throw new InvalidOperationException("The files on disk changed after this model was opened. Saving now would replace those changes. Confirm you want to replace them, or reopen the model first.");
+                meaningCleanup = await CleanupMeaningAnnotationsAsync(s, origin, beforeSave: true).ConfigureAwait(false);
                 try
                 {
                     if (folderSave)
@@ -4533,6 +4651,7 @@ namespace Semanticus.Engine
                         // The History's background write opens files in the model folder (its lock, its temp file), and on Windows an open file
                         // blocks the folder move below. Let it finish first; the move also tries again if another writer is still in there.
                         await _sessions.Ledger.FlushAsync().ConfigureAwait(false);
+                        var beforeSwap = Session.TreeRecord(target);
                         // Only a save in place rewrites a folder that holds other things. A copy lands in a new or empty folder (checked above).
                         if (replacingOpen) PreserveUntouchedFiles(target, tempDir, fmt);
                         else if (refreshesCopyFolder)
@@ -4541,9 +4660,10 @@ namespace Semanticus.Engine
                             if (Directory.Exists(target) && !s.CopyFolderUnchanged(target) && !IsEmptyFolder(target)) (target, copyMovedNote) = CopyBesideChangedFolder(target);
                         }
                         else if (Directory.Exists(target)) Directory.Delete(target, recursive: false);   // an empty folder (checked above)
-                        SwapFolderSave(target, tempDir);
+                        var writtenTree = asCopy ? Session.TreeRecord(tempDir) : null;
+                        copyMovedNote = JoinNotes(copyMovedNote, SwapFolderSave(target, tempDir, beforeSwap));
                         tempDir = null;
-                        if (asCopy) s.NoteCopyFolder(target);   // what this copy wrote, so the next copy can tell whether anything changed since
+                        if (asCopy) s.NoteCopyFolder(target, writtenTree);
                         if (!asCopy) marked = await s.RunAsync(() => { s.MarkSavedToDisk(wroteEdits); savedSteps = s.UndoStateNow().Steps; savedRevision = s.Revision; return (s.SaveCount, s.PlanSawUnsaved); });
                     }
                     else
@@ -4568,7 +4688,23 @@ namespace Semanticus.Engine
                                 s.Save(staged, fmt, SerializeOptions.Default, resetCheckpoint: false);
                                 return true;
                             });
-                            File.Move(staged, target, overwrite: true);
+                            var writtenHash = asCopy ? Session.FileRecord(staged) : null;
+                            if (asCopy || refreshesCopyFile)
+                            {
+                                if (File.Exists(target) && s.WroteCopyFile(target) && !s.CopyFileUnchanged(target))
+                                    (target, copyMovedNote) = CopyBesideChangedFile(target);
+                                if (File.Exists(target) && s.WroteCopyFile(target))
+                                {
+                                    // Replace keeps the actual displaced bytes, including an edit made after the last check.
+                                    var backup = Path.Combine(dir, Path.GetFileNameWithoutExtension(target) + ".semanticus-bak-" + Guid.NewGuid().ToString("N") + Path.GetExtension(target));
+                                    File.Replace(staged, target, backup);
+                                    if (s.CopyFileUnchanged(target, backup)) File.Delete(backup);
+                                    else copyMovedNote = JoinNotes(copyMovedNote, $"The previous copy changed during this save. It was kept at '{backup}'.");
+                                }
+                                else File.Move(staged, target, overwrite: false);
+                            }
+                            else File.Move(staged, target, overwrite: true);
+                            if (asCopy) s.NoteCopyFile(target, writtenHash);
                             if (!asCopy) marked = await s.RunAsync(() => { s.MarkSavedToDisk(wroteEdits); savedSteps = s.UndoStateNow().Steps; savedRevision = s.Revision; return (s.SaveCount, s.PlanSawUnsaved); });
                         }
                         finally
@@ -4609,7 +4745,6 @@ namespace Semanticus.Engine
             if (asCopy)
             {
                 var copyCount = Directory.Exists(target) ? Directory.EnumerateFiles(target, "*.tmdl", SearchOption.AllDirectories).Count() : 0;
-                if (File.Exists(target)) s.NoteCopyFile(target);
                 // A copy of a model that lives on a service is not a save of the service. Say which one happened, in the words the person reads (UAT 18 Oct N23: the
                 // assistant said "The changes are saved" about a copy, while the footer still said unsaved), and let the footer and the Plan say the same.
                 var liveCopy = s.LiveOrigin != null || LiveModelExport.IsInSnapshotRoot(oldSource);
@@ -4619,9 +4754,9 @@ namespace Semanticus.Engine
                     PublishSaveNotification(s, "keep copy", origin: origin);   // no edit follows a copy, so the window is told: its footer and the Plan read this fact
                 }
                 return new SaveResult { Revision = s.Revision, Path = target, Format = fmt.ToString(), FileCount = copyCount, InGit = await GitPresence.InGitAsync(target).ConfigureAwait(false), IsBackupCopy = true,
-                    Note = JoinNotes(copyMovedNote, liveCopy ? KeptCopyNote(target)
+                    Note = JoinNotes(meaningCleanup?.Annotations > 0 ? meaningCleanup.Note : null, JoinNotes(copyMovedNote, liveCopy ? KeptCopyNote(target)
                          : firstSaveNote != null ? firstSaveNote + " The open model's next save goes to " + LastingFolderFor(oldSource) + " too."
-                         : "Saved a copy. The open model still saves to " + oldSource + ".") };
+                         : "Saved a copy. The open model still saves to " + oldSource + ".")) };
             }
             _sessions.Ledger.EnsureLoaded(s.Id);
             // After the move: the History's file is found where the model now lives, never at the place a save-as just left (it is written from here on).
@@ -4633,12 +4768,15 @@ namespace Semanticus.Engine
             try { _loadedDiskStamp = ModelDiskStamp(); }
             catch { _loadedDiskStamp = null; }
             await CaptureVitalsAsync(s, "save_model", "system", Array.Empty<string>(), liveReflectsSession: false);
+            // A first save gives the cached checks their durable model identity and sidecar location.
+            lock (measureRunLock)
+                if (_sessions.Current == s && measureCheckCache.Count > 0) SaveMeasureCache(s);
             // Said after everything a save does has been done, because the model itself is saved.
             if (switchesNotKept != null) throw switchesNotKept;
             var count = Directory.Exists(target)
                 ? Directory.EnumerateFiles(target, "*.tmdl", SearchOption.AllDirectories).Count()
                 : 0;
-            return new SaveResult { Revision = s.Revision, Path = target, Format = fmt.ToString(), FileCount = count, Note = JoinNotes(copyMovedNote, firstSaveNote), InGit = await GitPresence.InGitAsync(target).ConfigureAwait(false) };
+            return new SaveResult { Revision = s.Revision, Path = target, Format = fmt.ToString(), FileCount = count, Note = JoinNotes(meaningCleanup?.Annotations > 0 ? meaningCleanup.Note : null, JoinNotes(copyMovedNote, firstSaveNote)), InGit = await GitPresence.InGitAsync(target).ConfigureAwait(false) };
         }
 
         /// <summary>What a copy of a live model says: where it is, and that the service has not changed (publishing is what changes it).</summary>
@@ -4653,7 +4791,7 @@ namespace Semanticus.Engine
                 : Path.Combine(LastingHomeForTests ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Semanticus",
                     LiveModelExport.SafeName(Path.GetFileNameWithoutExtension(workingCopy)));
 
-        private string LastingSaveTarget(Session s, string workingCopy, string asked, out bool ownFile)
+        private string LastingSaveTarget(Session s, string workingCopy, string asked, out bool ownFile, bool reuseOwn = true)
         {
             ownFile = false;
             var name = Path.GetFileName(string.IsNullOrWhiteSpace(asked) ? workingCopy : asked.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
@@ -4664,7 +4802,7 @@ namespace Semanticus.Engine
             // A file Semanticus already saved THIS published model to is the model's file: the save goes there (UAT 18 Oct: the assistant's save wrote
             // "Northstar Sales Working 2.bim" beside the person's own file). Only a file that says it was saved from this model counts; any other file
             // that holds the name is somebody else's and gets the numbered name.
-            if (File.Exists(target) && LooksLikeBimFile(target) && s.LiveOrigin != null
+            if (reuseOwn && File.Exists(target) && LooksLikeBimFile(target) && s.LiveOrigin != null
                 && ModelHome.RecordedFor(target) is { } recorded && string.Equals(recorded.Identity, PaneIdentity(s, null), StringComparison.Ordinal))
             { ownFile = true; return target; }
             for (var n = 2; File.Exists(target) || Directory.Exists(target); n++) target = Path.Combine(folder, $"{stem} {n}{ext}");
@@ -4730,6 +4868,13 @@ namespace Semanticus.Engine
             var trimmed = target.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             var free = FreeSibling(Path.GetDirectoryName(trimmed) ?? trimmed, Path.GetFileName(trimmed));
             return (free, $"'{Path.GetFileName(trimmed)}' has files in it that changed since Semanticus wrote it, so it was left as it is. This copy is in '{free}'.");
+        }
+
+        private static (string Target, string Note) CopyBesideChangedFile(string target)
+        {
+            var full = Path.GetFullPath(target);
+            var free = FreeSibling(Path.GetDirectoryName(full), Path.GetFileNameWithoutExtension(full), Path.GetExtension(full));
+            return (free, $"'{Path.GetFileName(full)}' changed since Semanticus wrote it, so it was left as it is. This copy is in '{free}'.");
         }
 
         private static bool IsEmptyFolder(string dir)
@@ -5051,7 +5196,7 @@ namespace Semanticus.Engine
             }
         }
 
-        private void SwapFolderSave(string target, string tempDir)
+        private string SwapFolderSave(string target, string tempDir, Dictionary<string, string> beforeSwap)
         {
             if (Directory.Exists(target))
             {
@@ -5060,7 +5205,6 @@ namespace Semanticus.Engine
                 try
                 {
                     MoveDirectory(tempDir, target);
-                    TryDeleteTree(bak);
                 }
                 catch
                 {
@@ -5068,6 +5212,8 @@ namespace Semanticus.Engine
                     try { MoveDirectory(bak, target); } catch { }
                     throw;
                 }
+                if (Session.TreeUnchanged(bak, beforeSwap)) TryDeleteTree(bak);
+                else return $"The previous folder changed during this save. It was kept at '{bak}'.";
             }
             else
             {
@@ -5075,6 +5221,7 @@ namespace Semanticus.Engine
                 if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
                 MoveDirectory(tempDir, target);
             }
+            return null;
         }
 
         private static void TryDeleteTree(string dir)
@@ -5586,7 +5733,9 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, $"create measure {name}", m =>
             {
                 if (!(ObjectRefs.Resolve(m, tableRef) is Table t)) throw new InvalidOperationException($"{tableRef} is not a table. Pass a table ref (a name or 'table:Name'); run list_objects to see the model's tables.");
-                newRef = ObjectRefs.For(CreateMeasureCore(t, name, expression, folder));
+                var measure = CreateMeasureCore(t, name, expression, folder);
+                // The supplied numeric display format is part of this create, before its first check.
+                newRef = ObjectRefs.For(measure);
             });
             await RecordVerifiedModeEditAsync(verified, s, "create_measure", newRef, expression, rev, origin);
             await RecordWorkflowAuthoredMeasureAsync("create_measure", newRef, expression);   // E3(b) drift baseline
@@ -8662,19 +8811,61 @@ namespace Semanticus.Engine
         // ---- Fabric REST (the cloud ALM lane — read-only discovery) --------------------------------------------
         // Read-only GETs against api.fabric.microsoft.com with the user's own Entra identity (azcli default; SP is
         // the reliable headless path). No live write. Errors (incl. permission gates) surface scrubbed via FabricRest.
-        public async Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
+        public async Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default, bool anotherAccount = false, string accountProfileId = null)
         {
-            var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
-            return await FabricRest.ListWorkspacesAsync(token, cancellationToken);
+            if (!anotherAccount && string.IsNullOrWhiteSpace(accountProfileId))
+            {
+                var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
+                return await FabricRest.ListWorkspacesAsync(token, cancellationToken);
+            }
+            var (asToken, profileId, account) = await AcquireFabricTokenAsAccountAsync(authMode, origin, anotherAccount, accountProfileId, cancellationToken);
+            var list = await FabricRest.ListWorkspacesAsync(asToken, cancellationToken);
+            foreach (var w in list) { w.AccountProfileId = profileId; w.Account = account; }
+            return list;
         }
 
         // The models in one workspace, so Connections can offer "a workspace, then a model" in place of a pasted
         // address (contract 19.1). Same token, same scrubbed errors as list_workspaces.
-        public async Task<FabricSemanticModel[]> ListWorkspaceModelsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
+        public async Task<FabricSemanticModel[]> ListWorkspaceModelsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default, string accountProfileId = null)
         {
             if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required: list_workspaces shows your workspaces and their ids.");
-            var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
+            var token = string.IsNullOrWhiteSpace(accountProfileId)
+                ? await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken)
+                : (await AcquireFabricTokenAsAccountAsync(authMode, origin, false, accountProfileId, cancellationToken)).Token;
             return await FabricRest.ListSemanticModelsAsync(workspaceId, token, cancellationToken);
+        }
+
+        internal const string AnotherAccountForAssistant = "Only the person can choose the account a workspace list uses. Ask them to press Use another account in Connections.";
+        internal const string AnotherAccountNeedsBrowser = "Another account signs in with the browser. Pick Browser sign-in, then try again.";
+
+        // si2: the workspace picker lists as an account the person chose, not always as the saved default. anotherAccount runs
+        // a NEW browser sign-in that pins no saved record (BuildCredentialAsync with forceReauth), so the browser opens at
+        // "organizations" with the account list and reaches a client's tenant. The account is saved as a profile and the
+        // default stays where it was; on a device with no default yet, the first account becomes it, as a first sign-in
+        // always has. accountProfileId lists as that saved profile. The person's only: an agent never picks an account.
+        private async Task<(string Token, string ProfileId, string Account)> AcquireFabricTokenAsAccountAsync(string authMode, string origin,
+            bool anotherAccount, string accountProfileId, System.Threading.CancellationToken cancellationToken)
+        {
+            if (DeployGuard.IsAgent(origin)) throw new InvalidOperationException(AnotherAccountForAssistant);
+            var mode = string.IsNullOrWhiteSpace(authMode) ? "interactive" : authMode.Trim().ToLowerInvariant();
+            var family = EntraToken.FamilyOf(mode);
+            if (family == null) throw new InvalidOperationException(AnotherAccountNeedsBrowser);
+            if (!anotherAccount)
+            {
+                var pinned = EntraToken.BuildCredentialForProfile(accountProfileId)
+                    ?? throw new InvalidOperationException("That saved account is signed out on this device. Sign in again to use it.");
+                var token = await EntraToken.FabricTokenFromAsync(pinned.Credential, cancellationToken);
+                EntraToken.TouchProfileUse(accountProfileId);
+                return (token, accountProfileId, pinned.Account);
+            }
+            var hadDefault = EntraToken.ReadSavedAccount(mode, null) != null;
+            var prepared = await EntraToken.BuildCredentialAsync(mode, null, cancellationToken, forceReauth: true);
+            var fresh = await EntraToken.FabricTokenFromAsync(prepared.Credential, cancellationToken);
+            var rec = prepared.PendingRecord ?? prepared.ResolvedRecord;
+            if (rec == null) return (fresh, null, null);
+            var id = EntraToken.CommitProfile(family, null, rec.HomeAccountId, rec.Username, EntraToken.SerializeRecord(rec), markSignIn: true);
+            if (!hadDefault && id != null) EntraToken.SetDefaultProfile(id);
+            return (fresh, id, rec.Username);
         }
 
         internal const string SqlEndpointSignInNeeded = "Semanticus has no Power BI sign-in saved yet, so it cannot list the workspace's SQL endpoints. Ask the person to open Connections in Semanticus and press Sign in, then ask again. They can also paste the SQL endpoint address from the item's settings in Fabric.";
@@ -10316,6 +10507,14 @@ namespace Semanticus.Engine
                     // skip as a batch failure so the dispatcher rolls back every earlier TMDL write as well.
                     if (skipped.Count > 0)
                         throw new TmdlValidationException(skipped);
+                    // TMDL rebuilds wrappers without property events. Keep this commit visible to query readers,
+                    // including dependency and relationship changes in whole-object documents.
+                    if (topLevel.Count > 0)
+                        s.RecordReplayDelta(new ChangeDelta { Kind = "structure", Ref = "model" });
+                    else
+                        foreach (var item in measures)
+                            s.RecordReplayDelta(new ChangeDelta { Kind = "update", Ref = item.objRef,
+                                Props = new[] { "Expression", "FormatString", "Annotations" } });
                 });
             }
             catch (TmdlValidationException ex)
@@ -11594,8 +11793,13 @@ namespace Semanticus.Engine
             if (!string.IsNullOrEmpty(rs.Error))
                 throw new InvalidOperationException("COLUMNSTATISTICS failed on the live model: " + rs.Error);
             var stats = BuildLiveStats(rs);
+            var keyRead = await s.ReadAsync(m => (checks: WrongNumberReadiness.KeyChecks(m).ToArray(), revision: s.Revision));
+            foreach (var check in keyRead.checks)
+                stats.KeyIntegrity[check.ObjectRef] = KeyCounts(await live.ExecuteAsync(check.Query, 1, 60));
             var scanned = await s.ReadAsync(m =>
             {
+                if (s.Revision != keyRead.revision || !ReferenceEquals(context, _sessions.CurrentContext))
+                    throw new InvalidOperationException("The model changed while the key counts were read. Run the check again.");
                 var card = new ReadinessAnalyzer().Analyze(m, stats);
                 // On Direct Lake, COLUMNSTATISTICS cardinality is resident-only, so the cardinality-gated rules
                 // (Copilot's 5M-unique ceiling / CopilotLimits) under-count — a clean result here is not a guarantee.
@@ -12240,6 +12444,7 @@ namespace Semanticus.Engine
         /// AI-content finding (description / name / synonyms / format) with grounding baked in.</summary>
         public Task<FixPrompt> GetFixPromptAsync(string ruleId, string objRef)
         {
+            if (ruleId == "AVG-OF-RATIO") return RatioFixPromptAsync(objRef);
             var s = _sessions.Require();
             return s.ReadAsync(m =>
             {
@@ -12257,6 +12462,18 @@ namespace Semanticus.Engine
                 : "";
             switch (ruleId)
             {
+                case "SEMI-ADDITIVE-SUM":
+                    tool = "(advice)";
+                    prompt = $"Review whether {loc} is a balance at a date or a movement over a period. Current formula: {g.Expression}. If it is a balance, compare a last-date calculation across dates and totals. Keep the sum if it represents movements. Do not change it from its name alone.";
+                    break;
+                case "DAX-DATE-LITERAL":
+                    tool = "(advice)";
+                    prompt = $"Review the fixed date window in {loc}. Current formula: {g.Expression}. If the fixed window is intended, state it in the description. Otherwise anchor it to the latest date with data, and compare the numbers before changing it.";
+                    break;
+                case "KEY-INTEGRITY":
+                    tool = "(advice)";
+                    prompt = $"Review the live key counts for {loc}. Correct unmatched or repeated keys in the source data if needed. This check reports counts only and never changes the model.";
+                    break;
                 case "DESC-MEASURE":
                 case "DESC-TABLE":
                 case "DESC-COLUMN":
@@ -13085,13 +13302,14 @@ namespace Semanticus.Engine
             });
         }
 
-        public async Task<SetResult> SetDescriptionAsync(string objRef, string text, string origin)
+        public async Task<SetResult> SetDescriptionAsync(string objRef, string text, string origin, string expectedText = null)
         {
             var s = _sessions.Require();
             var changed = false;
             var rev = await s.MutateAsync(origin, "set description", m =>
             {
                 var obj = ObjectRefs.Resolve(m, objRef);
+                GuardExpectedValue("Description", expectedText, ReadStringProp(obj, "Description"), text);
                 changed = ApplyDescription(obj, text);
             });
             return new SetResult { Revision = rev, Changed = changed };
@@ -13455,6 +13673,21 @@ namespace Semanticus.Engine
             return dateColumn.Trim();
         }
 
+        /// <summary>The trailing <paramref name="months"/> months, ending on the end of the filtered period, clamped to the month that holds the
+        /// last date with data for the base measure. The window used to end on MAX(date). With no filter on the date (a card, a total row) that is
+        /// the last date of the CALENDAR, and a calendar built past the data (to 2030, with sales until October) put the window over months that
+        /// are empty. The first fix anchored on the last day with data of each period, but a month whose last day has no sales (a closed day, the
+        /// data cut) then started its window days early and took days from 12 months back, a wrong number inside the data. So the month end stays,
+        /// the last data date is read once across the whole calendar, and a period that starts after the data is blank.</summary>
+        private static string RollingWindow(string baseRef, string dateCol, int months)
+        {
+            // REMOVEFILTERS ( ) clears EVERY filter, not only the date table: the data edge is the model's last date with data. With the date
+            // table alone, a customer or store whose own sales stop early read its own last sale as the edge and went blank inside the data.
+            return $"VAR _lastData = CALCULATE ( MAXX ( FILTER ( VALUES ( {dateCol} ), NOT ISBLANK ( {baseRef} ) ), {dateCol} ), REMOVEFILTERS ( ) )\n"
+                 + $"VAR _end = MIN ( MAX ( {dateCol} ), EOMONTH ( _lastData, 0 ) )\n"
+                 + $"RETURN IF ( MIN ( {dateCol} ) <= _lastData, CALCULATE ( {baseRef}, DATESINPERIOD ( {dateCol}, _end, -{months}, MONTH ) ) )";
+        }
+
         private static (string suffix, string expr, string fmt) BuildTiVariant(string variant, string baseRef, string dateCol, string baseFmt)
         {
             var py = $"CALCULATE({baseRef}, DATEADD({dateCol}, -1, YEAR))";
@@ -13467,10 +13700,10 @@ namespace Semanticus.Engine
                 case "PY": return ("PY", py, baseFmt);
                 case "YOY": return ("YoY", $"{baseRef} - {py}", baseFmt);
                 case "YOYPCT": return ("YoY %", $"DIVIDE({baseRef} - {py}, {py})", "0.0%");
-                // Rolling windows: the trailing N months ending at the last date in filter context.
-                case "ROLL12": return ("Rolling 12M", $"CALCULATE({baseRef}, DATESINPERIOD({dateCol}, MAX({dateCol}), -12, MONTH))", baseFmt);
-                case "R3M": return ("Rolling 3M", $"CALCULATE({baseRef}, DATESINPERIOD({dateCol}, MAX({dateCol}), -3, MONTH))", baseFmt);
-                case "R6M": return ("Rolling 6M", $"CALCULATE({baseRef}, DATESINPERIOD({dateCol}, MAX({dateCol}), -6, MONTH))", baseFmt);
+                // Rolling windows: the trailing N months ending at the period end, clamped to the month of the last data (RollingWindow).
+                case "ROLL12": return ("Rolling 12M", RollingWindow(baseRef, dateCol, 12), baseFmt);
+                case "R3M": return ("Rolling 3M", RollingWindow(baseRef, dateCol, 3), baseFmt);
+                case "R6M": return ("Rolling 6M", RollingWindow(baseRef, dateCol, 6), baseFmt);
                 // Same period last year (the SAMEPERIODLASTYEAR idiom, vs PY's DATEADD); prior-year YTD.
                 case "SPLY": return ("SPLY", $"CALCULATE({baseRef}, SAMEPERIODLASTYEAR({dateCol}))", baseFmt);
                 case "PYTD": return ("PY YTD", $"CALCULATE(TOTALYTD({baseRef}, {dateCol}), DATEADD({dateCol}, -1, YEAR))", baseFmt);
@@ -13979,8 +14212,7 @@ namespace Semanticus.Engine
             // and the batch marks them applied, but the lines are the change plan's own, which no model rollback
             // reaches. Left alone, a refused line would read skipped, rejected or applied on a model that never
             // changed, and the item it belongs to could not be approved again. So every refusal puts them back.
-            var statusBefore = guards == null ? null
-                : targets.ToDictionary(i => i, i => (i.Status, i.Note, i.VerifyState),
+            var statusBefore = targets.ToDictionary(i => i, i => (i.Status, i.Note, i.VerifyState),
                                        (IEqualityComparer<ChangeItem>)ReferenceEqualityComparer.Instance);
             void RestoreLines()
             {
@@ -14115,7 +14347,7 @@ namespace Semanticus.Engine
             {
             rev = await s.MutateAsync(origin, "apply change plan", m => executor.ApplyInBatch(m, toApply), executor.Cascade);
             }
-            catch (PlanApprovalRefusedException) when (statusBefore != null)
+            catch (Exception error) when (error is PlanApprovalRefusedException)
             {
                 RestoreLines();
                 throw;
@@ -14932,6 +15164,7 @@ namespace Semanticus.Engine
             // The Plan's tasks first, so the assistant's fold line on its very next call already offers a task whose
             // work this undo took back (it reads the Plan's file without composing when nothing looks offerable).
             try { ReconcileTakenBackTasks(BindPlanMemory()); } catch { }
+            try { ReconcileStandardRows(BindPlanMemory()); } catch { }
             await context.PlanGate.WaitAsync();
             try
             {

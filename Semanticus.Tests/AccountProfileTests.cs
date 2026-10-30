@@ -146,7 +146,7 @@ namespace Semanticus.Tests
         [Fact]
         public void Accounts_in_two_tenants_stay_separate_so_neither_repoints_the_other()
         {
-            // Kane's real scenario: a Contoso account and an ETS account. Each is its own profile and default; signing in
+            // Kane's real scenario: a Contoso account and an Fabrikam account. Each is its own profile and default; signing in
             // one must never move the other's default — the whole point of Phase 2.
             SeedSignedIn("contoso.com", "megan@contoso.com", makeDefault: true);
             SeedSignedIn("fabrikam.com", "avery@fabrikam.com", makeDefault: true);

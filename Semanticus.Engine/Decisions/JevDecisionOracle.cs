@@ -928,7 +928,12 @@ namespace Semanticus.Engine.Decisions
                 for (var j = 0; j < q.Options.Count; j++)
                 {
                     if (j > 0) sb.Append(',');
-                    AppendJsonString(sb, q.Options[j].Id);
+                    // J1 alignment v2 and totals fit v4 use true/false criteria. The shared Noul contract
+                    // uses yes/no internally; preserve the measured keys on both routes.
+                    var id = (request.PointName == DecisionRegistry.DescriptionMatch || request.PointName == DecisionRegistry.TotalsFit)
+                        && q.Kind == DecisionQuestionKind.Noul
+                        ? (q.Options[j].Id == "yes" ? "true" : "false") : q.Options[j].Id;
+                    AppendJsonString(sb, id);
                     sb.Append(':');
                     AppendJsonString(sb, q.Options[j].Criterion);
                 }

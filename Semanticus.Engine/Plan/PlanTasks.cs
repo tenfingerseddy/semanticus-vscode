@@ -917,6 +917,54 @@ namespace Semanticus.Engine
             catch { /* best effort on a read path: the next compose tries again */ }
         }
 
+        /// <summary>Rows set aside because Undo took back the "Your standard" Apply that made them, by task id. A redo of that Apply puts them back
+        /// where they stood. Engine memory only, like a removed row.</summary>
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (PlanMemoryBinding Bound, PlanTask Task, int Index)> _standardRowsSetAside =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, (PlanMemoryBinding, PlanTask, int)>(StringComparer.Ordinal);
+
+        /// <summary>The rows an Apply of "Your standard" sent to the Plan stand only while that Apply is in the model. Undo of it takes them off
+        /// the Plan, so the Plan does not ask for work the standard no longer asks for; Redo puts them back; a new edit after the Undo clears the
+        /// redo, and the rows stay gone. Run after every undo and redo from both doors, beside <see cref="ReconcileTakenBackTasks"/>.</summary>
+        internal void ReconcileStandardRows(PlanMemoryBinding bound)
+        {
+            var s = bound?.Session;
+            if (s == null) return;
+            var entries = _sessions.Ledger.ForModel(s.Id);
+            EditLedgerEntry StepOf(PlanTaskStep step) => step == null || !string.Equals(step.SessionId, s.Id, StringComparison.Ordinal) ? null
+                : entries.LastOrDefault(e => e.Revision == step.Revision && e.StepIndex > 0 && string.Equals(e.Kind ?? EditLedgerKinds.Edit, EditLedgerKinds.Edit, StringComparison.Ordinal));
+            bool Out(PlanTask t) { var e = StepOf(t.MadeByStep); return e != null && (e.Undone || e.Gone); }
+
+            try
+            {
+                var state = ReadPlanState(bound);
+                var leaving = state.Tasks.Where(t => t.MadeByStep != null && Out(t)).ToList();
+                var returning = _standardRowsSetAside.Where(kv => ReferenceEquals(kv.Value.Bound?.Context, bound.Context)).ToList();
+                if (leaving.Count == 0 && returning.Count == 0) return;
+                WritePlanTasks(bound, st =>
+                {
+                    foreach (var t in st.Tasks.Where(x => x.MadeByStep != null && Out(x)).ToList())
+                    {
+                        var i = st.Tasks.FindIndex(x => string.Equals(x.Id, t.Id, StringComparison.Ordinal));
+                        if (i < 0) continue;
+                        // Gone with the redo branch: nothing can bring the Apply back, so nothing is kept.
+                        var e = StepOf(t.MadeByStep);
+                        if (e != null && !e.Gone) _standardRowsSetAside[t.Id] = (bound, t, i);
+                        st.Tasks.RemoveAt(i);
+                        ClearPointersTo(t.Id);
+                    }
+                    foreach (var kv in returning)
+                    {
+                        var e = StepOf(kv.Value.Task.MadeByStep);
+                        if (e == null || e.Gone) { _standardRowsSetAside.TryRemove(kv.Key, out _); continue; }
+                        if (e.Undone) continue;
+                        _standardRowsSetAside.TryRemove(kv.Key, out _);
+                        if (st.FindTask(kv.Key) == null) st.Tasks.Insert(Math.Min(Math.Max(kv.Value.Index, 0), st.Tasks.Count), kv.Value.Task);
+                    }
+                });
+            }
+            catch { /* best effort on a read path: the next undo or redo tries again */ }
+        }
+
         /// <summary>Change the tasks, residue or switch of the bound model, or refuse when another model is open
         /// now. A model with nowhere durable to keep them changes its session-held copy.</summary>
         internal void WritePlanTasks(PlanMemoryBinding bound, Action<PlanMemoryState> change)

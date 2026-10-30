@@ -23,7 +23,7 @@ const REQUIRED = [
   'ReopenMissingError', 'SignInRequiredError', 'reopenLastModel', 'openLiveTarget', 'signInAndReopen',
   'reopenFailureReason', 'reportReopenFailure', 'describeSession', 'rememberLastModel',
   'confirmUnsavedWork', 'confirmAndSendOpen', 'writeLastModel',
-  'readLastModel', 'forgetLastModel', 'bindGridAndTree', 'saveCommand', 'savedAuthMode', 'setHasModelContext',
+  'readLastModel', 'forgetLastModel', 'bindGridAndTree', 'saveCommand', 'noteSavedCopyLeftAlone', 'savedAuthMode', 'setHasModelContext',
   'setStatusPlain',   // r1 min4: the status item's plain text goes through one setter now
   'setPendingReconnect', 'signInToReconnect', 'settlePendingReconnect',
 ];

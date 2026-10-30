@@ -488,6 +488,17 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public async Task Totals_options_open_Checks_and_say_what_the_assistant_is_doing()
+        {
+            var (f, c, heard) = await FollowAsync();
+            using var _f = f;
+            await f.Engine.NoteAgentCallAsync("set_measure_totals");
+            var note = Assert.Single(heard);
+            Assert.Equal("review/validation", note.Place);
+            Assert.Equal("Your assistant is setting the totals check options.", note.Say);
+        }
+
+        [Fact]
         public async Task The_same_place_and_the_same_object_as_the_last_note_adds_no_note()
         {
             var (f, c, heard) = await FollowAsync();
@@ -698,9 +709,13 @@ namespace Semanticus.Tests
             var heard = new ConcurrentQueue<ActivityEvent>();
             f.Sessions.Bus.Activity += heard.Enqueue;
             await f.Engine.RunTestSuiteAsync(false, "human");
-            Assert.Empty(heard);
+            // Both doors refresh Checks; only the assistant publishes the run for Studio narration.
+            var refresh = Assert.Single(heard);
+            Assert.Equal(("checks_page_changed", "system"), (refresh.Kind, refresh.Origin));
+            heard.Clear();
             var run = await McpToolsTesting.RunTests(f.Engine);
-            var e = Assert.Single(heard);
+            Assert.Single(heard.Where(n => n.Kind == "checks_page_changed" && n.Origin == "system"));
+            var e = Assert.Single(heard.Where(n => n.Kind != "checks_page_changed"));
             Assert.Equal(("run_tests", "agent", true), (e.Kind, e.Origin, e.Ok));
             Assert.Same(run, e.Result);
             Assert.Matches("^Ran your checks: ", e.Label);
@@ -781,7 +796,7 @@ namespace Semanticus.Tests
             using var doc = JsonDocument.Parse(File.ReadAllText(path));
             var ids = doc.RootElement.GetProperty("places").EnumerateArray().Select(p => p.GetProperty("id").GetString()).ToArray();
             Assert.Equal(ids, StudioMaps.PlaceIds.ToArray());
-            Assert.Equal(25, ids.Length);
+            Assert.Equal(26, ids.Length);
         }
 
         /// <summary>1.6: Explore > Query replaced Ask your data and Queries. The two places keep their ids (the description and the

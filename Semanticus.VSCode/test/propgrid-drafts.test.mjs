@@ -91,7 +91,8 @@ function makePage(box) {
     addEventListener: (type, fn) => { (listeners.document[type] ??= []).push(fn); },
     createElement: () => makeEl(page, 'textarea', {}, ''),
   };
-  const window = { addEventListener: (type, fn) => { (listeners.window[type] ??= []).push(fn); } };
+  const window = { addEventListener: (type, fn) => { (listeners.window[type] ??= []).push(fn); },
+    dispatchEvent: (event) => { (listeners.window[event.type] ?? []).forEach((fn) => fn(event)); return true; } };
   const api = {
     postMessage: (m) => posted.push(m),
     // VS Code hands the state back as a copy of what was set: it is serialized, never the same object.
@@ -452,4 +453,69 @@ test('F7: a write the engine took leaves nothing held, and a refusal with the ob
   page.type('Description', 'Taken.'); page.change('Description');
   page.send(measure({ desc: 'Taken.' }));
   assert.deepEqual(heldKeys(box), []);
+});
+
+for (const ackFirst of [true, false]) test(`typing during a check uses the accepted write as its next base (ack first: ${ackFirst})`, () => {
+  const page = makePage({});
+  page.send(measure());
+  page.type('Description', 'First saved words.');
+  page.change('Description');
+  page.type('Description', 'Words typed while checking.');
+  const ack = { type: 'setOk', name: 'Description', value: 'First saved words.',
+    key: '["measure:Sales/Total Sales"]', model: FILE };
+  if (ackFirst) page.send(ack);
+  page.send(measure({ desc: 'First saved words.' }));
+  if (!ackFirst) page.send(ack);
+  assert.equal(page.box('Description').value, 'Words typed while checking.');
+  assert.equal(page.q('[data-keep="Description"]'), null, 'An accepted own write is not a conflict.');
+  page.change('Description');
+  assert.equal(page.sets().length, 2);
+  assert.equal(page.sets()[1].expected, 'First saved words.');
+  assert.equal(page.sets()[1].value, 'Words typed while checking.');
+});
+
+test('an accepted own write advances a newer draft kept on another object', () => {
+  const page = makePage({});
+  page.send(measure());
+  page.type('Description', 'First saved words.');
+  page.change('Description');
+  page.type('Description', 'Words typed while checking.');
+  page.send(other());
+  page.send({ type: 'setOk', name: 'Description', value: 'First saved words.',
+    key: '["measure:Sales/Total Sales"]', model: FILE });
+  page.send(measure({ desc: 'First saved words.' }));
+  assert.equal(page.box('Description').value, 'Words typed while checking.');
+  assert.equal(page.q('[data-keep="Description"]'), null);
+  page.change('Description');
+  assert.equal(page.sets()[1].expected, 'First saved words.');
+});
+
+test('typing after the write acknowledgement uses its value before the property reload arrives', () => {
+  const page = makePage({});
+  page.send(measure());
+  page.type('Description', 'First saved words.');
+  page.change('Description');
+  page.send({ type: 'setOk', name: 'Description', value: 'First saved words.',
+    key: '["measure:Sales/Total Sales"]', model: FILE });
+  page.type('Description', 'Words typed while checking.');
+  page.send(measure({ desc: 'First saved words.' }));
+  assert.equal(page.q('[data-keep="Description"]'), null);
+  page.change('Description');
+  assert.equal(page.sets()[1].expected, 'First saved words.');
+});
+
+test('another writers edit after the accepted own write still preserves the newer draft and asks', () => {
+  const page = makePage({});
+  page.send(measure());
+  page.type('Description', 'First saved words.');
+  page.change('Description');
+  page.type('Description', 'Words typed while checking.');
+  page.send(measure({ desc: 'Someone else wrote this.' }));
+  page.send({ type: 'setOk', name: 'Description', value: 'First saved words.',
+    key: '["measure:Sales/Total Sales"]', model: FILE });
+  page.send(measure({ desc: 'Someone else wrote this.' }));
+  assert.equal(page.box('Description').value, 'Words typed while checking.');
+  assert.ok(page.q('[data-keep="Description"]'));
+  page.change('Description');
+  assert.equal(page.sets().length, 1);
 });

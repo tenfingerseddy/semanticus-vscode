@@ -79,8 +79,12 @@ namespace Semanticus.Tests
             LiveNow(f);
             await f.ConsentAsync();                                          // the live model: the person said OK...
             await f.Engine.WithdrawConsentAsync("human");                    // ...and then no, for THIS live model
-            f.Sessions.Current.LiveOrigin = null;                            // back to the file model
-            await f.ConsentAsync();                                          // the person says OK for the file model
+            f.Sessions.Current.LiveOrigin = null;                            // back to a file model...
+            // ...that is another model. The file this session was saved to while live is now that live model's home (ModelHome), so it
+            // IS the live model, and an OK for it is the person's newer word for the same model. That raced: the home is written by a
+            // read in the background, and CI 170 failed whenever it landed first. A file of its own is another model every time.
+            await f.SaveAsAsync("Another.bim");
+            await f.ConsentAsync();                                          // the person says OK for the other model
             LiveNow(f);                                                      // the assistant opens the live model again
             await f.Engine.ExtendWindowConsentAsync("agent");
             Assert.False((await f.Engine.GetConsentAsync()).Current);        // the person's no for this model stands

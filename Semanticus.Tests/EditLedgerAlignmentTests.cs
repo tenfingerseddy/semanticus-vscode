@@ -220,7 +220,7 @@ namespace Semanticus.Tests
         private async Task<int> CountCommitsAsync(Func<Task> act)
         {
             var seen = 0;
-            Action<ChangeNotification> h = n => seen++;
+            Action<ChangeNotification> h = n => { if (n.IsCommit) seen++; };
             _sessions.Bus.Changed += h;
             try { await act(); }
             finally { _sessions.Bus.Changed -= h; }

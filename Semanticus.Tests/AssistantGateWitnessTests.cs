@@ -31,7 +31,7 @@ namespace Semanticus.Tests
             "RunDraftAsync", "ApproveHeldDraftAsync", "ContinueDraftAsync", "LoadBpaRulesAsync", "LoadReadinessRulesAsync", "DaxLibInstallAsync", "SaveEvidenceAsync", "RunInterviewAsync", "InstantiateWorkflowTemplateAsync", "AcceptPrimerSuggestionAsync", "RejectPrimerSuggestionAsync", "SetPrimerAsync", "SaveWorkflowAsync", "SaveWorkflowTemplateAsync", "SaveTestDefinitionAsync", "RunTestSuiteAsync", "GitPushAsync",
             "DeleteWorkflowAsync", "DeleteWorkflowTemplateAsync", "DeleteTestDefinitionAsync", "DeleteInterviewQuestionAsync", "AddInterviewQuestionAsync",
             "SaveLayoutAsync", "SaveWorkflowLayoutAsync", "SetReportScopeAsync", "ClearTableSourceMappingAsync", "SetTableSourceMappingAsync", "SaveSqlSourceAsync", "DeleteSqlSourceAsync",
-            "LabelConnectionAsync", "RememberXmlaConnectionAsync", "SetConnectionWorkingFolderAsync", "ForgetConnectionAsync", "SetModelSqlEndpointAsync", "SetPublishDestinationAsync",
+            "SetStandardAsync", "ApplyStandardAsync", "LabelConnectionAsync", "RememberXmlaConnectionAsync", "SetConnectionWorkingFolderAsync", "ForgetConnectionAsync", "SetModelSqlEndpointAsync", "SetPublishDestinationAsync",
         };
 
         /// <summary>Held rows that write a path or the model's own files: bound to the real state of each (the path witness), every link followed.</summary>
@@ -61,6 +61,8 @@ namespace Semanticus.Tests
             ["RecordTestRunAsync"] = "it names a finished run by its unique id, and a finished run is an immutable snapshot, so the id is the content",
             ["UpgradeWorkflowAsync"] = "it applies only with expectPath and expectByteHash from the reviewed preview, an argument the approval binds, and the engine refuses when the file no longer has that hash",
             ["CaptureBaselineAsync"] = "it writes a NEW baseline under a fresh id of the values as they are when it runs and replaces nothing, so there is no earlier state for an approval to be stale against",
+            ["DraftMeasureDescriptionAsync"] = "it posts a NEW request under a fresh id with current model and report context; it replaces no Description or earlier request",
+            ["ProposeMeasureDescriptionAsync"] = "it posts a NEW request under a fresh id with current Description and report context; it replaces no Description or earlier request",
             // Kane, 10 Oct 2026: the Plan controls are the assistant's too. Each acts on the plan row its id names, with the values in its arguments.
             ["AddPlanTargetAsync"] = "it adds a NEW aim with the words and section in its arguments and changes no earlier row of the plan",
             ["RemovePlanTargetAsync"] = "it removes the aim its id names, the id is the argument the approval binds, and Restore puts the row back",
@@ -100,6 +102,7 @@ namespace Semanticus.Tests
         internal static readonly Dictionary<string, string> GuardedByTheOpItself = new(StringComparer.Ordinal)
         {
             ["RefreshPlanAsync"] = "refresh reads the current plan; WritePlanTasks binds the write to the same model and preserves authored rows, adding history and finished-row ids; PlanRefreshTests proves refresh keeps earlier finished rows cleared",
+            ["KeepMeasureDescriptionAsync"] = "proposalId names an immutable ready proposal; KeepMeasureDescriptionAsync checks the same session, measure identity and DescriptionInput inside the write; CheckedDescriptionTests.A_persons_edit_cannot_be_overwritten_by_a_stale_proposal proves it",
             ["ResolveFileRecoveryAsync"] = "expectedSession binds the immutable recovery copy loaded when that session opens; the op refuses another session and never rereads the payload from disk; UnsavedRecoveryTests proves the fence and exact restore",
             ["UndoAsync"] = "the revision binds the step the person was shown, and a step that put the Primer or its suggestions in a file refuses to undo when that file moved since (SidecarUndo.Refusal); AssistantGateStoreWriteSweepTests.Undo_and_redo_of_a_step_that_owns_the_Primer_refuse_when_the_person_changed_the_file",
             ["RedoAsync"] = "the same as undo: the revision binds the step, and a step that owns the Primer file refuses when the file moved; the same test",
@@ -113,6 +116,9 @@ namespace Semanticus.Tests
         /// input is in the sentence the person is asked with.</summary>
         private static readonly string[] ModelAndArguments =
         {
+            "CleanupMeaningAnnotationsAsync",
+            "SetMeasureTotalsAsync", // Both settings and the per-measure waiver read only model state and their arguments.
+            "SetMeasureFiltersOnPurposeAsync", // The on-purpose annotation reads only the measure and its arguments.
             "WaiveFindingsAsync", "WriteWordsAsync", "EditObjectsAsync", "CreateMeasuresAsync",
             "ApplyDaxScriptAsync", "ApplyFixAsync", "ApplySafeFixesAsync", "ApplySchemaUpdateAsync",
             "ApplyTmdlScriptAsync", "BpaFixAllAsync", "BpaFixAsync", 
@@ -120,9 +126,9 @@ namespace Semanticus.Tests
             "CreateColumnAsync", "CreateDataSourceAsync", "CreateDirectLakeTableAsync", "CreateFieldParameterAsync", "CreateFunctionAsync",
             "CreateHierarchyAsync", "CreateImportTableAsync", "CreateLinguisticSchemaAsync", "CreateMeasureAsync", "CreateNamedExpressionAsync",
             "CreatePerspectiveAsync", "CreateRelationshipAsync", "CreateRoleAsync", "CreateTableAsync", "DaxLibUninstallAsync",
-            "DefineCalendarAsync", "DefineCalendarFromTemplateAsync", "DeleteCalendarAsync", "DeleteObjectAsync",
+            "DefineCalendarAsync", "DefineCalendarFromTemplateAsync", "SetupCalendarsAsync", "AddTimeMeasuresAsync", "DeleteCalendarAsync", "DeleteObjectAsync",
             "DeleteObjectsAsync", "DeleteRoleAsync", "DuplicateObjectAsync", "GenerateDateTableAsync",
-            "GenerateTimeIntelligenceAsync", "MakeAiReadyAsync", "MarkDateTableAsync", "OptimizeMeasureAsync", 
+            "GenerateTimeIntelligenceAsync", "MakeAiReadyAsync", "MarkDateTableAsync", "OptimizeMeasureAsync",
             "RemoveIncrementalRefreshPolicyAsync", "RemoveSafeObjectsAsync", "RenameDisplayFolderAsync",
             "RenameObjectAsync", "ReplaceInObjectAsync", "ResetBpaRulesAsync", "ResetReadinessRulesAsync", 
             "SetAiDataSchemaAsync", "SetAiInstructionsAsync", "SetCalcGroupPrecedenceAsync",

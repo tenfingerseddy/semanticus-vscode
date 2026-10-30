@@ -72,7 +72,7 @@ function relay(w, hostModelIdentity = A) {
   const vscode = { window: { showInformationMessage: () => undefined, setStatusBarMessage: () => undefined, showWarningMessage: async () => undefined, showErrorMessage: (m) => { errors.push(m); } } };
   const scope = {
     conn: w.conn, vscode, propGrid: { commitFocused: async () => undefined }, commitStudioFocused: async () => undefined,
-    pickFirstSaveDestination: async () => undefined, rememberLastModel: async () => undefined, watchModelDisk: () => undefined,
+    pickFirstSaveDestination: async () => undefined, rememberLastModel: async () => undefined, watchModelDisk: () => undefined, noteSavedCopyLeftAlone: () => undefined,
   };
   const saveCommand = new Function(...Object.keys(scope), `${functionSource('saveCommand')}\nreturn saveCommand;`)(...Object.values(scope));
   const handlerScope = { saveCommand };

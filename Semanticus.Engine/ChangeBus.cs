@@ -25,6 +25,19 @@ namespace Semanticus.Engine
         /// re-broadcasts this as <c>plan/didChange</c> so the UI watches the plan assemble in real time.</summary>
         public event Action<ChangePlanView> PlanChanged;
 
+        /// <summary>Fired on every write to a measure's check state (marks, running, Keep), with the version it was written
+        /// at. The RpcServer re-broadcasts this as <c>checks/didChange</c>; the UI keeps the newest version per measure.</summary>
+        public event Action<CheckStateChange> ChecksChanged;
+
+        public void PublishChecks(CheckStateChange v)
+        {
+            // Observational: a broken listener must never fail a check run or an edit.
+            var handlers = ChecksChanged;
+            if (handlers == null) return;
+            foreach (var handler in handlers.GetInvocationList())
+                try { ((Action<CheckStateChange>)handler)(v); } catch { /* one listener cannot stop another */ }
+        }
+
         public void PublishPlan(ChangePlanView v) => PlanChanged?.Invoke(v);
 
         /// <summary>Fired at each step of Run the plan, so the window can show which row is being worked out, applied, checked

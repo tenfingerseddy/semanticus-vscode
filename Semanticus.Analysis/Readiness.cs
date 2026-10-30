@@ -174,11 +174,12 @@ namespace Semanticus.Analysis
         internal HashSet<string> ScoredRuleIds { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
 
-    /// <summary>Live per-column statistics (distinct-value cardinality, from COLUMNSTATISTICS / DMVs) that the
+    /// <summary>Live key counts and per-column statistics (distinct-value cardinality, from COLUMNSTATISTICS / DMVs) that the
     /// Dmv-kind readiness rules need. ABSENT on an offline scan — those rules are then simply not evaluated, so
     /// the offline scorecard is unchanged. Supplied only by the live scan path (ai_readiness_scan with live=true).</summary>
     public sealed class ReadinessLiveStats
     {
+        public Dictionary<string, KeyIntegrityCounts> KeyIntegrity { get; } = new Dictionary<string, KeyIntegrityCounts>(StringComparer.OrdinalIgnoreCase);
         // (table, column) -> distinct value count. Tuple key, compared CASE-INSENSITIVELY (TOM treats object names
         // case-insensitively, so a COLUMNSTATISTICS label must still join to the model column regardless of case).
         private sealed class CiKey : IEqualityComparer<(string Table, string Column)>
@@ -199,6 +200,13 @@ namespace Semanticus.Analysis
         /// <summary>A single visible text column above this dominates Copilot's value index (>20% of the ceiling) — almost
         /// always a surrogate key / id / free-text column that should be hidden or excluded from the AI data schema.</summary>
         public const long HighCardinalityColumn = 1_000_000;
+    }
+
+    public sealed class KeyIntegrityCounts
+    {
+        public long UnmatchedRows { get; set; }
+        public long DuplicateRows { get; set; }
+        public string Error { get; set; }
     }
 
     /// <summary>Grounding context the engine hands to the user's Claude to author a description / synonyms / name.</summary>

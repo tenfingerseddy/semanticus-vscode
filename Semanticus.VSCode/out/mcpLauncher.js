@@ -47,6 +47,8 @@ const licenseDelivery_1 = require("./licenseDelivery");
 /// This launcher lives outside every version folder, is rewritten on each activation, and at RUN time starts the
 /// engine the running Semanticus for that folder uses when it is an installed one, else the newest installed
 /// engine. So it keeps working even when the assistant starts before the new version has activated.
+/// The installed POSIX apphost relocates both MCP and owner processes into a durable per-build engine copy
+/// before serving. Late assembly loads therefore survive removal of the selected extension folder.
 ///
 /// POSIX only. On Windows the entry stays the absolute engine path (Node starts an .exe with a path holding
 /// spaces and parentheses correctly, and a script wrapper cannot be started as reliably there), healed on

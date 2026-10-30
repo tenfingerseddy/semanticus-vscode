@@ -6,8 +6,8 @@ using TOM = Microsoft.AnalysisServices.Tabular;
 namespace Semanticus.Tests
 {
     /// <summary>
-    /// LiveDeploy.SyncModels — the STRUCTURAL classes added 2026-07-09 after a live client model (ETS
-    /// SM_Veg_Work_Required) scored A/100 offline but only B/80.6 in the service: the sort-by column, the
+    /// LiveDeploy.SyncModels — the STRUCTURAL classes added 2026-07-09 after a live client model (Fabrikam
+    /// Fabrikam_Margin_Model) scored A/100 offline but only B/80.6 in the service: the sort-by column, the
     /// Calendar hierarchy, the date-table mark and the finding waivers had never deployed, and there was no
     /// signal that they hadn't. deploy_live reported them nowhere — the same failure shape as the 2026-07-03
     /// partition-M bug. Pinned here: table DataCategory, SortByColumn, hierarchies, relationships, annotations,
@@ -248,7 +248,7 @@ namespace Semanticus.Tests
 
             var t = new TOM.Table { Name = "dim_span", LineageTag = "tag-span" };
             t.Columns.Add(new TOM.DataColumn { Name = "ScopeId", SourceColumn = "ScopeId", DataType = TOM.DataType.String, LineageTag = "tag-scope" });
-            t.Columns.Add(new TOM.DataColumn { Name = "RevegEndDate", SourceColumn = "RevegEndDate", DataType = TOM.DataType.DateTime, LineageTag = "tag-reveg" });
+            t.Columns.Add(new TOM.DataColumn { Name = "EndDate", SourceColumn = "EndDate", DataType = TOM.DataType.DateTime, LineageTag = "tag-end" });
             t.Partitions.Add(new TOM.Partition
             {
                 Name = "dim_span",
@@ -279,8 +279,8 @@ namespace Semanticus.Tests
             Assert.Contains(rep.Changes, c => c.StartsWith("add dataTable:dim_span") && c.Contains("EMPTY until refreshed"));
             var lt = live.Tables["dim_span"];
             Assert.Equal(2, lt.Columns.Count);
-            Assert.Equal("RevegEndDate", ((TOM.DataColumn)lt.Columns["RevegEndDate"]).SourceColumn);
-            Assert.Equal(TOM.DataType.DateTime, lt.Columns["RevegEndDate"].DataType);
+            Assert.Equal("EndDate", ((TOM.DataColumn)lt.Columns["EndDate"]).SourceColumn);
+            Assert.Equal(TOM.DataType.DateTime, lt.Columns["EndDate"].DataType);
 
             // Rebound to the LIVE shared expression — never the session's object.
             var eps = Assert.IsType<TOM.EntityPartitionSource>(lt.Partitions["dim_span"].Source);

@@ -292,7 +292,7 @@ namespace Semanticus.Tests
             await e.CreateColumnAsync(t, "Amount", "Decimal", "Amount", "human");
 
             ChangeNotification last = null;
-            Action<ChangeNotification> handler = n => last = n;
+            Action<ChangeNotification> handler = n => { if (n.IsCommit) last = n; };
             sm.Bus.Changed += handler;
             try { await e.CreateMeasureAsync(t, "undescribed measure", "1", "agent"); }
             finally { sm.Bus.Changed -= handler; }

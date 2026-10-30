@@ -181,8 +181,13 @@ namespace Semanticus.Tests
             Path.Combine(".semanticus", "data-questions.json"),
         };
 
+        // Timing settings are a check's own settings, kept beside the check store, not in the model (fx11: timing is not an edit).
+        // The check store itself (measure-checks-<model>.json) is the engine's one saved check state (1.7 L1): a read such as the
+        // marks of a measure may run its checks, and every finished run saves its results there so every window and the assistant
+        // see them. It holds check results, never the model or the person's files.
         private static bool IsNamedCache(string relative) =>
-            CacheFiles.Contains(relative, StringComparer.Ordinal) || relative.StartsWith("experience" + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+            CacheFiles.Contains(relative, StringComparer.Ordinal) || relative.StartsWith("experience" + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            || relative.StartsWith(Path.Combine(".semanticus", "measure-checks-"), StringComparison.Ordinal) && relative.EndsWith(".json", StringComparison.Ordinal);
 
         private static object ReadArg(MethodInfo m, ParameterInfo p, string scratch)
         {

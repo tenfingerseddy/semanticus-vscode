@@ -9,6 +9,66 @@ All notable changes to Semanticus are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-30
+
+Semanticus now checks every measure and shows you one mark for it. When you or your assistant change a measure, the checks run again at once and show what moved. This release is about that check, and about two things beside it: calendars, which are a Power BI preview, and a standard for how your model looks.
+
+### Checked: one mark for each measure
+
+- Each measure in the tree shows its name and one mark: Verified, Needs review, Unknown or Broken. Hover a measure for its marks, or select it to open them in Properties.
+- The mark comes from up to seven checks. Totals reads the total against its rows. Filters and Contexts check that the measure answers the filters and places a report uses. Trusted number and SQL compare it with a number you trust or a SQL query you give. Equivalence shows what an edit moved. Performance times the measure, and it is off unless you turn it on.
+- A check that does not apply to a measure is hidden. Unknown always says why, and what to do next.
+- Review > Checks shows every measure, worst first. Run shows the plan and the time it will take before it starts, and shows progress while it runs. Stop ends a run at once and keeps every mark.
+- When you edit a measure, its marks go stale at once and run again, the edited measure first. Equivalence shows the numbers before and after the edit, with Keep and Undo my edit. Keep never turns a stale or failed mark into Verified, and Undo brings the old marks back.
+- A number you trust becomes a check. Add a check > Save a number you trust, and the measure reads Broken if it ever moves away from that number.
+- A change to a column that a measure reads holds its marks as Unknown until you publish, so a mark never reads from data the model no longer has. Delete then Undo keeps every mark, and a restart shows the last marks before any run.
+- Filters lost offers to fix the formula or to mark it on purpose. On purpose reads Overridden, and Undo takes it back.
+- Numbers show in the measure's own format.
+
+### Descriptions you own
+
+- Draft a Description writes one from the formula and the name. Keep takes one press, and Undo takes it back.
+- With Pro, the Description gets a score: Matches (70 and up), Could be improved (50 to 69) or Does not match (below 50). A Description that does not match makes the mark Needs review.
+- With Pro, Totals also says which kind of total it read, such as a sum, and warns only when it is sure.
+- Your assistant reads the same marks and scores as the screens, and can do what the buttons do: run, Stop, Keep, on purpose and Turn on, each with Undo.
+
+### Calendars (a Power BI preview)
+
+- Calendars are a preview feature in Power BI. Semanticus can set them up now, and the page says that they are a preview.
+- Edit > Advanced modelling > Calendars opens on a plan. It shows the calendar it proposes and what it will change. One press sets it up, and one Undo takes it back.
+- Add time measures writes year to date, previous year and the other usual time measures for a calendar. They are one undo step.
+- Rolling windows now end on the last date that has data. A month cut short by the data keeps its own last day, so a window never reads past the data.
+
+### Your standard
+
+- Review > Your standard holds the rules you want your model to follow, such as format strings and hidden keys. Pick Light, Balanced or Strict, then press Apply.
+- Apply is one undo step. A percent that already reads as a percent is left alone, and hiding a key also turns off its summarise setting, so Apply does not create new Health issues.
+- Your assistant uses the same standard with get_standard, set_standard, preview_standard and apply_standard.
+- A standard can point to a web address. Semanticus fetches it over the internet only when you open or apply the standard, and keeps the last good copy.
+
+### Four new readiness checks
+
+- Average of a ratio: a percent measure that averages row by row instead of dividing totals. The check shows both numbers.
+- Keys that do not match: fact rows whose key has no row in the dimension, and keys that repeat on the one side. It reports counts and changes nothing.
+- A balance that is summed over time: a snapshot such as stock or headcount added across dates instead of read at the last date.
+- A fixed date in a measure: a measure that filters on a year or date typed into the DAX.
+
+### Fixes
+
+- You can sign in another account from the workspace picker. Sign in another account in the account menu, and Use another account in the picker, open the Microsoft account list. The new account is saved beside the others, and the default does not move. (Also in 1.6.1.)
+- Your assistant's copy of a model saved as one .bim file no longer overwrites a copy you edited. It goes beside it.
+- Closing VS Code waits for an edit that your assistant already started, so the edit is not lost.
+- A file you add to a copy folder in the last moment before your assistant refreshes it is kept and not deleted.
+- Publish: a measure that uses a renamed column goes with the rename. If you untick it, the page says that the copy on the service will break.
+- A Query offer for a previous-year number runs the previous-year measure, not the base measure.
+- A measure under a table whose name holds a slash can be created again.
+
+## [1.6.1] - 2026-10-29
+
+### Fixed
+
+- Fixed: you can sign in another account from the workspace picker; before, Semanticus always used the account it had saved.
+
 ## [1.6.0] - 2026-10-19
 
 You can now ask your model a question in plain words and keep the answer. You can check a number against SQL or a number you trust, and keep a note when you accept a difference. You can see how Copilot answers your model, and what to fix. This release is about those three things, and about Publish telling the truth.

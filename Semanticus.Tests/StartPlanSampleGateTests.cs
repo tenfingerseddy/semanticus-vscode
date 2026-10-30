@@ -157,7 +157,40 @@ namespace Semanticus.Tests
             await engine.GetModelPlanAsync();
         }
 
-        private static int RequestsWithSample(StartPlanDecideTests.PolicyOracle o) => o.Snapshots.Count(x => SampleShares.IsMatch(x.SnapshotJson ?? ""));
+        private static int RequestsWithSample(StartPlanDecideTests.PolicyOracle o) => o.SnapshotLog.Count(x => SampleShares.IsMatch(x.SnapshotJson ?? ""));
+
+        /// <summary>Verifier v-rc23: with the model's permission given and the source card answered Not now, a Description score may follow the
+        /// build's edits, but no score may leave while the start plan is still being decided (before the build), and none may carry sample facts.</summary>
+        [Fact]
+        public async Task Verifier_rc23_not_now_sends_no_description_score_before_the_build()
+        {
+            var ws = Path.Combine(_root, "ws-" + Guid.NewGuid().ToString("N").Substring(0, 5));
+            var (engine, _, oracle) = NewEngine(true, ws);
+            var folder = Path.Combine(_root, "model-" + Guid.NewGuid().ToString("N").Substring(0, 5));
+            var view = await engine.StartModelFromSqlAsync(new StartModelRequest { Server = Server, Database = Db, Folder = folder, Name = "Uplift" }, "human");
+            await engine.StartSampleSettledForTest();
+            view = await engine.GetStartPlanAsync();
+            var fy = view.NeedsYou.SingleOrDefault(x => x.Kind == "fiscal_year");
+            if (fy != null) view = await engine.EditStartPlanAsync(new StartPlanEdit { Op = "answer", Target = "fiscal_year", Value = fy.Recommended }, "human");
+            await engine.SetConsentAsync(DecisionRegistry.DeclaredFields.ToArray(), DecisionRegistry.ConsentSchemaVersion, "human");
+            await engine.EditStartPlanAsync(new StartPlanEdit { Op = "answer", Target = "grant", Value = "Not now" }, "human");
+            await engine.StartDecideSettledForTest();
+            await WordsAsync(engine);
+            var beforeBuild = oracle.RequestLog.Length;
+            view = await engine.GetStartPlanAsync();
+            view = await engine.ApproveStartPlanAsync(view.Digest);
+            Assert.True((await engine.BuildStartPlanAsync(view.Digest, "human")).Built);
+            await engine.SaveAsync(null, "tmdl", false, "human");
+            await engine.JevSettledForTest();
+            var log = oracle.RequestLog;
+            var snapshots = oracle.SnapshotLog;
+            var lines = log.Select((r, i) => i + " " + (i < beforeBuild ? "before" : "after") + " build " + r.Point + " "
+                + (i < snapshots.Length ? snapshots[i].SnapshotJson : "")).ToArray();
+            Assert.True(lines.Length >= 0, string.Join("\n", lines));
+            Assert.Equal(0, RequestsWithSample(oracle));
+            Assert.True(beforeBuild == 0, "requests before the build under Not now:\n" + string.Join("\n", lines.Take(beforeBuild)));
+            File.WriteAllLines(Path.Combine(Environment.GetEnvironmentVariable("VERIFIER_EVIDENCE") ?? _root, "not-now-requests.txt"), lines);
+        }
 
         // ============================================================ the Plan's runs after the build
 
@@ -171,9 +204,10 @@ namespace Semanticus.Tests
         public async Task The_plan_after_the_build_sends_the_samples_facts_only_under_a_grant_that_covered_it(Answer answer, bool expectSample)
         {
             var (engine, sessions, oracle, _, _) = await BuiltAsync(pro: true, answer);
-            if (answer == Answer.NotNow) Assert.Equal(0, oracle.Asks);   // the decide rounds and the words rounds asked nothing either
+            // The build can score the person's descriptions under model consent. The start's families still ask nothing without its grant.
+            if (answer == Answer.NotNow) Assert.DoesNotContain(oracle.RequestLog, r => r.Point != DecisionRegistry.DescriptionMatch);
             await RunPlanAsync(engine, oracle);
-            Assert.True(oracle.Asks > 0, "Jev was never asked, so this proves nothing");
+            Assert.Contains(oracle.RequestLog, r => r.Point != DecisionRegistry.DescriptionMatch && r.Point != DecisionRegistry.PlanRank);
             Assert.NotNull(engine.LoadSourceFacts(sessions.Current));   // the sidecar is still there in both arms: it is the person's own
             if (expectSample) Assert.True(RequestsWithSample(oracle) > 0, "the person allowed the sample and no request carried it: the gate shut everything");
             else Assert.True(RequestsWithSample(oracle) == 0, RequestsWithSample(oracle) + " requests carried facts worked out from the sample the person said Not now to");

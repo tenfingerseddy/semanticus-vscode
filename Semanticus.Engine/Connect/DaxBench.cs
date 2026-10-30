@@ -161,7 +161,7 @@ namespace Semanticus.Engine
     /// </summary>
     public static class DaxBench
     {
-        public static async Task<BenchmarkResult> BenchmarkAsync(LiveConnection lc, string query, int runs)
+        public static async Task<BenchmarkResult> BenchmarkAsync(LiveConnection lc, string query, int runs, Action<int> completed = null)
         {
             if (lc == null) return new BenchmarkResult { Error = "Not connected." };
             if (string.IsNullOrWhiteSpace(query)) return new BenchmarkResult { Error = "Empty query." };
@@ -169,9 +169,10 @@ namespace Semanticus.Engine
 
             var times = new List<long>(runs);
             var rowCount = 0;
-            for (var i = 0; i < runs; i++)
+            var results = await lc.ExecuteWarmRunsAsync(query, runs, completed).ConfigureAwait(false);
+            for (var i = 0; i < results.Length; i++)
             {
-                var r = await lc.ExecuteAsync(query, 1, 120); // maxRows=1: time the engine, not row marshalling
+                var r = results[i]; // maxRows=1: time the engine, not row marshalling
                 if (!string.IsNullOrEmpty(r.Error)) return new BenchmarkResult { Error = r.Error, Runs = i };
                 times.Add(r.ElapsedMs);
                 rowCount = r.RowCount;
@@ -723,7 +724,9 @@ namespace Semanticus.Engine
         }
 
         // The empty-selection context (measure should BLANK, not ERROR). TREATAS({},…) is invalid, so use FILTER(ALL,FALSE()).
-        public static string CompileEmptyFilter(string column) => "FILTER ( ALL ( " + column.Trim() + " ), FALSE () )";
+        public static string CompileEmptyFilter(string column) => CompileEmptyFilter(new[] { column });
+        internal static string CompileEmptyFilter(string[] columns) =>
+            "FILTER ( ALL ( " + string.Join(", ", NormalizeGroupBy(columns)) + " ), FALSE () )";
 
         /// <summary>Inline a scalar expression as a SUMMARIZECOLUMNS value argument (or a DEFINE MEASURE body),
         /// immune to a trailing LINE COMMENT in the expression. A stored measure body legitimately ends in "-- note";

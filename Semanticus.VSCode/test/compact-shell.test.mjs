@@ -144,7 +144,7 @@ test('the page guide has one door: Help > Help for this page (the ⓘ left the r
 test('the bottom bar is one 34px line: the model, Tests, Publish and the pill (shortened 8 Oct)', () => {
   has(contextbar, /minHeight: 34/, 'the bar is 34px, not 38');
   has(contextbar, /data-testid="connections-editing"/);
-  has(contextbar, />Tests:</);
+  has(contextbar, />Queries run on:</);
   has(contextbar, />Publish:</);
   has(contextbar, /connection-sync/, 'the sync pill stays');
   hasNot(contextbar, /Review changes|connection-hint/, 'Review changes and the per-slot hints left the bar');
@@ -159,7 +159,7 @@ test('under 900px Tests folds into the pill tooltip', () => {
     'the Tests slot is hidden under 900px');
   has(contextbar, /testsFolded/, 'the component knows when it is folded');
   has(contextbar, /max-width: 899px/, 'and it watches the same breakpoint the stylesheet uses');
-  has(contextbar, /Tests: \$\{queryMain\}/, 'the folded Tests fact lands in the pill tooltip');
+  has(contextbar, /Queries run on: \$\{queryMain\}/, 'the folded Tests fact lands in the pill tooltip');
 });
 
 test('the unsaved-edits warning is not in the bottom bar: Ask answers and query results carry it once', () => {

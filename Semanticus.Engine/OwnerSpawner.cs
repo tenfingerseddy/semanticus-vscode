@@ -58,8 +58,11 @@ namespace Semanticus.Engine
                 if (!string.IsNullOrEmpty(open)) { psi.ArgumentList.Add("--open"); psi.ArgumentList.Add(open); }
 
                 StopHandleInheritance();
+                using var cacheLease = EngineCache.ReserveChild();
+                if (cacheLease != null) psi.Environment["SEMANTICUS_ENGINE_PENDING_LEASE"] = cacheLease.Name;
                 var child = Process.Start(psi);
                 if (child == null) return false;
+                cacheLease?.Started(child.Id);
                 child.OutputDataReceived += (_, e) => { if (e.Data != null) Forward(e.Data); };
                 child.ErrorDataReceived += (_, e) => { if (e.Data != null) Forward(e.Data); };
                 child.BeginOutputReadLine();

@@ -593,10 +593,21 @@ function carrierOf(b) {
 const isHeld = (ev) => (ev.held ??= held(ev.mod, ev.node, ev.boundary));
 function firstReach(evs) { for (const ev of evs) { const t = evalEvent(ev); if (t && !isHeld(ev)) return t; } return null; }
 const tracing = new Set();
+const traceCache = new Map();
+let traceCycles = 0;
 function valueTrace(b) {
-  if (!b || tracing.has(b)) return null;
+  if (!b) return null;
+  if (tracing.has(b)) { traceCycles++; return null; }
+  if (traceCache.has(b)) return traceCache.get(b);
+  const cyclesBefore = traceCycles;
   tracing.add(b);
-  try { return traceValue(b); } finally { tracing.delete(b); }
+  try {
+    const result = traceValue(b);
+    // Shared initializer paths otherwise expand exponentially. A successful trace is a complete witness.
+    // A null trace inside a cycle can depend on an ancestor: cache it only without a back edge, or at the root.
+    if (result || traceCycles === cyclesBefore || tracing.size === 1) traceCache.set(b, result);
+    return result;
+  } finally { tracing.delete(b); }
 }
 function traceValue(b) {
   switch (b.kind) {
@@ -642,12 +653,12 @@ const owners = [...new Set([...containers.values(), ...[...mods.values()].map((m
 for (let changed = true; changed;) {
   changed = false;
   for (const o of owners) {
-    if (!own.has(o)) { const t = firstReach(o.events); if (t) { own.set(o, t); changed = true; } }
+    if (!own.has(o)) { const t = firstReach(o.events); if (t) { own.set(o, t); traceCache.clear(); changed = true; } }
     for (const [m, evs] of o.memberEvents) {
       if (!members.has(o)) members.set(o, new Map());
       if (members.get(o).has(m)) continue;
       const t = firstReach(evs);
-      if (t) { members.get(o).set(m, t); changed = true; }
+      if (t) { members.get(o).set(m, t); traceCache.clear(); changed = true; }
     }
   }
 }

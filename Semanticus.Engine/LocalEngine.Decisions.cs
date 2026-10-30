@@ -330,6 +330,8 @@ namespace Semanticus.Engine
             DecisionRegistry.CopilotMisses => CopilotJevLive,
             // 1.6, the Validation page: it only chooses among the visuals the page's rules leave, off until its replay clears its bar.
             DecisionRegistry.CheckVisualKind => JevPicksCheckVisuals,
+            DescriptionMatchQuestions.Point => DescriptionMatchEnabled,
+            TotalsQuestions.TypePoint or TotalsQuestions.FitPoint => true,
             _ => null,
         };
 
@@ -1109,6 +1111,11 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Current;
             if (s == null) return;
+            // Before the push, so a card that reads again on it finds the lines permission decided already gone (fx29b F).
+            if (label.EndsWith("permission given", StringComparison.Ordinal))
+                try { ConsentGiven(); } catch { /* observational, as below */ }
+            // Given or taken back: every stored line permission decided follows it, and is pushed (fx30e K1).
+            _ = SettleStoredLinesAsync(s);
             try
             {
                 _sessions.Bus.Publish(new ChangeNotification
@@ -1125,7 +1132,8 @@ namespace Semanticus.Engine
         // permission under another model's key.
         /// <summary>The points whose fields join the "every detail" check only once the point is live in this build.</summary>
         private static bool ConsentWaitsForLive(string field) =>
-            field.StartsWith(DecisionRegistry.CheckVisualKind + ":", StringComparison.Ordinal);
+            field.StartsWith(DecisionRegistry.CheckVisualKind + ":", StringComparison.Ordinal)
+            || field.StartsWith(DescriptionMatchQuestions.Point + ":", StringComparison.Ordinal);
 
         private DecisionConsentInfo DescribeConsent(DecisionConsent consent, string scope)
         {

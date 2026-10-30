@@ -48,6 +48,7 @@ namespace Semanticus.Engine
             _uiChallenge = uiChallenge == null ? null : RpcHandshake.ValidateChallenge(uiChallenge);
             _sessions.Bus.Changed += OnChanged;
             _sessions.Bus.PlanChanged += OnPlanChanged;
+            _sessions.Bus.ChecksChanged += OnChecksChanged;
             _sessions.Bus.PlanRunProgressed += OnPlanRunProgress;
             _sessions.Bus.Progress += OnProgress;
             _sessions.Bus.SpecChanged += OnSpecChanged;
@@ -84,6 +85,7 @@ namespace Semanticus.Engine
 
         private void OnChanged(ChangeNotification n) => Broadcast("model/didChange", n);
         private void OnPlanChanged(ChangePlanView v) => Broadcast("plan/didChange", v);
+        private void OnChecksChanged(CheckStateChange v) => Broadcast("checks/didChange", v);
         private void OnPlanRunProgress(PlanRunProgress v) => Broadcast("plan/runProgress", v);
         private void OnProgress(OperationProgress v) => Broadcast("progress/didChange", v);
         private void OnSpecChanged(SpecView v) => Broadcast("spec/didChange", v);
@@ -282,6 +284,7 @@ namespace Semanticus.Engine
             _stop.Cancel();
             _sessions.Bus.Changed -= OnChanged;
             _sessions.Bus.PlanChanged -= OnPlanChanged;
+            _sessions.Bus.ChecksChanged -= OnChecksChanged;
             _sessions.Bus.PlanRunProgressed -= OnPlanRunProgress;
             _sessions.Bus.Progress -= OnProgress;
             _sessions.Bus.SpecChanged -= OnSpecChanged;

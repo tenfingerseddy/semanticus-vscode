@@ -135,10 +135,13 @@ namespace Semanticus.Engine.Entitlement
         /// <summary>The MCP operation names that are free. Everything the agent door exposes is here or in a Group.</summary>
         public static readonly IReadOnlyCollection<string> FreeOperations = new HashSet<string>(StringComparer.Ordinal)
         {
+            "cleanup_meaning_annotations",
+            "get_measure_description", "draft_measure_description", "propose_measure_description", "keep_measure_description",
+
             "abort_workflow",   // Stop is free: a run that was active when a trial or Pro ended must still be stoppable (Kane, 12 Oct 2026)
             "accept_primer_suggestion", "add_interview_question", "add_interview_questions", "get_copilot_view", "get_student_questions", "interview_rounds", "run_interview_batch", "add_plan_item", "ai_readiness_scan",
             "analyze_cloud_reports", "analyze_reports", "apply_dax_script", "apply_fix",
-            "apply_model_diff", "apply_plan", "apply_safe_fixes", "apply_tmdl", "fix_them", "reading_card",
+            "apply_model_diff", "apply_plan", "apply_safe_fixes", "apply_standard", "check_calendar_data", "check_same_numbers", "get_standard", "preview_standard", "set_standard", "apply_tmdl", "fix_them", "reading_card",
             "benchmark_cold_warm", "benchmark_dax", "blame_value", "bpa_scan", "cancel_query", "capture_query_plan", "check_reports",
             "cherry_pick", "clear_cache", "clear_plan", "connect_assistant", "connect_local",
             "connect_xmla", "connection_context", "connection_status", "create_calculated_column",
@@ -197,7 +200,8 @@ namespace Semanticus.Engine.Entitlement
             "model_overview", "open_live", "open_local",
             "open_model", "optimize_measure", "pivot_measure", "prepare_working_copy",
             "preview_deploy", "preview_table", "probe_auth_prerequisites", "probe_connection_accounts",
-            "probe_measure", "profile_dax", "propose_plan", "propose_replace",
+            "probe_measure", "get_measure_marks", "set_measure_performance", "set_measure_totals", "set_measure_filters_on_purpose", "profile_dax", "propose_plan", "propose_replace",
+            "plan_measure_run", "run_measure_plan", "sweep_measure_checks", "configure_measure_sweep", "get_measure_check_cache", "stop_measure_run", "keep_measure_edit",
             "purge_restore_points", "redo_change", "refresh_partition", "reject_primer_suggestion",
             "remember_xmla_connection", "remove_safe_objects", "rename_display_folder", "rename_object",
             "replace_in_object", "reset_rules", "restore_history_checkpoint",
@@ -230,7 +234,7 @@ namespace Semanticus.Engine.Entitlement
             "daxlib_package_info", "daxlib_search", "daxlib_uninstall", "daxlib_versions",
             "define_calendar", "define_calendar_from_template", "delete_calendar", "delete_role",
             "generate_date_table", "generate_time_intelligence", "get_perspectives", "list_calculation_groups",
-            "list_calendars", "list_roles", "mark_date_table", "set_calc_group_precedence",
+            "list_calendars", "list_roles", "mark_date_table", "propose_calendar", "setup_calendars", "add_time_measures", "set_calc_group_precedence",
             "set_calc_item_format_string", "set_column_ols", "set_perspective_member", "set_role_member",
             "set_role_permission", "set_table_ols", "set_table_permission", "tag_calendar_column",
             // Power Query
@@ -245,6 +249,7 @@ namespace Semanticus.Engine.Entitlement
             "edit_insight", "get_model_primer", "list_insights", "purge_knowledge",
             "recall_experience", "set_model_primer", "upvote_insight",
             // Tests
+            "get_checks_page",
             "capture_baseline", "clear_table_source_mapping", "compare_baseline", "delete_test",
             "export_test_report", "get_test_run", "get_unmatched_rows", "list_table_mappings",
             "list_test_runs", "list_tests", "reconcile_measure", "record_test_run",
@@ -270,11 +275,14 @@ namespace Semanticus.Engine.Entitlement
         /// setDefaultAccountProfile).</summary>
         public static readonly IReadOnlyCollection<string> FreeRpcMethods = new HashSet<string>(StringComparer.Ordinal)
         {
+            "cleanupMeaningAnnotations", "getChecksPage",
+            "getMeasureDescription", "draftMeasureDescription", "proposeMeasureDescription", "keepMeasureDescription",
+
             "resolveFileRecovery",
             "abortWorkflow",
             "acceptPrimerSuggestion", "addInterviewQuestion", "addInterviewQuestions", "getCopilotView", "getStudentQuestions", "interviewRounds", "runInterviewBatch", "addPlanItem", "aiReadinessScan",
             "aiReadinessScanLive", "analyzeCloudReports", "analyzeReports", "applyDaxScript",
-            "applyDiff", "applyFix", "applyPlan", "applySafeFixes", "fixThem", "readingCard",
+            "applyDiff", "applyFix", "applyPlan", "applySafeFixes", "applyStandard", "checkCalendarData", "checkSameNumbers", "getStandard", "previewStandard", "setStandard", "fixThem", "readingCard",
             "applyTmdlScript", "benchmarkColdWarm", "benchmarkDax", "blameValue",
             "bpaFix", "bpaFixAll", "bpaGetFixPrompt", "bpaScan", "buildIdentity",
             "cancelDax", "captureQueryPlan", "checkReports", "cherryPick",
@@ -317,7 +325,8 @@ namespace Semanticus.Engine.Entitlement
             "listWaivers", "listWorkspaceModels", "listWorkspaceSqlEndpoints", "listWorkspaces", "loadBpaRules", "loadReadinessRules",
             "makeAiReady", "open", "openLive", "openLocal",
             "optimizeMeasure", "pivotMeasure", "prepareWorkingCopy", "previewDeploy",
-            "previewTable", "probeAuthPrerequisites", "probeConnectionAccounts", "probeMeasure",
+            "previewTable", "probeAuthPrerequisites", "probeConnectionAccounts", "probeMeasure", "getMeasureMarks", "setMeasurePerformance", "setMeasureTotals", "setMeasureFiltersOnPurpose",
+            "planMeasureRun", "runMeasurePlan", "sweepMeasureChecks", "configureMeasureSweep", "getMeasureCheckCache", "stopMeasureRun", "keepMeasureEdit",
             "profileDax", "proposePlan", "proposeReplace", "publishActivity",
             "pullAgentHealth", "pullForeignChanges", "purgeRestorePoints", "redo", "refreshPartition",
             "rejectPrimerSuggestion", "rememberXmlaConnection", "removeSafeObjects", "renameDisplayFolder",
@@ -350,7 +359,7 @@ namespace Semanticus.Engine.Entitlement
             "daxLibPackageInfo", "daxLibSearch", "daxLibUninstall", "daxLibVersions",
             "defineCalendar", "defineCalendarFromTemplate", "deleteCalendar", "deleteRole",
             "generateDateTable", "generateTimeIntelligence", "getPerspectives", "listCalculationGroups",
-            "listCalendars", "listRoles", "markDateTable", "setCalcGroupPrecedence",
+            "listCalendars", "listRoles", "markDateTable", "proposeCalendar", "setupCalendars", "addTimeMeasures", "setCalcGroupPrecedence",
             "setCalcItemFormatString", "setColumnObjectPermission", "setPerspectiveMember", "setRoleMember",
             "setRolePermission", "setTableObjectPermission", "setTablePermission", "tagCalendarColumn",
             // Power Query
@@ -389,9 +398,12 @@ namespace Semanticus.Engine.Entitlement
         /// method is unclassified until it is named here or in a Group, and the test says so.</summary>
         public static readonly IReadOnlyCollection<string> FreeEngineMethods = new HashSet<string>(StringComparer.Ordinal)
         {
+            "CleanupMeaningAnnotationsAsync", "GetChecksPageAsync",
+            "GetMeasureDescriptionAsync", "DraftMeasureDescriptionAsync", "ProposeMeasureDescriptionAsync", "KeepMeasureDescriptionAsync",
+
             "AbortWorkflowAsync", "AcceptPrimerSuggestionAsync", "AddInterviewQuestionAsync", "AddInterviewQuestionsAsync", "GetCopilotViewAsync", "GetStudentQuestionsAsync", "InterviewRoundsAsync", "RunInterviewBatchAsync", "AddPlanItemAsync", "AiReadinessScanAsync",
             "AiReadinessScanLiveAsync", "ReadingCardAsync", "FixThemAsync", "AnalyzeCloudReportsAsync", "AnalyzeReportsAsync", "ApplyDaxScriptAsync",
-            "ApplyDiffAsync", "ApplyFixAsync", "ApplyPlanAsync", "ApplySafeFixesAsync",
+            "ApplyDiffAsync", "ApplyFixAsync", "ApplyPlanAsync", "ApplySafeFixesAsync", "ApplyStandardAsync", "CheckCalendarDataAsync", "CheckSameNumbersAsync", "GetStandardAsync", "PreviewStandardAsync", "SetStandardAsync",
             "ApplyTmdlScriptAsync", "ApproveAgentActionAsync", "BenchmarkColdWarmAsync", "BenchmarkDaxAsync",
             "BlameValueAsync", "BpaFixAllAsync", "BpaFixAsync", "BpaGetFixPromptAsync",
             "BpaScanAsync", "CancelDaxAsync", "CaptureQueryPlanAsync", "CheckReportsAsync",
@@ -444,7 +456,8 @@ namespace Semanticus.Engine.Entitlement
             "LoadBpaRulesAsync", "LoadReadinessRulesAsync", "MakeAiReadyAsync", "OpenAsync",
             "OpenLiveAsync", "OpenLocalAsync", "OptimizeMeasureAsync", "PivotMeasureAsync",
             "PrepareWorkingCopyAsync", "PreviewDeployAsync", "PreviewTableAsync", "ProbeAuthPrerequisitesAsync",
-            "ProbeConnectionAccountsAsync", "ProbeMeasureAsync", "ProfileDaxAsync", "ProposePlanAsync",
+            "ProbeConnectionAccountsAsync", "ProbeMeasureAsync", "GetMeasureMarksAsync", "SetMeasurePerformanceAsync", "SetMeasureTotalsAsync", "SetMeasureFiltersOnPurposeAsync", "ProfileDaxAsync", "ProposePlanAsync",
+            "PlanMeasureRunAsync", "RunMeasurePlanAsync", "SweepMeasureChecksAsync", "ConfigureMeasureSweepAsync", "GetMeasureCheckCacheAsync", "StopMeasureRunAsync", "KeepMeasureEditAsync",
             "ProposeReplaceAsync", "PublishActivityAsync", "PullAgentHealthAsync", "PullForeignChangesAsync", "PurgeRestorePointsAsync",
             "RedoAsync", "RefreshPartitionAsync", "RejectPrimerSuggestionAsync", "RememberXmlaConnectionAsync",
             "RemoveSafeObjectsAsync", "RenameDisplayFolderAsync", "RenameObjectAsync", "ReplaceInObjectAsync",
@@ -479,7 +492,7 @@ namespace Semanticus.Engine.Entitlement
             "DaxLibPackageInfoAsync", "DaxLibSearchAsync", "DaxLibUninstallAsync", "DaxLibVersionsAsync",
             "DefineCalendarAsync", "DefineCalendarFromTemplateAsync", "DeleteCalendarAsync", "DeleteRoleAsync",
             "GenerateDateTableAsync", "GenerateTimeIntelligenceAsync", "GetPerspectivesAsync", "ListCalculationGroupsAsync",
-            "ListCalendarsAsync", "ListRolesAsync", "MarkDateTableAsync", "SetCalcGroupPrecedenceAsync",
+            "ListCalendarsAsync", "ListRolesAsync", "MarkDateTableAsync", "ProposeCalendarAsync", "SetupCalendarsAsync", "AddTimeMeasuresAsync", "SetCalcGroupPrecedenceAsync",
             "SetCalcItemFormatStringAsync", "SetColumnObjectPermissionAsync", "SetPerspectiveMemberAsync", "SetRoleMemberAsync",
             "SetRolePermissionAsync", "SetTableObjectPermissionAsync", "SetTablePermissionAsync", "TagCalendarColumnAsync",
             // Power Query

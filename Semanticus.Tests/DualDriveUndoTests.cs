@@ -59,7 +59,7 @@ namespace Semanticus.Tests
 
             // Subscribe AFTER the create so the only counted notification is the one set_dax under test.
             var seen = new List<ChangeNotification>();
-            Action<ChangeNotification> handler = n => seen.Add(n);
+            Action<ChangeNotification> handler = n => { if (n.IsCommit) seen.Add(n); };
             _sessions.Bus.Changed += handler;
             try
             {
@@ -155,7 +155,7 @@ namespace Semanticus.Tests
                 var table = (await engine.ListMeasuresAsync()).First().Table;
 
                 var seen = new List<ChangeNotification>();
-                Action<ChangeNotification> handler = n => seen.Add(n);
+                Action<ChangeNotification> handler = n => { if (n.IsCommit) seen.Add(n); };
                 sessions.Bus.Changed += handler;
                 try
                 {

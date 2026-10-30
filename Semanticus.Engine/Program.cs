@@ -10,6 +10,8 @@ namespace Semanticus.Engine
 {
     internal static class Program
     {
+        internal static System.Text.Json.JsonSerializerOptions ToolJsonOptions =>
+            ModelContextProtocol.McpJsonUtilities.DefaultOptions;
         private static async Task<int> Main(string[] args)
         {
             // Fix which build this process IS before anything else runs. BuildIdentity.Current reads the files beside
@@ -27,7 +29,10 @@ namespace Semanticus.Engine
             {
                 try { SemanticusHome.EnsureResolvable(); }
                 catch (InvalidOperationException ex) { Console.Error.WriteLine(ex.Message); return 1; }
+                try { EngineCache.Relocate(args); }
+                catch (Exception ex) { Console.Error.WriteLine("Semanticus could not keep its engine copy: " + ex.Message); return 1; }
             }
+            EngineCache.HoldProcess();
             switch (mode)
             {
                 case "serve": return await Serve(args);
@@ -208,15 +213,18 @@ namespace Semanticus.Engine
         /// The copy is written to a temporary file and moved over the old one in one step, so giving up at the cap leaves the earlier copy whole.</summary>
         internal static TimeSpan LiveKeepCap = TimeSpan.FromSeconds(60);
 
+        /// <summary>The wait KeepLiveWork makes on the kept-copy write, with the cap it was given. A test replaces it to see which cap KeepLiveWork waits
+        /// with, so a wait hard-coded back to the old five seconds is caught by what it passes here, not by a timing guess.</summary>
+        internal static Func<Task, TimeSpan, bool> LiveKeepWait = (work, cap) => work.Wait(cap);
+
         /// <summary>Writes the unsaved edits of a model opened live to its kept copy. It returns when the copy is in place, or when the cap passes:
         /// a stuck dispatcher must not keep the engine alive for ever, but a slow write is waited for.</summary>
         internal static void KeepLiveWork(Session session)
         {
             try
             {
-                // Nothing to keep means nothing to wait for: a close behind a busy dispatcher (a long query) must not hold the engine for the cap.
-                if (session == null || !session.HasLiveWorkToKeep) return;
-                if (!session.RunAsync(() => session.FlushLiveRecovery()).Wait(LiveKeepCap))
+                if (session == null) return;
+                if (!LiveKeepWait(session.KeepLiveWorkAfterEditsAsync(), LiveKeepCap))
                     Console.Error.WriteLine("[engine] the unsaved live work was still being kept when the wait ended; leaving anyway. The earlier kept copy, if any, is untouched.");
             }
             catch (Exception ex) { Console.Error.WriteLine("[engine] could not keep the unsaved live work: " + ex.GetType().Name); }
@@ -289,7 +297,12 @@ namespace Semanticus.Engine
                 var info = EngineBroker.ReadInfo(workspace);
                 var alive = EngineBroker.IsAlive(info);
                 var verdict = alive ? EngineBroker.McpJoinVerdict(info) : McpJoin.Join;
-                waitingOnOtherBuild = alive && verdict == McpJoin.DifferentBuild;
+                // A reconnect can arrive during the old assistant owner's shutdown grace. Wait for that owner
+                // to leave normally, without joining another build or interrupting a still-connected assistant.
+                var abandonedCachedOwner = EngineCache.InstallationExecutable != null && alive
+                    && verdict == McpJoin.DifferentInstall && info.StartedBy == EngineInfo.StartedByAssistant
+                    && info.ParentPid.HasValue && !ParentWatchdog.IsAlive(info.ParentPid.Value);
+                waitingOnOtherBuild = alive && (verdict == McpJoin.DifferentBuild || abandonedCachedOwner);
                 if (waitingOnOtherBuild)
                 {
                     // F-241: the same path, another build (an in-place reinstall). Do not join it, and never stop it
@@ -451,7 +464,7 @@ namespace Semanticus.Engine
                     "A row you leave or cannot do carries its reason on the row (decline_request or complete_request with a reason), in plain words, for example 'Needs a date column: none exists in this model'. " +
                     "Never say a tool name to the person.")
                 .WithStdioServerTransport()
-                .WithToolsFromAssembly()
+                .WithToolsFromAssembly(serializerOptions: ToolJsonOptions)
                 // A failed tool call must carry the engine's TEACHING message (scrubbed), not the SDK's opaque
                 // "An error occurred invoking 'X'." — see McpErrorBoundary. Its success-path sibling appends the
                 // health-delta block to a mutating tool's result (Pro, threshold-suppressed) — see McpHealthAppender.

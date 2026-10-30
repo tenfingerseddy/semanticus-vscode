@@ -17,7 +17,7 @@ namespace Semanticus.Engine
         // (pid, process-start-time) pair is the standard PID-reuse killer — a recycled pid never reproduces the
         // original start instant. Stamped by WriteInfo; a record WITHOUT them is a legacy engine's (see IsAlive).
         public string ProcessStartUtc { get; set; }   // Process.StartTime as UTC ISO round-trip
-        public string ExePath { get; set; }           // the owner's executable (dotnet.exe in dev, the apphost when self-contained)
+        public string ExePath { get; set; }           // original install apphost, or dotnet in development; retained copies keep this provenance
         // Absolute address of the owner's pipe. On Windows this is the named-pipe path for PipeName. On Unix, .NET
         // places the socket at Path.Combine(GetTempPath(), "CoreFxPipe_" + PipeName), and GetTempPath follows THIS
         // process's TMPDIR. The agent process often has a different TMPDIR than the UI owner, so the short PipeName
@@ -187,7 +187,7 @@ namespace Semanticus.Engine
                 if (string.IsNullOrEmpty(info.ProcessStartUtc))
                     info.ProcessStartUtc = Process.GetCurrentProcess().StartTime.ToUniversalTime().ToString("o");
                 if (string.IsNullOrEmpty(info.ExePath))
-                    info.ExePath = CurrentExecutablePath();
+                    info.ExePath = EngineCache.InstallationExecutable ?? CurrentExecutablePath();
                 if (string.IsNullOrEmpty(info.BuildId))
                     info.BuildId = BuildIdentity.Current;
                 if (string.IsNullOrEmpty(info.Home))
@@ -341,7 +341,7 @@ namespace Semanticus.Engine
             if (info == null || string.IsNullOrWhiteSpace(info.ExePath)) return false;
             try
             {
-                var expected = expectedPath ?? CurrentExecutablePath();
+                var expected = expectedPath ?? EngineCache.InstallationExecutable ?? CurrentExecutablePath();
                 if (string.IsNullOrWhiteSpace(expected)) return false;
                 var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
                 return string.Equals(Path.GetFullPath(info.ExePath), Path.GetFullPath(expected), comparison);

@@ -82,6 +82,7 @@ namespace Semanticus.Engine
     {
         bool CanUndo { get; }
         bool CanRedo { get; }
+        bool Replaying { get; }
         bool AtCheckpoint { get; }
         /// <summary>Steps on the undo stack, a batch counted once (TE2 <c>UndoManager.UndoSteps</c>).</summary>
         int UndoSteps { get; }
@@ -274,6 +275,7 @@ namespace Semanticus.Engine
             public Te2UndoLog(UndoManager u) => _u = u;
             public bool CanUndo => _u.CanUndo;
             public bool CanRedo => _u.CanRedo;
+            public bool Replaying => _u.UndoInProgress;
             public bool AtCheckpoint => _u.AtCheckpoint;
             public int UndoSteps => _u.UndoSteps;
             public int RedoSteps => _u.RedoSteps;

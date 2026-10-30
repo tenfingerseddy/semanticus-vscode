@@ -59,31 +59,37 @@ namespace Semanticus.Tests
         // checks.visual_kind (1.6, the Validation page, 15 Oct) joined version 6 with two fields (check_words, check_shapes) and did NOT
         // bump it: consent is per point (Covers checks the point's own fields), and the point is off in this build, so a person who agreed
         // under version 6 is not shown the card again. The card is asked once when the point goes live (CheckVisualPickTests).
-        private const string FrozenFieldFingerprint = "acf3a111b5bf09cd257054300cb6ffad2868284912c151ce39d59b4f76f6d640";
+        // Description matching joined version 6 while off. Totals adds probe values under version 7.
+        private const string FrozenFieldFingerprint = "cce569ec81fd1bf7fbeffcd90a0aefd7b18aa2417a968323573e824d0082c5ab";
 
         [Fact]
         public void The_declared_fields_are_frozen_against_the_consent_version()
         {
             Assert.True(FrozenFieldFingerprint == DecisionRegistry.DeclaredFieldFingerprint,
                 "expected " + FrozenFieldFingerprint + " but the declared fields hash to " + DecisionRegistry.DeclaredFieldFingerprint);
-            Assert.Equal(6, DecisionRegistry.ConsentSchemaVersion);   // 1.5.1: copilot.misses joined (the Copilot test, 15 Oct) and the version stayed 6; 1.5: next.step joined (the Next line, 11 Oct); version 5 shipped, so it bumped
+            Assert.Equal(7, DecisionRegistry.ConsentSchemaVersion); // Totals sends chosen probe values in 1.7.
         }
 
-        /// <summary>1.5.1 (Kane's rule: a guardrail needs real harm). copilot.misses ships off and sends nothing, so a Pro person who agreed in 1.5.0
-        /// must not be asked again for it. Their record is the 1.5.0 field list at version 6: every other point must still work under it, with no new
-        /// ask, and only copilot.misses is not covered (the engine's plain rules answer). When the point is switched on, the version is bumped.</summary>
+        /// <summary>The version 6 permission still describes its earlier scope. It cannot cover the probe values introduced in version 7.</summary>
         [Fact]
-        public void An_upgrade_from_a_1_5_0_consent_record_keeps_every_existing_point_working_with_no_new_ask()
+        public void An_older_permission_covers_its_original_scope_but_not_the_new_totals_values()
         {
-            var old150 = DecisionRegistry.DeclaredFields.Where(f => !f.StartsWith(DecisionRegistry.CopilotMisses + ":", StringComparison.Ordinal)).ToList();
+            var old150 = DecisionRegistry.DeclaredFields.Where(f => !f.StartsWith(DecisionRegistry.CopilotMisses + ":", StringComparison.Ordinal)
+                && !f.StartsWith(DescriptionMatchQuestions.Point + ":", StringComparison.Ordinal)
+                && !f.StartsWith(TotalsQuestions.TypePoint + ":", StringComparison.Ordinal)
+                && !f.StartsWith(TotalsQuestions.FitPoint + ":", StringComparison.Ordinal)).ToList();
             Assert.True(old150.Count < DecisionRegistry.DeclaredFields.Count, "copilot.misses declares fields, so the 1.5.0 list is shorter");
             var record = DecisionConsent.Grant(old150, 6, DateTimeOffset.UtcNow.AddDays(-3), 4, "human");
 
-            Assert.Equal(6, DecisionRegistry.ConsentSchemaVersion);
-            Assert.True(record.Covers(null, DecisionRegistry.ConsentSchemaVersion, out var why), why);   // the card reads as agreed: nothing to show again
-            foreach (var point in DecisionRegistry.Points.Where(x => x.Name != DecisionRegistry.CopilotMisses))
-                Assert.True(record.Covers(point, DecisionRegistry.ConsentSchemaVersion, out var reason), point.Name + " lost its permission: " + reason);
+            Assert.Equal(7, DecisionRegistry.ConsentSchemaVersion);
+            Assert.False(record.Covers(null, DecisionRegistry.ConsentSchemaVersion, out _));
+            // The old permission still covered its existing points before this version introduced probe values.
+            foreach (var point in DecisionRegistry.Points.Where(x => x.Name != DecisionRegistry.CopilotMisses
+                && x.Name != DescriptionMatchQuestions.Point && x.Name != TotalsQuestions.TypePoint && x.Name != TotalsQuestions.FitPoint))
+                Assert.True(record.Covers(point, 6, out var reason), point.Name + " lost its earlier permission: " + reason);
             Assert.False(record.Covers(DecisionRegistry.Points.First(x => x.Name == DecisionRegistry.CopilotMisses), DecisionRegistry.ConsentSchemaVersion, out _));
+            Assert.False(record.Covers(DecisionRegistry.Require(DescriptionMatchQuestions.Point), DecisionRegistry.ConsentSchemaVersion, out _));
+            Assert.False(record.Covers(DecisionRegistry.Require(TotalsQuestions.FitPoint), DecisionRegistry.ConsentSchemaVersion, out _));
         }
 
         /// <summary>F-229. The measure point used to send the formula text, and a formula can carry a value (a
@@ -148,7 +154,9 @@ namespace Semanticus.Tests
                 Assert.False(string.IsNullOrWhiteSpace(point.LowConfidenceBehaviour));
                 Assert.NotEmpty(point.SnapshotFields);
                 Assert.NotEmpty(point.Questions);
-                Assert.InRange(point.ConfidenceBar, 0.5, 1.0);
+                // Description matching displays a calibrated score, including low scores. It has no confidence gate.
+                if (point.Name == DescriptionMatchQuestions.Point) Assert.Equal(0, point.ConfidenceBar);
+                else Assert.InRange(point.ConfidenceBar, 0.5, 1.0);
                 Assert.True(point.SchemaVersion >= 1);
 
                 // No em dashes anywhere a person reads. docs/product-copy-style.md.

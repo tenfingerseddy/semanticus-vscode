@@ -1,0 +1,242 @@
+[
+  {
+    "kind": "ModelCopyNotMatched",
+    "whyNot": "this model copy has not been matched to its live data, so it cannot be Checked or Wrong",
+    "nextStep": "Connect to the live model, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "StatedChoice",
+    "whyNot": "Blank when this period has no sales, where Power BI shows -100%. Checked covers Power BI's result.",
+    "nextStep": "If you did not ask for this, remove it from the description. If you did, check these numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "UnprovenShape",
+    "whyNot": "Checked covers the usual ways to write this. It reads a function the checked list does not name.",
+    "nextStep": "Check this measure's numbers by hand for now. Writing it in a simpler form, as the reason says, may let Checked cover it.",
+    "noPlaces": false
+  },
+  {
+    "kind": "NotCheckableYet",
+    "whyNot": "Semanticus cannot check this kind of meaning yet.",
+    "nextStep": "Check this measure's numbers by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "MeaningNeedsFix",
+    "whyNot": "The meaning does not say what the measure adds up.",
+    "nextStep": "Ask your assistant to fix the meaning as the reason says, or check this measure's numbers by hand.",
+    "noPlaces": true
+  },
+  {
+    "kind": "MixedTime",
+    "whyNot": "This measure mixes a calendar and a date column for the same time step, so Semanticus cannot tell which rule it follows.",
+    "nextStep": "Ask your assistant to use the calendar or the date column for the time step, not both, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": true
+  },
+  {
+    "kind": "UnattendedWrite",
+    "whyNot": "it was written while nobody was at the keyboard, so there is no separate meaning to check it against",
+    "nextStep": "Check it again when you are at the keyboard. A measure written while you were away is never marked Checked. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "ServerDateChanged",
+    "whyNot": "The server date changed while the check ran.",
+    "nextStep": "Check this measure's numbers by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "ServerDateUnavailable",
+    "whyNot": "The server date could not be read.",
+    "nextStep": "Reconnect to the model. If the date is still missing, ask the model owner to check access. Check this measure's numbers by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "CouldNotPrepareInTime",
+    "whyNot": "The check could not prepare all its cells in time.",
+    "nextStep": "Wait five minutes, then check again when the model is less busy. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "CouldNotPrepare",
+    "whyNot": "The check could not be prepared.",
+    "nextStep": "Check this measure's numbers by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "PlacesCouldNotRun",
+    "whyNot": "some required places could not run",
+    "nextStep": "Check this measure's numbers by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "PlacesChanged",
+    "whyNot": "the required places changed",
+    "nextStep": "Check this measure's numbers by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "InputsChanged",
+    "whyNot": "the measure or the data changed while the check ran",
+    "nextStep": "Check this measure's numbers by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "NoRealData",
+    "whyNot": "a place has no real data",
+    "nextStep": "Check this measure's numbers by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "MissingNumbers",
+    "whyNot": "some checks could not be made because numbers they need are missing",
+    "nextStep": "Check this measure's numbers by hand for now. Checked had nothing to compare in some places.",
+    "noPlaces": false
+  },
+  {
+    "kind": "NotRunAsReport",
+    "whyNot": "the formula did not run as a report",
+    "nextStep": "Ask your assistant to run the measure in a table to see the error, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "NoIndependentComparison",
+    "whyNot": "there is no independent comparison",
+    "nextStep": "Check this measure's numbers by hand for now. Checked had nothing separate to compare with.",
+    "noPlaces": false
+  },
+  {
+    "kind": "EdgeMembersMissing",
+    "whyNot": "the model has no rows for the unusual cases Checked needs to test",
+    "nextStep": "Check this measure's unusual cases by hand. The model has no row to test them with.",
+    "noPlaces": false
+  },
+  {
+    "kind": "NoLiveData",
+    "whyNot": "no live data",
+    "nextStep": "Connect the model to live data, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "NoMeaning",
+    "whyNot": "the measure has no complete meaning stated",
+    "nextStep": "Ask your assistant to state what the measure means, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "MeaningChangeNotRecorded",
+    "whyNot": "a meaning change was not recorded",
+    "nextStep": "Ask your assistant to say why the meaning changed, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "DatesNotProved",
+    "whyNot": "the date functions this measure uses have not been checked",
+    "nextStep": "Check this measure's dates by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "ReleaseCheckNotPassed",
+    "whyNot": "the built-in check of Checked has not passed",
+    "nextStep": "Check this measure's numbers by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "SetCapped",
+    "whyNot": "some groups were cut off or repeated, so Checked did not read all of them",
+    "nextStep": "Check the groups that were cut off by hand. Narrowing the groups the measure covers may let Checked read all of them.",
+    "noPlaces": false
+  },
+  {
+    "kind": "TotalNotAdditive",
+    "whyNot": "the parts of a total cannot be added up, so the total could not be checked",
+    "nextStep": "Check this measure's totals by hand. Its parts cannot be added up.",
+    "noPlaces": false
+  },
+  {
+    "kind": "BaseFiltersNotProved",
+    "whyNot": "the filters inside this measure have not been checked",
+    "nextStep": "Check the filters inside this measure by hand for now.",
+    "noPlaces": false
+  },
+  {
+    "kind": "MeaningTestsNothing",
+    "whyNot": "the meaning divides a number by itself, so it is always 1 and tests nothing",
+    "nextStep": "Ask your assistant to restate the meaning with a top number and a different bottom number, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "SourceDiffers",
+    "whyNot": "source total differs",
+    "nextStep": "Ask your assistant to compare the measure with the source total, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "MeaningDisagrees",
+    "whyNot": "The meaning and the formula disagree.",
+    "nextStep": "Ask your assistant which one is right, the meaning or the formula, and have it fix the other.",
+    "noPlaces": false
+  },
+  {
+    "kind": "AnswerUseMeasureCheck",
+    "whyNot": "This kind of meaning is checked on the measure itself, so this answer is only partly checked.",
+    "nextStep": "Ask your assistant to check the measure itself, then read this answer against it.",
+    "noPlaces": false
+  },
+  {
+    "kind": "AnswerOwnLogic",
+    "whyNot": "A query with its own logic is partly checked.",
+    "nextStep": "Check these numbers by hand, or ask your assistant to build the answer from a measure and check that measure.",
+    "noPlaces": false
+  },
+  {
+    "kind": "AnswerModelChanged",
+    "whyNot": "The model changed while this answer was checked.",
+    "nextStep": "Check these numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "AnswerNotAvailable",
+    "whyNot": "The answer check is not available on this connection.",
+    "nextStep": "Check this answer through a live connection, then run the question again. If it stays this way, check these numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "AnswerCouldNotFinish",
+    "whyNot": "The answer returned, but its check could not finish.",
+    "nextStep": "Check these numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "AnswerFilterMembers",
+    "whyNot": "Checked could not tell exactly which values the filter used.",
+    "nextStep": "Check these numbers by hand. Checked could not tell which filter members the answer used.",
+    "noPlaces": false
+  },
+  {
+    "kind": "QueryLinkedColumns",
+    "whyNot": "The check could not read a column because it needs another column with it.",
+    "nextStep": "Ask your assistant to fix the check so it reads the linked columns together, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "QueryAccessDenied",
+    "whyNot": "The model did not allow the check to read some data.",
+    "nextStep": "Ask the model owner to allow access to the data named in the error, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "QueryMissingField",
+    "whyNot": "The check names a table or column that the model could not find.",
+    "nextStep": "Ask your assistant to fix the table or column name in the check, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  },
+  {
+    "kind": "QueryRefused",
+    "whyNot": "The model refused part of this check.",
+    "nextStep": "Ask your assistant to read the error and fix the check, then check again. If it stays Partly, check this measure's numbers by hand.",
+    "noPlaces": false
+  }
+]

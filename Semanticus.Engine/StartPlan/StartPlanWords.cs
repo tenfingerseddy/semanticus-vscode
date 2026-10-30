@@ -466,15 +466,18 @@ namespace Semanticus.Engine.StartPlan
                     doc.Lines.Add(new StartLine
                     {
                         Item = item, DecidedBy = by, Word = f.Text, Round = round, Kept = true,
+                        DescriptionBy = f.Kind == Description ? by : null,
                         Why = WhyOf(f, person),
                     });
                     changed = true;
                 }
-                else if (before.After != f.Text || before.Word != f.Text || existing.DecidedBy != by || !existing.Kept)
+                else if (before.After != f.Text || before.Word != f.Text || existing.DecidedBy != by || !existing.Kept
+                    || f.Kind == Description && existing.DescriptionBy != by)
                 {
                     existing.Word = f.Text;
                     existing.Round = round;
                     existing.DecidedBy = by;
+                    if (f.Kind == Description) existing.DescriptionBy = by;
                     existing.Kept = true;
                     existing.Why = WhyOf(f, person);
                     existing.Item.Status = "proposed";

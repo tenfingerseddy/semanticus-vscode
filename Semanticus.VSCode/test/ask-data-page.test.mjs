@@ -513,7 +513,7 @@ assert.match(src('hooks.ts'), /if \(held\.key !== key\)/, 'usePersistedState rea
 
   // The passed checks fold into one line. A failed check never folds.
   const C = card(answered);
-  assert.match(C, /✓ Checked · 2 rows · 42 ms/, 'one line says checked, the rows and the time');
+  assert.match(C, /Query ran · 2 rows · 42 ms/, 'one line says the query ran, the rows and the time');
   assert.doesNotMatch(C, /Every column reaches Net Sales/, 'the passed lines are not on screen until asked for');
   assert.match(C, /Show checks/, 'one button brings them back');
   assert.doesNotMatch(C, /Built from your choices/, 'and nothing claims who built it');

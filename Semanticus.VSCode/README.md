@@ -179,7 +179,15 @@ Pending changes, Queries, Record verified edits, every fix, the assistant permis
 Publish, and the advanced publishing tools including source control, Fabric Git, automated delivery and
 the Data Agent.
 
-Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, the plain-words box on Query, bulk edits that change many objects in one step, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off. Nothing is sent to Jev until you agree for that model. Then what goes is table, column and measure names, their types, formats, folders and descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula itself), and the words you type: questions in the ask box and in the plain-words box on Query, and the words that describe a task. Words you type go as you typed them. A row or a value from your tables never goes, and neither do your connection or anything from another model. Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
+Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, the plain-words box on Query, bulk edits that change many objects in one step, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off.
+
+Nothing is sent to Jev until you agree for that model. Jev receives table, column and measure names, types, formats, folders and descriptions. It also receives counts, relationships and facts about formulas. When your question uses a synonym, Jev receives the synonym and its measure name. It receives the questions and task words you type.
+
+Your version 7 permission also covers the Description score and Totals. The Description score sends the name, Description and formula to Jev. Totals sends the name, Description and formula to read the total type. For the Fit question, Totals also sends the expected total rule, grouping column, calculated facts, probe rows and total. Each probe row contains a member name and a measure value.
+
+Words you type go as you typed them. Table rows outside the chosen Totals probes stay on your machine. Your connection and credentials stay on your machine. Jev receives nothing from other models.
+
+Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
 order, with a jump on each one to the page where you can do it by hand.
 You can try Pro free for 30 days.
 [Compare the current plans](https://semanticus.com.au/pro).
@@ -191,8 +199,10 @@ tenant, capacity, permissions and sign-in. Modern calendars require compatibilit
 analysis does not impersonate a user to prove dynamic RLS behaviour.
 
 Model work runs locally. Pro sends the model's shape (names, types, formats, counts, relationships and some
-descriptions) and the words you type to its advice service, only after you allow it for that model, and never rows,
-values or credentials. Connections and publishing use the sources and targets you choose. Semanticus sends no product
+descriptions) and the words you type to its advice service, only after you allow it for that model.
+The Description score and Totals also send the name, Description and formula to Jev. Totals Fit sends chosen probe rows and totals.
+Each probe row contains a member name and a measure value. Source table rows themselves and credentials stay on your machine.
+Connections and publishing use the sources and targets you choose. Semanticus sends no product
 telemetry. Your assistant uses its own account and data policies.
 
 [Support details](https://semanticus.com.au/docs/supported-platforms) ·

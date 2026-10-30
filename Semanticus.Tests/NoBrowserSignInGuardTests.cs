@@ -508,6 +508,11 @@ namespace Semanticus.Tests
         public void No_test_smoke_or_tool_source_opens_a_browser_or_passes_the_opt_in()
         {
             var repo = RepoRoot();
+            // The reviewed harness may start only a headless browser with a new profile.
+            var calculationHarness = File.ReadAllText(Path.Combine(repo, "Semanticus.VSCode", "test", "try-calculation.test.mjs"));
+            Assert.Contains("spawn(browserPath, ['--headless',", calculationHarness);
+            Assert.Contains("const profile = mkdtempSync(join(tmpdir(),", calculationHarness);
+            Assert.Contains("--user-data-dir=${profile}", calculationHarness);
             var roots = new[]
             {
                 "Semanticus.Tests", "Semanticus.Smoke", "Semanticus.RpcSmoke", "Semanticus.McpSmoke", "Semanticus.AirSmoke",

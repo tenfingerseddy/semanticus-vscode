@@ -13,7 +13,7 @@
 // kind cannot be the parameter's (an array into a string, a string into a bool, a bare null into a bool or a number).
 // An argument typed `any` or `unknown` cannot be judged and is counted, never silently passed over.
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +25,9 @@ const req = createRequire(join(root, 'webview', 'package.json'));
 const ts = req('typescript');
 
 // ---- the engine's side: every public method's parameters ----------------------------------------------
-const TARGETS = ['Semanticus.Engine/EngineRpcTarget.cs', 'Semanticus.Engine/HumanGovernanceRpcTarget.cs'];
+const TARGETS = readdirSync(resolve(repo, 'Semanticus.Engine'))
+  .filter(file => /^(EngineRpcTarget|HumanGovernanceRpcTarget)(\..+)?\.cs$/.test(file))
+  .map(file => 'Semanticus.Engine/' + file);
 
 /** Split on top-level commas: generics, brackets, parentheses, braces and string literals nest. */
 function splitTop(text) {
@@ -88,6 +90,7 @@ for (const file of TARGETS) {
 }
 assert.ok(methods.size > 200, `the RPC targets should expose hundreds of methods; parsed ${methods.size}, so the parse is wrong`);
 const runTests = methods.get('runTests');
+assert.equal(methods.get('planMeasureRun')?.[0].params.length, 1, 'partial targets are part of the RPC surface');
 assert.ok(runTests, 'sanity: runTests must be found');
 assert.deepEqual(runTests[0].params.map((p) => `${p.name}:${p.kind}`), ['persist:boolean', 'origin:string', 'only:array', 'sections:array', 'runId:string'],
   'sanity: runTests parses to its real five parameters');
@@ -130,6 +133,7 @@ function programFor(tsconfigPath) {
 const problems = [];
 let checked = 0, unjudged = 0, skippedSingle = 0, dynamic = 0;
 const seen = new Set();
+const marksMethods = new Set();
 
 function scan(tsconfig, calleeKind) {
   const program = programFor(tsconfig);
@@ -140,7 +144,8 @@ function scan(tsconfig, calleeKind) {
       if (ts.isCallExpression(node)) {
         const callee = node.expression;
         const isRpc = calleeKind === 'rpc'
-          ? ts.isIdentifier(callee) && callee.text === 'rpc'
+          ? ts.isIdentifier(callee) && ['rpc', 'rpcPressed'].includes(callee.text)
+            || ts.isPropertyAccessExpression(callee) && callee.name.text === 'rpc'
           : ts.isPropertyAccessExpression(callee) && callee.name.text === 'sendRequest';
         if (isRpc && node.arguments.length > 0) {
           const first = node.arguments[0];
@@ -152,11 +157,12 @@ function scan(tsconfig, calleeKind) {
             // sendRequest(name, ParameterStructures.byPosition, ...): the structure flag is not an argument.
             if (args[0] && /ParameterStructures\./.test(args[0].getText())) args = args.slice(1);
             const sigs = signaturesFor(name);
-            if (!sigs) { /* a missing name is rpc-name-parity's finding, not this test's */ }
+            if (!sigs) { problems.push(`  ${name} (${where}): no engine method exists`); }
             else if (args.some((a) => ts.isSpreadElement(a))) { dynamic++; }
             else if (sigs.every((s) => s.single)) { skippedSingle++; }
             else {
               checked++;
+              if (name === 'planMeasureRun' || name === 'runMeasurePlan') marksMethods.add(name);
               const failures = sigs.map((sig) => {
                 const required = sig.params.filter((p) => !p.optional).length;
                 if (args.length < required) return `sends ${args.length} argument(s), the engine needs at least ${required} (${sig.params.map((p) => p.name).join(', ')})`;
@@ -190,6 +196,8 @@ scan(webviewConfig, 'rpc');
 scan(hostConfig, 'sendRequest');
 
 assert.ok(checked > 400, `expected hundreds of call sites to be checked; checked ${checked}, so the walk is wrong`);
+assert.deepEqual([...marksMethods].sort(), ['planMeasureRun', 'runMeasurePlan'],
+  'the Properties and Checks host.rpc calls must be included in the argument check');
 
 assert.equal(problems.length, 0,
   `these calls do not match the engine's method, so they fail at run time (or send a value into the wrong parameter):\n${problems.join('\n')}\n`

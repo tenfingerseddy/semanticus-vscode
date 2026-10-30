@@ -585,7 +585,7 @@ namespace Semanticus.Engine
                     run.Persisted = TestSuiteStore.AppendRun(dir, TestSuiteStore.Serialize(BuildRunRecord(run)));
             }
             LogRunTotal(run);
-            RememberTestRun(run);
+            RememberTestRun(run, s.Id, defs);
             return run;
         }
 
@@ -811,15 +811,27 @@ namespace Semanticus.Engine
 
         /// <summary>Keep the last few finished runs so "record the run I am looking at" can mean exactly that.
         /// Bounded on purpose: this is a convenience for the run still on screen, not a second history.</summary>
-        private void RememberTestRun(TestSuiteRunResult run)
+        private void RememberTestRun(TestSuiteRunResult run, string sessionId, IReadOnlyList<TestDefinition> definitions)
         {
             _lastTestRun = run;
             NoteNextStepChecks(run);   // 1.5: a finished run moves the Next line on from "Run your checks"
             lock (_recentTestRuns)
             {
+                if (checksPageSession != sessionId) { checksPageResults.Clear(); checksPageDefinitionVersions.Clear(); checksPageResultTimes.Clear(); checksPageRelationships = null; checksPageRelationshipsWhen = null; checksPageWhen = null; }
+                checksPageSession = sessionId;
+                if (run.Scope?.Partial != true) checksPageWhen = run.When;
+                foreach (var result in run.Reconciles.Where(r => !string.IsNullOrEmpty(r.DefId)))
+                {
+                    checksPageResults[result.DefId] = result;
+                    checksPageResultTimes[result.DefId] = run.When;
+                    var definition = definitions.FirstOrDefault(d => d.Id == result.DefId);
+                    if (definition != null) checksPageDefinitionVersions[result.DefId] = System.Text.Json.JsonSerializer.Serialize(definition);
+                }
+                if (run.Scope?.Ran?.Contains("relationships") == true) { checksPageRelationships = run.Relationships; checksPageRelationshipsWhen = run.When; }
                 _recentTestRuns.Add(run);
                 while (_recentTestRuns.Count > RecentTestRunCap) _recentTestRuns.RemoveAt(0);
             }
+            _sessions.Bus.PublishActivity(new ActivityEvent { Kind = "checks_page_changed", Origin = "system", Label = "Checks updated", Ok = true });
         }
 
         /// <summary>Record a run that has ALREADY finished, exactly as it finished. Recording used to be a flag on
@@ -1295,9 +1307,9 @@ namespace Semanticus.Engine
         /// and a token lives about an hour. With no cache (a single direct call) it is a plain fetch.</summary>
         private async Task<string> RunSqlTokenAsync(SqlTokenCache cache, string authMode, string tenantId, string origin)
         {
-            if (cache == null) return await AcquireSqlTokenAsync(authMode, tenantId, origin, CancellationToken.None).ConfigureAwait(false);
+            if (cache == null) return await AcquireSqlTokenAsync(authMode, tenantId, origin, measureRunCancellation.Value).ConfigureAwait(false);
             var key = string.Join("\u001f", authMode ?? "azcli", tenantId ?? "");
-            return await cache.GetAsync(key, () => AcquireSqlTokenAsync(authMode, tenantId, origin, CancellationToken.None)).ConfigureAwait(false);
+            return await cache.GetAsync(key, () => AcquireSqlTokenAsync(authMode, tenantId, origin, measureRunCancellation.Value)).ConfigureAwait(false);
         }
 
         /// <summary>The run's sign-in cache. Checks now run side by side, so two of them can ask for the same sign-in at once:

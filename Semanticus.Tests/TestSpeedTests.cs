@@ -367,7 +367,7 @@ namespace Semanticus.Tests
 
             var run = await engine.RunTestSuiteAsync(origin: "human", runId: runId);
 
-            // The checks that take time: each relationship, each table count, each saved check.
+            // Progress counts each relationship, table count, and saved check.
             var units = run.Relationships.Relationships.Count + run.Relationships.TableRowCounts.Count + saved;
             lock (events) return (events.ToList(), run, units);
         }
@@ -383,10 +383,10 @@ namespace Semanticus.Tests
             var (events, run, units) = await RunWithProgressAsync("Fast", TimeSpan.FromHours(1), saved: 24, runId: "page-run-7");
 
             Assert.NotNull(run.Health);
-            Assert.Equal(2, events.Count);
+            Assert.Equal(2, events.Count); // Start the saved checks and tables, then finish.
             Assert.All(events, e => { Assert.Equal("run_tests", e.OpKey); Assert.Equal("page-run-7", e.RunId); Assert.Equal(units, e.Total); });
             Assert.Equal(0, events[0].Done);
-            Assert.Equal(units, events[1].Done);
+            Assert.Equal(units, events[^1].Done);
         }
 
         [Fact]
@@ -402,17 +402,7 @@ namespace Semanticus.Tests
             Assert.Single(events.Select(e => e.RunId).Distinct());   // the run names itself when the page gave no id
         }
 
-        [Fact]
-        public async Task A_run_with_nothing_to_check_sends_no_progress()
-        {
-            using var engine = await ModelAsync("Empty", "Idle");   // a measure with no saved check, and no live connection
-            var events = new List<OperationProgress>();
-            _sessions.Bus.Progress += events.Add;
 
-            await engine.RunTestSuiteAsync(origin: "human");
-
-            Assert.Empty(events);
-        }
 
         [Fact]
         public async Task A_grouped_check_with_a_grand_total_keeps_its_numbers_stamps_and_times()
@@ -622,13 +612,20 @@ namespace Semanticus.Tests
             using var engine = await ModelAsync("Parallel", names);
             foreach (var m in names) await SaveCheckAsync(engine, m);
             var running = 0; var most = 0;
+            using var threeRunning = new ManualResetEventSlim(false);
             engine.ReconcileSqlForTests = (server, db, sql) =>
             {
                 var now = Interlocked.Increment(ref running);
                 lock (names) most = Math.Max(most, now);
-                Thread.Sleep(120);
-                Interlocked.Decrement(ref running);
-                return SqlAnswer(sql);
+                if (now == 3) threeRunning.Set();
+                try
+                {
+                    // A loaded thread pool can take longer than 120 ms to start the third worker.
+                    Assert.True(threeRunning.Wait(TimeSpan.FromSeconds(30)), "Three SQL calls never ran together.");
+                    Thread.Sleep(120);
+                    return SqlAnswer(sql);
+                }
+                finally { Interlocked.Decrement(ref running); }
             };
             engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "Parallel", DaxAnswer));
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using TabularEditor.TOMWrapper;
 using TabularEditor.TOMWrapper.Undo;
 using TOM = Microsoft.AnalysisServices.Tabular;
@@ -42,6 +43,51 @@ namespace TabularEditor.TOMWrapper.Utils
                     yield return (t, cal);
         }
 
+        /// <summary>The Power BI service refuses a model where one column is used by the same calendar more than once: as a primary,
+        /// an associated column, a time-related column, or the sort-by column of a primary (a primary already carries its sort-by
+        /// column). Returns one "calendar|column|how" row per column used twice, so a caller can compare before and after.</summary>
+        public static IReadOnlyList<(string Calendar, string Column, string Uses)> DoubleUses(TOM.Table table)
+        {
+            var found = new List<(string, string, string)>();
+            foreach (var cal in table.Calendars)
+            {
+                var uses = new List<(string Column, string How)>();
+                foreach (var g in cal.CalendarColumnGroups)
+                {
+                    if (g is TOM.TimeUnitColumnAssociation a)
+                    {
+                        if (a.PrimaryColumn != null) uses.Add((a.PrimaryColumn.Name, "the " + a.TimeUnit + " level"));
+                        foreach (var c in a.AssociatedColumns) uses.Add((c.Name, "an associated column of the " + a.TimeUnit + " level"));
+                    }
+                    else if (g is TOM.TimeRelatedColumnGroup r)
+                        foreach (var c in r.Columns) uses.Add((c.Name, "a time-related column"));
+                }
+                // A sort-by column shared by two primaries counts once: only a clash with another use is certain to be refused.
+                var sorts = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var a in cal.CalendarColumnGroups.OfType<TOM.TimeUnitColumnAssociation>())
+                {
+                    var by = a.PrimaryColumn?.SortByColumn;
+                    if (by != null && sorts.Add(by.Name)) uses.Add((by.Name, "the sort-by column of '" + a.PrimaryColumn.Name + "'"));
+                }
+                foreach (var grp in uses.GroupBy(u => u.Column, StringComparer.Ordinal).Where(x => x.Count() > 1))
+                    found.Add((cal.Name, grp.Key, string.Join(" and ", grp.Select(u => u.How))));
+            }
+            return found;
+        }
+
+        /// <summary>Refuse, in plain words, a calendar edit that makes a column used twice in one calendar. A clash already in the model
+        /// before the edit is not this edit's doing and does not block it.</summary>
+        private static void RequireNoNewDoubleUse(TOM.Table table, IReadOnlyList<(string Calendar, string Column, string Uses)> before)
+        {
+            var had = new HashSet<(string, string)>(before.Select(b => (b.Calendar, b.Column)));
+            var fresh = DoubleUses(table).Where(d => !had.Contains((d.Calendar, d.Column))).ToArray();
+            if (fresh.Length == 0) return;
+            var d0 = fresh[0];
+            throw new InvalidOperationException(
+                $"The '{d0.Calendar}' calendar would use the column '{d0.Column}' more than once ({d0.Uses}). Power BI refuses a calendar that uses a column more than once, "
+                + "so nothing was changed. A column that is the sort-by column of a level already counts as part of it: leave it out of the associated columns.");
+        }
+
         /// <summary>Mutate a table's raw-TOM calendar metadata as ONE undoable step. The mutation must be
         /// synchronous, pure TOM-object-graph work (no I/O). On failure the BEFORE document is re-applied so
         /// the model never keeps a half-applied calendar (same atomicity contract as TmdlApplier.Apply).</summary>
@@ -53,10 +99,12 @@ namespace TabularEditor.TOMWrapper.Utils
             var path = "./tables/" + table.Name;
             var before = TmdlScripter.ScriptTmdl(table);
             var tomModel = (TOM.Model)model.MetadataObject;
+            var clashesBefore = DoubleUses(Raw(table));
             string after;
             try
             {
                 mutate(Raw(table));
+                RequireNoNewDoubleUse(Raw(table), clashesBefore);
                 after = TmdlScripter.ScriptTmdl(table);   // capture pre-Reinit: the wrapper ref is still current
             }
             catch
@@ -96,6 +144,7 @@ namespace TabularEditor.TOMWrapper.Utils
             {
                 tomModel.Tables.Add(table);
                 mutate(table);
+                RequireNoNewDoubleUse(table, Array.Empty<(string, string, string)>());
                 DependencyMaintenance.Reload(model);
                 var after = TmdlApplier.CaptureDoc(model, path)
                     ?? throw new InvalidOperationException($"Calendar table '{tableName}' was created but could not be scripted for undo.");

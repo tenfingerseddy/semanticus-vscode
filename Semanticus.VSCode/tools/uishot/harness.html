@@ -2090,7 +2090,7 @@
       { id: 'cn4', previousAccount: 'alice@contoso.com', tenantId: 'contoso.com' },
     ];
     // The Phase 2 multi-account profile store (list_account_profiles) — the saved Microsoft identities on this device,
-    // credential-free. Honest fixture: two accounts on the Contoso tenant (one the default), a SECOND tenant (ETS), and a
+    // credential-free. Honest fixture: two accounts on the Contoso tenant (one the default), a SECOND tenant (Fabrikam), and a
     // SIGNED-OUT profile whose saved record is gone. `isDefault` is who an unqualified open of that tenant uses.
     const ACCOUNT_PROFILES = cfg.accountProfiles || [
       { id: 'pf1', username: 'megan@contoso.com', tenantId: 'contoso.com', family: 'interactive', isDefault: true, signedIn: true, lastSignInUtc: ago(120), lastUseUtc: ago(60) },
@@ -3195,6 +3195,23 @@
         : VPAQ,
       listMeasures: MEASURES,
       listColumns: COLUMNS,
+      // The Checks page (Review > Checks) as the engine reads it before a run: the model's measures, one saved trusted number
+      // and nothing checked yet. Without it the page got {} and drew "This page hit a problem" (v-fx27 polish c).
+      getChecksPage: function () {
+        var shown = MEASURES.filter(function (m) { return !m.isHidden; });
+        return { sessionId: 'uishot', revision: 1,
+          measures: shown.map(function (m) { return { ref: m.ref, name: m.name, table: m.table, folder: m.displayFolder, description: m.description,
+            oneLine: (m.description || '').split('. ')[0], descriptionProvenance: m.description ? 'person' : null, descriptionMatch: null }; }),
+          summary: { total: shown.length, numbersDiffer: 0, keyProblems: 0, tableProblems: 0 },
+          numbers: { definitions: [{ id: 'contoso-total-sales', title: 'Total Sales, all rows', targetRef: 'measure:Sales/Total Sales', enabled: true, kind: 'measureValue' }] },
+          results: {}, tables: { rows: [] }, relationships: null };
+      },
+      getMeasureCheckCache: [],
+      // The run line's plan: every shown measure, never checked, about 15 seconds each.
+      planMeasureRun: function () {
+        var picks = MEASURES.filter(function (m) { return !m.isHidden; }).map(function (m) { return { measureRef: m.ref, group: 'oldest', reason: 'Never checked.' }; });
+        return { id: 'uishot-plan-' + picks.length, totalMeasures: picks.length, batchSize: 40, estimatedSeconds: picks.length * 15, sentence: '', picks: picks, includePerformance: false };
+      },
       // Ask your data (26 September): a small stand-in for AskDataAsync, so every state of the page can be shot.
       // It answers parts the way the engine does (read by "you"), answers words with the engine's own "not
       // switched on yet" line, and refuses a filter word it cannot find with the engine's own sentence. The
@@ -3240,31 +3257,8 @@
           objectPermissions: [{ table: 'Customer', metadataPermission: 'None', columns: [{ column: 'CustomerName', metadataPermission: 'None' }] }] },
         { name: 'Analyst', description: '', modelPermission: 'Read', tableFilters: [], members: [], objectPermissions: [] },
       ],
-      // Calendar-based time intelligence (CL 1701+). ?cal=off flips calendarsSupported false to screenshot the
-      // CL-upgrade gate; default shows a Date table carrying a Gregorian + Fiscal calendar with mappings + a bucket.
-      listCalendars: cfg.calendars || (new URLSearchParams(location.search).get('cal') === 'off'
-        ? { calendars: [], compatibilityLevel: 1604, calendarsSupported: false, note: 'below the 1701 minimum for calendars' }
-        : {
-          compatibilityLevel: 1701, calendarsSupported: true,
-          calendars: [
-            { table: 'Date', name: 'Gregorian', description: 'Standard Year/Quarter/Month/Day calendar.', groups: [
-              { timeUnit: 'Year', primaryColumn: 'Year', associatedColumns: [], timeRelatedColumns: [] },
-              { timeUnit: 'Quarter', primaryColumn: 'Quarter', associatedColumns: ['QuarterName'], timeRelatedColumns: [] },
-              { timeUnit: 'Month', primaryColumn: 'MonthKey', associatedColumns: ['MonthName'], timeRelatedColumns: [] },
-              { timeUnit: 'Date', primaryColumn: 'Date', associatedColumns: [], timeRelatedColumns: [] },
-              { timeUnit: null, primaryColumn: null, associatedColumns: [], timeRelatedColumns: ['IsWorkingDay', 'HolidayName'] },
-            ] },
-            { table: 'Date', name: 'Fiscal', description: 'FY starting July, labelled by ending year.', groups: [
-              { timeUnit: 'Year', primaryColumn: 'FiscalYear', associatedColumns: [], timeRelatedColumns: [] },
-              { timeUnit: 'Quarter', primaryColumn: 'FiscalQuarter', associatedColumns: [], timeRelatedColumns: [] },
-              { timeUnit: 'Month', primaryColumn: 'FiscalMonth', associatedColumns: [], timeRelatedColumns: [] },
-            ] },
-          ],
-        }),
-      defineCalendarFromTemplate: cfg.defineCalendarFromTemplate || { revision: 8, table: 'Date', calendar: 'Fiscal', createdColumns: [{ ref: 'column:Date/FiscalYear', name: 'FiscalYear' }], mappings: ['FiscalYear → Year', 'FiscalQuarter → Quarter'], skipped: [], note: 'Calendar created.' },
-      defineCalendar: cfg.defineCalendar || { revision: 8, table: 'Date', calendar: 'Custom', mappings: [], skipped: [], note: 'Calendar created.' },
-      tagCalendarColumn: cfg.tagCalendarColumn || { revision: 9, table: 'Date', calendar: 'Gregorian', mappings: [], skipped: [], note: 'Mapping updated.' },
-      deleteCalendar: cfg.deleteCalendar || { revision: 10, changed: true },
+      // Calendars (CL 1701+): proposeCalendar, setupCalendars and addTimeMeasures are a small stateful mock below ("the calendar mock").
+      listCalendars: { calendars: [], compatibilityLevel: 1604, calendarsSupported: false },
       setCompatibilityLevel: cfg.setCompatibilityLevel || { changed: true, revision: 11 },
 
       listCalculationGroups: cfg.calcGroups || [
@@ -3417,17 +3411,121 @@
       };
     };
 
-    // The below-1701 fixture is interactive: a successful upgrade must change the next listCalendars read.
-    // This turns the maintained screenshot path into a proof of the real CTA -> RPC -> reload sequence.
-    if (new URLSearchParams(location.search).get('cal') === 'off') {
-      var calendarState = RESPONSES.listCalendars;
-      RESPONSES.listCalendars = function () { return calendarState; };
-      RESPONSES.setCompatibilityLevel = function (params) {
-        if (!params || Number(params[0]) !== 1701) return { __uishotError: 'The calendar fixture only accepts compatibility level 1701.' };
-        calendarState = { calendars: [], compatibilityLevel: 1701, calendarsSupported: true };
-        return { changed: true, revision: 11 };
+    // The calendar mock: the Calendars page's three engine calls, stateful, so a screenshot or a drive can press Set up, Add time
+    // measures and Undo. ?cal=classic (default) | none (no Date table) | done (already set up) | live | unavailable. The plan is typed
+    // here, not computed: the real plan is the engine's (Semanticus.Tests/CalendarPlanTests.cs).
+    (function () {
+      var scenario = new URLSearchParams(location.search).get('cal') || 'classic';
+      var DATE = 'Date';
+      var KINDS = [
+        { kind: 'year', name: 'Calendar year', hint: 'January to December' },
+        { kind: 'fiscal', name: 'Fiscal year', hint: 'Starts in July' },
+        { kind: 'retail', name: 'Retail 4-4-5', hint: 'Quarters of 4, 4 and 5 weeks' },
+        { kind: 'iso', name: 'ISO weeks', hint: 'Weeks start on Monday' },
+        { kind: 'p13', name: '13 periods', hint: '13 periods of 4 weeks' },
+      ];
+      function lv(unit, level, column, isNew, also, sortBy) { return { unit: unit, level: level, column: column, isNew: !!isNew, alsoColumn: also || null, sortBy: sortBy || null }; }
+      var ISO = [lv('Year', 'Year', 'ISO Year', 1), lv('Week', 'Week', 'ISO Week', 1), lv('WeekOfYear', 'Week of year', 'ISO Week of Year', 1)];
+      var LADDERS = {
+        year: [lv('Year', 'Year', 'Year'), lv('Quarter', 'Quarter', 'Year Quarter', 1), lv('QuarterOfYear', 'Quarter of year', 'Quarter'), lv('Month', 'Month', 'Year Month'),
+               lv('MonthOfYear', 'Month of year', 'Month Name', 0, 'Month Number', 'Month Number'), lv('Date', 'Day', DATE), lv('DayOfMonth', 'Day of month', 'Day of Month', 1),
+               lv('DayOfWeek', 'Day of week', 'Day of Week', 0, 'Day of Week Number', 'Day of Week Number')],
+        fiscal: [lv('Year', 'Year', 'Fiscal Year', 1), lv('Quarter', 'Quarter', 'Fiscal Quarter', 1), lv('QuarterOfYear', 'Quarter of year', 'Fiscal Quarter of Year', 1),
+                 lv('Month', 'Month', 'Fiscal Month', 1), lv('MonthOfYear', 'Month of year', 'Fiscal Month of Year', 1), lv('Date', 'Day', DATE)],
+        retail: ISO.slice(0, 1).concat([lv('Quarter', 'Quarter', '445 Quarter', 1), lv('QuarterOfYear', 'Quarter of year', '445 Quarter of Year', 1), lv('Month', 'Month', '445 Period', 1),
+                 lv('MonthOfYear', 'Month of year', '445 Period of Year', 1)], ISO.slice(1), [lv('Date', 'Day', DATE), lv('DayOfWeek', 'Day of week', 'ISO Day of Week', 1)]),
+        iso: ISO.concat([lv('Date', 'Day', DATE), lv('DayOfWeek', 'Day of week', 'ISO Day of Week', 1)]),
+        p13: ISO.slice(0, 1).concat([lv('Month', 'Month', '13P Period', 1), lv('MonthOfYear', 'Month of year', '13P Period of Year', 1)], ISO.slice(1), [lv('Date', 'Day', DATE), lv('DayOfWeek', 'Day of week', 'ISO Day of Week', 1)]),
       };
-    }
+      var MEASURES = [
+        { measure: 'Sales YTD', fn: 'TOTALYTD ( [Total Sales], ', date: "'Date'[Date]", tail: ' )', kind: 'year' },
+        { measure: 'Sales Last Year', fn: 'CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( ', date: "'Date'[Date]", tail: ' ) )', kind: 'year' },
+        { measure: 'Sales Last Year YTD', fn: 'CALCULATE ( [Sales YTD], DATEADD ( ', date: "'Date'[Date]", tail: ', -1, YEAR ) )', kind: 'year' },
+        { measure: 'Sales MTD', fn: 'TOTALMTD ( [Total Sales], ', date: "'Date'[Date]", tail: ' )', kind: 'year' },
+        { measure: 'Sales Fiscal YTD', fn: 'TOTALYTD ( [Total Sales], ', date: "'Date'[Date]", tail: ', "6/30" )', kind: 'fiscal' },
+      ];
+      var TIME = [
+        { name: 'Total Sales QTD', dax: "TOTALQTD ( [Total Sales], 'Calendar year' )", kind: 'year' },
+        { name: 'Total Sales Last Year', dax: "CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( 'Calendar year' ) )", kind: 'year' },
+        { name: 'Total Sales vs Last Year %', dax: "VAR cur = [Total Sales] VAR py = CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( 'Calendar year' ) ) RETURN DIVIDE ( cur - py, py )", kind: 'year' },
+        { name: 'Total Sales Fiscal QTD', dax: "TOTALQTD ( [Total Sales], 'Fiscal year' )", kind: 'fiscal' },
+        { name: 'Total Sales WTD', dax: "TOTALWTD ( [Total Sales], 'ISO weeks' )", kind: 'iso' },
+        { name: 'Total Sales Same Week Last Year', dax: "CALCULATE ( [Total Sales], DATEADD ( 'ISO weeks', -1, YEAR ) )", kind: 'iso' },
+        { name: 'Total Sales Retail Period to Date', dax: "TOTALMTD ( [Total Sales], 'Retail 4-4-5' )", kind: 'retail' },
+      ];
+      var st = { done: scenario === 'done', existing: scenario === 'done' ? ['year', 'fiscal'] : [], added: [], moved: scenario === 'done', last: [] };
+      function monthName(m) { return ['January','February','March','April','May','June','July','August','September','October','November','December'][m - 1]; }
+      function mk(kind) { return KINDS.filter(function (k) { return k.kind === kind; })[0]; }
+      function plan(params) {
+        var kinds = params[1]; var fm = params[2] || 7; var chosen = params[3] || [];
+        var want = kinds && kinds.length ? kinds.slice() : ['year', 'fiscal'];
+        if (want.indexOf('year') < 0) want.unshift('year');
+        var cals = [];
+        KINDS.forEach(function (k) {
+          var has = st.existing.indexOf(k.kind) >= 0;
+          if (!has && want.indexOf(k.kind) < 0) return;
+          var levels = LADDERS[k.kind].map(function (l) { return Object.assign({}, l); });
+          chosen.forEach(function (c) {
+            if (c.calendar !== k.kind) return;
+            var i = levels.findIndex(function (l) { return l.unit === c.unit; });
+            if (i < 0) return;
+            if (!c.column) levels.splice(i, 1); else { levels[i].column = c.column; levels[i].isNew = false; levels[i].alsoColumn = null; levels[i].sortBy = null; }
+          });
+          if (has) levels = levels.map(function (l) { return Object.assign({}, l, { isNew: false }); });
+          cals.push({ kind: k.kind, name: k.name, hint: k.kind === 'fiscal' ? 'Starts in ' + monthName(fm) : k.hint, levels: levels, other: k.kind === 'year' ? ['Is Working Day', 'Holiday Name'] : [], exists: has });
+        });
+        var fiscalOn = cals.some(function (c) { return c.kind === 'fiscal'; });
+        var newCols = [];
+        cals.filter(function (c) { return !c.exists; }).forEach(function (c) { c.levels.forEach(function (l) { if (l.isNew && newCols.indexOf(l.column) < 0) newCols.push(l.column); }); });
+        if (scenario === 'none' && !st.done) newCols.unshift('Date');
+        var moves = st.done ? [] : MEASURES.filter(function (m) { return m.kind !== 'fiscal' || fiscalOn; }).map(function (m) {
+          var cal = mk(m.kind).name; var before = m.fn + m.date + m.tail;
+          var after = m.fn + "'" + cal + "'" + m.tail.replace(', "6/30"', '');
+          return { measure: m.measure, table: 'Sales', ref: 'measure:Sales/' + m.measure, before: before, after: after, kind: m.kind, calendar: cal };
+        });
+        var have = cals.map(function (c) { return c.kind; });
+        var time = TIME.filter(function (t) { return have.indexOf(t.kind) >= 0 && st.added.indexOf(t.name) < 0 && (t.kind !== 'iso' || true); })
+          .map(function (t) { return { name: t.name, table: 'Sales', dax: t.dax, kind: t.kind, calendar: mk(t.kind).name, base: 'Total Sales' }; });
+        return {
+          state: scenario === 'live' ? 'live' : scenario === 'unavailable' ? 'unavailable' : st.done ? 'set-up' : scenario === 'none' ? 'no-date-table' : 'ready',
+          note: scenario === 'live' ? 'This model reads another Power BI model live, and Power BI does not allow calendars on a live connection. Set them up on the model it reads from.'
+            : scenario === 'unavailable' ? 'This model has no date column, so there is nothing to build a Date table from. Add a date column at the source first.' : null,
+          compatibilityLevel: st.done ? 1701 : 1604, willRaiseLevel: !st.done, dateTable: DATE, dateColumn: DATE, otherDateTables: [],
+          dateSource: scenario === 'none' ? 'Sales[Order Date]' : null,
+          choices: KINDS.map(function (k) { var ex = st.existing.indexOf(k.kind) >= 0; return { kind: k.kind, name: k.name, short: k.kind === 'fiscal' ? 'Fiscal, ' + monthName(fm) : k.name, hint: k.kind === 'fiscal' ? 'Starts in ' + monthName(fm) : k.hint,
+            on: ex || want.indexOf(k.kind) >= 0, locked: k.kind === 'year' && !ex, exists: ex }; }),
+          calendars: cals, newColumns: newCols, fiscalStartMonth: fm,
+          fiscalClue: fiscalOn && !st.done ? 'Your instructions say the fiscal year starts in July.' : null,
+          moves: moves, stays: st.done ? [] : [{ measure: 'Sales Rolling 12M', why: 'A rolling window works the same either way.' }], timeMeasures: time,
+        };
+      }
+      RESPONSES.proposeCalendar = function (params) { return plan(params || []); };
+      RESPONSES.setupCalendars = function (params) {
+        var pr = plan(params || []); var only = params && params[1] && params[1].length === 1 && st.done;
+        var made = pr.calendars.filter(function (c) { return !c.exists; });
+        made.forEach(function (c) { st.existing.push(c.kind); });
+        st.last.push(only ? 'add' : 'setup'); st.done = true;
+        if (!only) st.moved = true;
+        return { revision: 20 + st.last.length, dateTable: DATE, createdTable: scenario === 'none', fromLevel: 1604, toLevel: 1701, calendars: made.map(function (c) { return c.name; }),
+          columnsAdded: pr.newColumns, moved: only ? [] : pr.moves, stays: pr.stays,
+          numberCheck: { status: 'not-checked', reason: 'No live model is open, so the numbers were not compared.', rows: [] }, note: null };
+      };
+      RESPONSES.addTimeMeasures = function (params) {
+        var names = (params && params[0]) || TIME.map(function (t) { return t.name; });
+        names.forEach(function (n) { st.added.push(n); }); st.last.push('measures');
+        return { revision: 30, created: names.map(function (n) { return { ref: 'measure:Sales/' + n, name: n, expression: '' }; }), skipped: [], note: null };
+      };
+      var baseUndo = RESPONSES.undo;
+      RESPONSES.undo = function (params) {
+        var last = st.last.pop();
+        if (last === 'measures') st.added = [];
+        else if (last === 'add') st.existing = st.existing.filter(function (k) { return k === 'year' || k === 'fiscal'; });
+        else if (last === 'setup') { st.done = false; st.existing = []; st.added = []; }
+        else if (typeof baseUndo === 'function') return baseUndo(params);
+        else return baseUndo || { canUndo: false, canRedo: true };
+        return { canUndo: st.last.length > 0, canRedo: true, atCheckpoint: false, steps: st.last.length };
+      };
+    })();
 
     // ?perm=loading → the three permissions reads never answer (renders the honest loading states).
     // ?perm=error   → they FAIL (renders the error + retry states). Uses the mock sentinels the
@@ -4276,6 +4374,9 @@
       return {
         postMessage: function (msg) {
           HOST_MESSAGES.push(msg);
+          if (msg && msg.type === 'studioReady') {
+            setTimeout(function () { window.dispatchEvent(new MessageEvent('message', { data: { type: 'engineState', connected: !engineDown } })); }, 0);
+          }
           if (msg && msg.type === 'pro') { proHost(msg); return; }
           if (msg && msg.type === 'studioReady' && coldNav) {
             const colon = coldNav.indexOf(':');

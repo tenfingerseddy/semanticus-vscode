@@ -329,7 +329,10 @@ namespace Semanticus.Engine
             if (rec == null) return null;   // signed-out profile — needs an interactive re-sign (human-only)
             // disableInteractive (agent): the pinned record acquires silently; DisableAutomaticAuthentication guarantees a
             // stale cache throws AuthenticationRequiredException rather than popping a prompt on the user's machine.
-            var cred = BuildCredentialWith(e.Family, (e.TenantId ?? "").Trim().ToLowerInvariant(), rec, disableInteractive);
+            // A profile saved with no tenant pins no tenant (null, so the record's own tenant is used). An empty string is
+            // refused by Azure.Identity as an invalid tenant id, which made a tenantless saved account unusable (si2).
+            var tenant = string.IsNullOrWhiteSpace(e.TenantId) ? null : e.TenantId.Trim().ToLowerInvariant();
+            var cred = BuildCredentialWith(e.Family, tenant, rec, disableInteractive);
             return new PreparedCredential { Credential = cred, ResolvedRecord = rec };
         }
 

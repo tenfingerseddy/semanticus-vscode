@@ -280,11 +280,14 @@ namespace Semanticus.Tests
             return seen;
         }
 
-        protected static Task<Dictionary<string, DecisionPointInfo>> ReadAllAfterRestartAsync(World w, Semanticus.Engine.Entitlement.IEntitlement tier = null)
+        protected static async Task<Dictionary<string, DecisionPointInfo>> ReadAllAfterRestartAsync(World w, Semanticus.Engine.Entitlement.IEntitlement tier = null)
         {
-            var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, tier ?? TestEntitlements.Pro, w.F.Workspace);
-            return ReadAllAsync(w, engine, sessions);
+            // The restarted engine is closed when the rows are read. An engine left open keeps its 30 second measure sweep (a timer) and
+            // writes the SEMANTICUS_HOME models/index.json of a live-origin model (the Cloud kinds) whenever it ticks, which can be inside a
+            // later test that has swapped SEMANTICUS_HOME (fx24 7b: the AssistantGate tests failed in one process with these classes).
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, tier ?? TestEntitlements.Pro, w.F.Workspace);
+            return await ReadAllAsync(w, engine, sessions);
         }
 
         protected static string Sha8(string s)

@@ -106,8 +106,8 @@ assert.match(app, /const featureGrant = useFeature\(gatedFeature\);/, 'one grant
 // and it needed a second grant of its own. Validation is free, so there is nothing left to gate and the
 // second grant is gone rather than left behind comparing against a constant.
 assert.doesNotMatch(app, /testsGrant/, 'the second grant went with the gate it protected');
-assert.match(app, /\{session\?\.sessionId && <div className=\{tab === 'tests' \|\| tab === 'evidence' \? 'h-full' : 'hidden'\}>/,
-  'the persistent Validation mount is shown for both of its tabs and gated by nothing');
+assert.match(app, /\{session\?\.sessionId && <div className=\{\(tab === 'tests' \|\| tab === 'evidence'\) && !engineStarting && !engineDown \? 'h-full' : 'hidden'\}><TestsView key=\{session\.sessionId\}/,
+  'the persistent Validation mount has no Pro gate; both tabs show when the engine is ready');
 assert.match(app, /featureGrant === 'denied' \? \(\s*<ProPreview tool=\{tab\}/,
   'a denied tool renders the preview instead of the real page');
 assert.match(app, /featureGrant === 'unknown' \? \(\s*<FeatureChecking/,

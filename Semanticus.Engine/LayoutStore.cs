@@ -268,13 +268,16 @@ namespace Semanticus.Engine
         private static string IgnoreTextFor(string existing, bool withSwitch)
         {
             if (existing == null)
-                existing = "engine.lock\nengine.json\nexperience.jsonl\nbaselines/vitals.jsonl\n" + HistoryIgnore + QuestionsIgnore
+                existing = "engine.lock\nengine.json\nexperience.jsonl\nbaselines/vitals.jsonl\n" + HistoryIgnore + QuestionsIgnore + LegacyProofIgnore + MeasureChecksIgnore + StandardCacheIgnore
                          + (withSwitch ? SwitchRunIgnore + "\n" + SwitchDesktopIgnore + "\n" : "");
             else
             {
                 var lines = existing.Split('\n').Select(l => l.Trim()).ToList();
                 var add = (lines.Contains(EditLedger.FileName) ? "" : HistoryIgnore)
                         + (lines.Contains(Query.DataQuestionStore.FileName) ? "" : QuestionsIgnore)
+                        + (lines.Contains(LegacyProofIgnore.TrimEnd('\n')) ? "" : LegacyProofIgnore)
+                        + (lines.Contains(MeasureChecksIgnore.Split('\n')[0]) ? "" : MeasureChecksIgnore)
+                        + (lines.Contains(StandardCacheIgnore.TrimEnd('\n')) ? "" : StandardCacheIgnore)
                         + (withSwitch && !lines.Contains(SwitchRunIgnore) ? SwitchRunIgnore + "\n" : "")
                         + (withSwitch && !lines.Contains(SwitchDesktopIgnore) ? SwitchDesktopIgnore + "\n" : "");
                 if (add.Length == 0) return null;
@@ -296,6 +299,16 @@ namespace Semanticus.Engine
         private const string QuestionsIgnore = Query.DataQuestionStore.FileName + "\n" + Query.DataQuestionStore.FileName + ".tmp\n"
                                               + Query.DataQuestionStore.LiveFolder + "/\n";
 
+        // A Checked proof is this machine's evidence of one check, so it never rides a model commit (1.7 threat check, DEC-0017).
+        private const string LegacyProofIgnore = "checked/\n";
+
+        // The saved check results of each measure (LocalEngine.MeasureCacheFile): their cells hold live model numbers, so like a
+        // Checked proof they stay on this machine and never ride a model commit.
+        private const string MeasureChecksIgnore = "measure-checks-*.json\nmeasure-checks-*.json.new\n";
+
+        // The last good copy of a shared standard fetched from a web address: a cache for offline use, rewritten on every fetch.
+        private const string StandardCacheIgnore = "standard-cache/\n";
+
         public static readonly string[] GitAddExcludes =
         {
             ":(exclude,glob)**/engine.lock",
@@ -308,6 +321,10 @@ namespace Semanticus.Engine
             ":(exclude,glob)**/.semanticus/data-questions.json",
             ":(exclude,glob)**/.semanticus/data-questions.json.tmp",
             ":(exclude,glob)**/.semanticus/data-questions/**",
+            ":(exclude,glob)**/.semanticus/checked/**",
+            ":(exclude,glob)**/.semanticus/measure-checks-*.json",
+            ":(exclude,glob)**/.semanticus/measure-checks-*.json.new",
+            ":(exclude,glob)**/.semanticus/standard-cache/**",
         };
 
         /// <summary>Copy the sidecar beside a save-as target so primers and workflows travel with the model.</summary>

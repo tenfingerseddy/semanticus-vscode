@@ -717,6 +717,7 @@ namespace Semanticus.Tests
             Add(advice + "the automatic date and time setting of a Power BI Desktop file)", "air:BP-AUTO-DATETIME");
             Add(advice + "calendars, which need compatibility level 1701 or later)", "air:CAL-MAPPING", "air:CAL-TI-NO-CALENDAR");
             Add(advice + "a Direct Lake model)", "air:CFG-PREP-MODE");
+            Add("a wrong-number hint on a formula pattern no fixture measure has (an average of ratios, a balance summed across dates, a fixed date in a filter); it asks the author to compare numbers and writes nothing", "air:AVG-OF-RATIO", "air:SEMI-ADDITIVE-SUM", "air:DAX-DATE-LITERAL");
             Add(advice + "the Copilot tooling format)", "air:DAC-COPILOT-TOOLING-FORMAT");
             Add(advice + "field parameter tables)", "air:DAC-FIELD-PARAM-COMPLEXITY");
             Add(advice + "a model Copilot cannot index, or a DirectQuery model)", "air:DAC-QNA-DISABLED", "air:DAC-QNA-STORAGE");

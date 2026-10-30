@@ -36,7 +36,7 @@ namespace Semanticus.Tests
             {
                 var undoBefore = await ComposerFrame.UndoStepsAsync(sm);
                 var seen = new List<ChangeNotification>();
-                Action<ChangeNotification> handler = n => seen.Add(n);
+                Action<ChangeNotification> handler = n => { if (n.IsCommit) seen.Add(n); };
                 sm.Bus.Changed += handler;
                 ComposedChangeResult r;
                 try { r = await engine.ApplyComposedChangeAsync(Filled(), "human"); }

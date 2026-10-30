@@ -138,7 +138,7 @@ namespace Semanticus.Tests
             using (engine)
             {
                 ChangeNotification heard = null;
-                sessions.Bus.Changed += n => heard = n;
+                sessions.Bus.Changed += n => { if (n.IsCommit) heard = n; };
                 var result = await engine.SetSynonymsAsync("measure:Sales/Total", new[] { "sales amount" }, null, "agent");
                 Assert.Equal("Your assistant added synonyms to Total.", heard.Words?.Sentence);
                 Assert.Equal(heard.Words.Sentence, result.Words.Sentence);
@@ -226,7 +226,7 @@ namespace Semanticus.Tests
             {
                 sessions.Bus.HumanClientAttached = () => true;
                 var heard = new List<ChangeNotification>();
-                sessions.Bus.Changed += heard.Add;
+                sessions.Bus.Changed += n => { if (n.IsCommit) heard.Add(n); };
                 var result = await engine.WriteWordsAsync(new[] {
                     new WordsWriteItem { ObjRef = "measure:Sales/Total", Synonyms = new[] { "sales amount" } },
                     new WordsWriteItem { ObjRef = "measure:Sales/Margin", Synonyms = new[] { "profit" } },
@@ -674,7 +674,7 @@ namespace Semanticus.Tests
                     .Select(r => new WordsWriteItem { ObjRef = r, Description = "The business meaning for this object." }).ToArray();
                 Assert.NotEmpty(authored);
                 var commits = new List<ChangeNotification>();
-                sessions.Bus.Changed += commits.Add;
+                sessions.Bus.Changed += n => { if (n.IsCommit) commits.Add(n); };
                 var written = await engine.WriteWordsAsync(authored, "agent");
                 Assert.Equal(authored.Length, written.Applied);
                 Assert.Empty(written.Rejected);
@@ -765,7 +765,7 @@ namespace Semanticus.Tests
                 });
                 sessions.Bus.HumanClientAttached = () => true;
                 var heard = new List<ChangeNotification>();
-                sessions.Bus.Changed += heard.Add;
+                sessions.Bus.Changed += n => { if (n.IsCommit) heard.Add(n); };
                 var result = await engine.WriteWordsAsync(Enumerable.Range(0, 50)
                     .Select(i => new WordsWriteItem { ObjRef = "measure:Sales/Fifty " + i, Synonyms = new[] { "fifty term " + i } }).ToArray(), "agent");
                 Assert.Equal(50, result.Applied);

@@ -4,7 +4,8 @@
 // named, ordered and turned into the connect the host already makes.
 
 export interface LocalInstance { port: number; title?: string; dataSource?: string }
-export interface FabricWorkspace { id: string; displayName: string; description?: string; type?: string; capacityId?: string }
+// accountProfileId and account come back only on a list read as a chosen account (another account, or a saved one by id).
+export interface FabricWorkspace { id: string; displayName: string; description?: string; type?: string; capacityId?: string; accountProfileId?: string | null; account?: string | null }
 export interface WorkspaceModel { id: string; displayName: string; description?: string; workspaceId?: string }
 
 /** One list the engine was asked for: still coming, answered, or refused with the engine's own sentence. */
@@ -62,6 +63,8 @@ export const restartFits = (reason?: string): boolean => !/^Another VS Code wind
 export interface WorkspaceChoice {
   endpoint: string; database: string; workspaceName: string; modelName: string;
   authMode: string; tenantId: string | null; label: string;
+  /** The saved account the list was read as, when the person chose one. Connect opens the model as the same account. */
+  accountProfileId?: string | null;
 }
 
 // The environment labels a workspace model can carry. The same values and words as the hub's list; "Local" is left
@@ -144,7 +147,7 @@ export function engineSentence(e: unknown): string {
   return text || 'It did not work, and no reason came back.';
 }
 
-export function workspaceChoice(w: FabricWorkspace, m: WorkspaceModel, label: string, authMode: string, tenant: string): WorkspaceChoice {
+export function workspaceChoice(w: FabricWorkspace, m: WorkspaceModel, label: string, authMode: string, tenant: string, accountProfileId: string | null = null): WorkspaceChoice {
   return {
     endpoint: workspaceEndpoint(w),
     database: m.displayName,
@@ -154,6 +157,7 @@ export function workspaceChoice(w: FabricWorkspace, m: WorkspaceModel, label: st
     // A browser sign-in picks its tenant itself; a tenant typed for an advanced attempt must not ride along hidden.
     tenantId: isAdvancedSignIn(authMode) ? (tenant.trim() || null) : null,
     label,
+    ...(accountProfileId ? { accountProfileId } : {}),
   };
 }
 
@@ -166,6 +170,8 @@ export const COPY = {
   desktopAddress: 'Address',
   desktopAddressHint: 'For a copy this list cannot see, like localhost:51000.',
   workspaceTitle: 'Workspace model',
+  anotherAccount: 'Use another account',
+  anotherAccountAsk: 'Pick the account in the browser window',
   workspaceLooking: 'Listing your workspaces...',
   signInWaiting: 'Waiting for the sign-in window...',
   signInUnfinished: 'Sign-in did not finish.',

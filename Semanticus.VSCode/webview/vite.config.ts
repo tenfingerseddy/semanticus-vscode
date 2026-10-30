@@ -24,7 +24,7 @@ const escapeRawControlBytes = (code: string) => {
   return escaped;
 };
 
-const printableBundleSource = (): Plugin => ({
+export const printableBundleSource = (): Plugin => ({
   name: 'printable-bundle-source',
   generateBundle(_options, bundle) {
     for (const artifact of Object.values(bundle)) {

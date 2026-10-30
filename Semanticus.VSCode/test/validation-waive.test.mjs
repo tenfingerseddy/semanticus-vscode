@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { makeLoader, req } from './helpers/webview-load.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
@@ -44,10 +45,37 @@ assert.match(page, /action\('Waive', \(\) => \{ props\.onWaive\(waiveNote\)/, 'W
 assert.doesNotMatch(page, /disabled=\{[^}]*waiveNote/, 'the note never gates the button');
 assert.match(page, /placeholder="Note \(optional\)"/);
 assert.match(page, /action\('Undo waive', props\.onUnwaive/);
-assert.match(page, /rpc\('waiveFinding', CHECK_WAIVER_SYSTEM, def\.id, null, note\.trim\(\) \|\| null, 'human'\)/, 'the same door the assistant uses');
-assert.match(page, /rpc\('unwaiveFinding', CHECK_WAIVER_SYSTEM, def\.id, null, 'human'\)/);
+assert.match(page, /rpc\('waiveFinding', CHECK_WAIVER_SYSTEM, id, null, note\.trim\(\) \|\| null, 'human'\)/, 'the same door the assistant uses');
+assert.match(page, /rpc\('unwaiveFinding', CHECK_WAIVER_SYSTEM, id, null, 'human'\)/);
 assert.match(page, /Accepted difference\./, 'the opened check names it');
-assert.match(page, /data-testid="v-accepted"/, 'accepted checks stay on the page, not folded into the passes');
+const checkedPage = read('webview/src/checks-page.tsx');
+assert.match(checkedPage, /definitions\.map\(d => row\(`number:\$\{d\.id\}`/, 'every saved number stays visible, including accepted differences');
+// Render the current list too: accepted differences, passes and disabled numbers all keep their rows.
+const React = req('react');
+const { renderToStaticMarkup } = req('react-dom/server');
+const { ChecksPage } = makeLoader({ './bridge': {
+  rpc: async () => [], onDidChange: () => () => {}, runHostCommand() {},
+} })('checks-page.tsx');
+const view = {
+  measures: [], summary: { total: 0, numbersDiffer: 1, keyProblems: 0, tableProblems: 0 },
+  numbers: { definitions: [
+    { id: 'accepted', title: 'Accepted number', enabled: true, kind: 'measureValue' },
+    { id: 'pass', title: 'Passing number', enabled: true, kind: 'measureValue' },
+    { id: 'off', title: 'Disabled number', enabled: false, kind: 'measureValue' },
+  ] },
+  results: { accepted: { verdict: 'Fail', expected: '1', actual: '2', difference: 1, waiver: { by: 'human' } },
+    pass: { verdict: 'Pass', expected: '1', actual: '1' } },
+  tables: { rows: [] },
+};
+const renderedIds = [];
+const html = renderToStaticMarkup(React.createElement(ChecksPage, {
+  page: view, onRun() {}, onAdd() {}, onConnect() {}, onChanged() {},
+  renderNumber: id => { renderedIds.push(id); return null; },
+}));
+// d1 4.2: a number row is its name and a glyph; its result moved into the row detail, which opens on a click.
+assert.deepEqual(renderedIds, [], 'the detail is behind a click');
+for (const id of ['accepted', 'off', 'pass'])
+  assert.ok(html.includes(`data-testid="checks-row-number:${id}"`), `the saved number ${id} remains in the rendered list`);
 assert.doesNotMatch(page, /CHECK_WAIVER_LABELS/, 'accepting a difference is no model change: the page no longer reads model labels for it');
 assert.match(page, /event\.kind === 'check_waiver'\) void syncWaivers\(\)/, 'the page reads the waivers again when the engine says one changed (the assistant too)');
 assert.match(page, /It stays accepted until you press Undo waive\./, 'the page says Undo waive is the one way back');

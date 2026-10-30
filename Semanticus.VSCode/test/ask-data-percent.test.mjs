@@ -7,17 +7,12 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
+import { makeLoader } from './helpers/webview-load.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const webview = join(root, 'webview');
 const src = (f) => readFileSync(join(webview, 'src', f), 'utf8').replace(/\r\n/g, '\n');
-const ts = createRequire(join(webview, 'package.json'))('typescript');
-
-const js = ts.transpileModule(src('gridformat.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-const mod = { exports: {} };
-new Function('module', 'exports', js)(mod, mod.exports);
-const { percentOf } = mod.exports;
+const { percentOf, dateText } = makeLoader()('./gridformat.ts');
 
 test('a percent format shows the number as a percent, with the decimals the format asks for', () => {
   assert.equal(percentOf(0.0068119056469534, '0.0%;-0.0%;0.0%'), '0.7%');
@@ -43,8 +38,6 @@ test('the grid reads the format from the column, and the page hands it the answe
 });
 
 // Hero run 4: a date came out as "2025-01-01T00:00:00" in the Ask answer and in Queries.
-const { dateText } = mod.exports;
-
 test('a date shows in the column\'s own format, or as a plain short date when it has none', () => {
   assert.equal(dateText('2025-01-01T00:00:00', 'dd/MM/yyyy'), '01/01/2025');
   assert.equal(dateText('2025-03-07T00:00:00', 'd MMM yyyy'), '7 Mar 2025');

@@ -44,16 +44,16 @@ assert.doesNotMatch(app, /label: 'Analyse'/, 'the fifth area is Review, not Anal
 // Pending changes and Model Spec left this list on 23 September. They are not gone: Kane folded all three
 // of the Plan area's pages into one ("No point in three similar pages, it makes it very confusing for
 // users"), so `optimize` and `spec` are routes that land on the Plan page with the matching part open,
-// the way `evidence` lands on Validation. A route that is not a strip button is not a strip tool.
+// the way `evidence` lands on Checks. A route that is not a strip button is not a strip tool.
 const stripTools = [...groupsBlock.matchAll(/\{ id: '([a-z]+)', label: '([^']+)' \}/g)].map((m) => [m[1], m[2]]);
 assert.deepEqual(stripTools, [
   ['plan', 'Plan'],
   ['data', 'Data'], ['query', 'Query'], ['diagram', 'Diagram'], ['lineage', 'Lineage'], ['stats', 'Size'],
   ['instructions', 'AI instructions'], ['advmodels', 'Advanced modelling'], ['mcode', 'Power Query'],
-  ['bpa', 'Model quality (BPA)'], ['readiness', 'AI readiness'], ['copilottest', 'Copilot test'], ['tests', 'Validation'], ['docs', 'Docs'],
+  ['bpa', 'Model quality (BPA)'], ['readiness', 'AI readiness'], ['copilottest', 'Copilot test'], ['tests', 'Checks'], ['docs', 'Docs'], ['standard', 'Your standard'],
   ['deploy', 'Published'],
   ['workflows', 'Workflows'],
-], 'the strip is sixteen tools in six areas, each by the name its own tab has. Query joined Explore in 1.6 and replaced Ask your data and Queries. Copilot test joined Review on 15 October. Model notes became the Notes tab of AI instructions, and Pending changes and Model Spec folded into Plan, on 23 September; the Overview and Edit History retired into the Plan in slice 11.');
+], 'the strip is seventeen tools in six areas, each by the name its own tab has. Query joined Explore in 1.6 and replaced Ask your data and Queries. Copilot test joined Review on 15 October. Your standard joined Review last in 1.7. Model notes became the Notes tab of AI instructions, and Pending changes and Model Spec folded into Plan, on 23 September; the Overview and Edit History retired into the Plan in slice 11.');
 assert.match(app, /type StudioTab = ToolId/, 'the shell must use the typed route tool ids');
 assert.match(app, /DESTINATION_OF_TOOL/, 'every stable tool id must map to an area');
 assert.match(app, /const \[route, setRoute\] = useState<Route>/, 'navigation must be held as one typed route');
@@ -90,7 +90,7 @@ assert.doesNotMatch(route, /dataagent: \{ tool:/, 'Data Agent keeps its own rout
 assert.match(app, /tab === 'deploy' \|\| tab === 'dataagent' \?[\s\S]{0,260}<DeployView key="deploy" seed=\{compareSeed\} \/>/, 'the Data Agent route lands on the Publish page, Changes tab (the Data Agent screen is hidden for now)');
 assert.match(app, /consumeRouteSeed/, 'explicit seeds must be acknowledged once instead of replaying on return');
 assert.match(context, /data-testid="connections-editing"/);
-assert.match(context, />Tests:</);
+assert.match(context, />Queries run on:</);
 assert.match(context, />Publish:</);
 assert.doesNotMatch(context, />Reference</, 'the bottom bar no longer carries a Reference slot');
 assert.match(bridge, /treeSelectionListeners/, 'native selection context requires a dedicated bridge event');
@@ -100,7 +100,7 @@ assert.match(extension, /type: 'treeSelection'[\s\S]*sessionId: currentSessionId
 assert.match(extension, /targetSessionId !== currentSessionId[\s\S]*editDaxCmd\(node\)/, 'Model home Edit formula must relay its exact session-scoped object to the native editor');
 assert.match(app, /data-testid="publish-button"[^>]*>Publish</, 'the header must carry the one Publish control');
 assert.doesNotMatch(deploy, /data-testid="publish-button"/, 'the Published page must not repeat the header Publish button');
-assert.match(tests, /onOpenReports=\{\(\) => onPage\?\.\('reports'\)\}/, 'Validation A: Kept reports is still the evidence route, so an old link still lands on it');
+assert.match(tests, /onOpenReports=\{\(\) => onPage\?\.\('reports'\)\}/, 'Checks A: Kept reports is still the evidence route, so an old link still lands on it');
 assert.doesNotMatch(tests, /<InterviewCard /, '1.2.0: the Model Interview evidence section left the Tests page');
 assert.match(connection, /Choose test model/);
 

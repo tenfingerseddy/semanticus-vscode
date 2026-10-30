@@ -22,6 +22,7 @@ import { analyzeDax, collectVars, extractDaxSymbols, varDefinition, type DaxInde
 import { formatDax } from './daxFormat';
 import { buildDaxHeader, splitDaxHeader, reKeyRef, uniqueName, checkDaxHeader, decideDaxSave, decideRenameRecovery, guardModelMatch, identityToken, pickOpenDaxHref, shouldCloseDaxTab, shouldApplyDaxBuffer, MODEL_SCOPED_KINDS, type PendingRenameRecord } from './daxHeader';
 import { resolveEditDaxNode } from './editDaxTarget';
+import { acceptStates, stateMarks, treeRowItem, type CheckCache, type ScoreMatch } from './marksModel';
 import { FencedMessageWriter, withModelIdentity, withPress, personAction, rebindAction, outsideAnyAction, insideAnyAction, actionModelIdentity, fenceIdentity } from './modelFence';
 import {
     BillingError,
@@ -125,6 +126,7 @@ import {
 // extension synthesizes the folder nodes (kind 'dfolder') client-side so agents' list_objects is unchanged.
 // model: the identity of the model this node was fetched for (the host's, when listTree was SENT). A context menu or a keypress on a node names it, so an action started on a node
 // of A still names A after B opens (modelFence.ts personAction). Folder nodes take their children's.
+import { checksCountView, type ChecksCount } from './checksCount';
 interface TreeNode { ref: string; name: string; kind: string; hasChildren: boolean; displayFolder?: string; model?: string; }
 interface ModelRef { kind: string; path?: string; gitRef?: string; endpoint?: string; database?: string; authMode?: string; tenantId?: string; label?: string; }
 interface ChangeDelta { kind: string; ref: string; props?: string[]; before?: string | null; after?: string | null; }
@@ -138,7 +140,8 @@ let saidMayMoveTree = false;
 // Mirrors Semanticus.Engine SessionChangeNotification: a different model became the open one through ANOTHER client
 // (the engine never echoes a swap to the connection that asked for it, which refreshes from its own answer).
 interface SessionChangeNotification { sessionId: string; revision: number; modelName?: string; source?: string; tables: number; measures: number; liveConnected?: boolean; reason: string; }
-interface OpenResult { sessionId: string; revision: number; modelName: string; tables: number; measures: number; source: string; liveConnected?: boolean; account?: string; note?: string; }
+interface SavedCopyOffer { path: string; name: string; extra: number; names: string[]; }
+interface OpenResult { sessionId: string; revision: number; modelName: string; tables: number; measures: number; source: string; liveConnected?: boolean; account?: string; note?: string; savedCopy?: SavedCopyOffer; }
 interface SessionInfo { sessionId?: string; revision: number; modelName?: string; source?: string; hasUnsavedChanges?: boolean; hasUnsavedEdits?: boolean; keepsUnsavedWork?: boolean; diskDiverged?: boolean; keptCopyPath?: string | null; tables?: number; measures?: number; liveBound?: boolean; liveEndpoint?: string; liveDatabase?: string; liveConnected?: boolean; liveKind?: string; liveDataSource?: string; currentAccount?: string; currentTenant?: string; modelIdentity?: string; modelLabel?: string; }
 interface ModelConnectionRecord { id: string; kind: string; endpoint: string; database?: string; modelName?: string; tenantId?: string; authMode?: string; label?: string; workingFolder?: string; publishConnectionId?: string; lastUsedUtc?: string; lastAccount?: string; }
 // One target's silently-probed account (mirrors Engine ConnectionAccountProbe). `account` is who the NEXT open signs in
@@ -188,6 +191,7 @@ let conn: MessageConnection | undefined;
 /// Why the last start of the engine failed, in a sentence a person can read, while there is no engine. Pages show it
 /// instead of a bare "Engine not connected." (Kane, 17 Oct: a fresh person met that line with no way on). Cleared on a connect.
 let engineFailureReason: string | undefined;
+let engineStarting = true;
 let connectionEpoch = 0;                              // invalidates a connect attempt when restart/shutdown overtakes it
 let connectInFlight: { epoch: number; promise: Promise<void> } | undefined;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -204,6 +208,7 @@ let engineOwnedByThisWindow = false;
 const switchNotices = new SwitchNotices();
 let outdatedDecision: { connection: MessageConnection; action: Promise<OutdatedAction> } | undefined;
 let studioPanel: vscode.WebviewPanel | undefined;   // at most one Studio panel (openStudio reveals the existing one)
+let studioOpening: Promise<void> | undefined;
 let connectionsPanel: vscode.WebviewPanel | undefined;   // the standalone Connections hub panel, hosted when Studio is closed
 
 // Broadcast a host→webview NOTIFICATION to every live panel that hosts a connection surface — the Studio panel AND the
@@ -320,7 +325,7 @@ function pageScoped(handler: (msg: any) => Promise<void>): (msg: any) => Promise
         await runPersonAction([], () => handler(msg), msg?.modelIdentity);
     };
 }
-let pendingNav: { tab: string; target?: string; addTables?: string[]; sessionId?: string } | undefined;  // a navigation queued while the panel was still mounting
+let pendingNav: { tab: string; target?: string; addTables?: string[]; sessionId?: string; prompt?: string; run?: boolean } | undefined;  // a navigation queued while the panel was still mounting
 let pendingOpenConnections: string | null = null;   // the hub section ('open'/'setup'/...) queued while the Studio panel was still mounting
 let dragTablesStash: string[] = [];                 // tables being dragged from the Model tree — handed to the Studio diagram on drop (the webview iframe can't read a native drag's DataTransfer, so it pulls them via the 'requestDropTables' relay)
 let tree: ModelTreeProvider;                          // module-scoped so every context-menu handler can refresh the tree
@@ -333,6 +338,33 @@ let extensionContext: vscode.ExtensionContext | undefined;   // the auto-open re
 let daxFs: DaxFileSystem;                             // module-scoped so connectEngine() can re-attach it on restart
 let status: vscode.StatusBarItem;                     // module-scoped so connectEngine()/restart can update it
 let healthStatus: vscode.StatusBarItem;               // the health chip (feature #4): what the LAST change did to model health — plain English, never a popup
+let checksStatus: vscode.StatusBarItem;
+let checksCountRead = 0;
+let checksCountReading = false;
+let checksCountAgain = false;
+let checksCountTimer: ReturnType<typeof setTimeout> | undefined;
+function refreshChecksCount(): void {
+    clearTimeout(checksCountTimer);
+    const read = ++checksCountRead;
+    const caller = conn;
+    const session = currentSessionId;
+    if (!caller || !session) { checksStatus?.hide(); tree?.setChecksCount(undefined); return; }
+    if (checksCountReading) { checksCountAgain = true; return; }
+    checksCountTimer = setTimeout(() => {
+        checksCountReading = true;
+        void caller.sendRequest<{ sessionId: string; summary: ChecksCount }>('getChecksPage').then(page => {
+            if (read !== checksCountRead || caller !== conn || page.sessionId !== currentSessionId) return;
+            const view = checksCountView(page.summary);
+            tree.setChecksCount(view);
+            checksStatus.text = `${view.attention ? '$(error)' : '$(check)'} ${view.text}`;
+            checksStatus.tooltip = `${view.text}. Open Review > Checks.`;
+            checksStatus.command = { command: view.command, title: 'Open Checks', arguments: view.args };
+            checksStatus.color = view.attention ? new vscode.ThemeColor('errorForeground') : undefined;
+            checksStatus.show();
+        }).catch(() => { if (read === checksCountRead) { checksStatus.hide(); tree.setChecksCount(undefined); } })
+            .finally(() => { checksCountReading = false; if (checksCountAgain) { checksCountAgain = false; refreshChecksCount(); } });
+    }, 80);
+}
 let publishStatus: vscode.StatusBarItem;              // Publish chip: visible only while a live model is open. Click opens Ship > Deploy with the confirm card.
 let draftUndoStatus: vscode.StatusBarItem;           // "Undo: ran N steps from your words" after a composer draft ran (lane author-gaps, B10); cleared by the next change
 let draftUndoChip: UndoChip | null = null;
@@ -361,13 +393,19 @@ export async function activate(context: vscode.ExtensionContext) {
     // clears records with NO open tab AND no open document — the fail-closed direction is to keep, never to over-prune.
     setTimeout(() => { void sweepClosedPendingRenames(); }, 5000);
     tree = new ModelTreeProvider();
-    propGrid = new PropertyGridProvider(() => conn, context.extensionUri);
+    propGrid = new PropertyGridProvider(() => conn, context.extensionUri,
+        (where, ref) => { if (where === 'connections') void openConnectionsManager('sqlsources');
+            // Turn on (Pro advice off for this model, fx29 gap 1): Studio's Pro page with the permission card up.
+            else if (where === 'advice') navigateStudio(context, 'pro', 'advice');
+            else navigateStudio(context, 'tests', ref); });
     extensionContext = context;
     daxFs = new DaxFileSystem(() => conn);
     status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    setStatusPlain('$(database) Semanticus: connecting…');
+    setStatusPlain('$(sync~spin) Starting Semanticus...');
     status.command = 'semanticusModel.focus';
     status.show();
+    checksStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
+    context.subscriptions.push(checksStatus, { dispose: () => { clearTimeout(checksCountTimer); checksCountAgain = false; checksCountRead++; } });
 
     // Health chip (feature #4): sits right of the rev text; shown only when the engine reports the last change
     // moved model health (Pro + over threshold) — so free tier and quiet edits keep the bar exactly as before.
@@ -438,6 +476,7 @@ export async function activate(context: vscode.ExtensionContext) {
             async deserializeWebviewPanel(panel: vscode.WebviewPanel) { adoptStudioPanel(panel, context); },
         }),
         vscode.workspace.registerFileSystemProvider(DAX_SCHEME, daxFs, { isCaseSensitive: true }),
+        installDaxSave(),
         // The close question: while the model has unsaved edits one small tab stays modified, so closing the window asks Save or Don't Save.
         vscode.workspace.registerFileSystemProvider(GUARD_SCHEME, unsavedGuard, { isCaseSensitive: true }),
         vscode.window.registerCustomEditorProvider(GUARD_VIEW_TYPE, unsavedGuard, { supportsMultipleEditorsPerDocument: false }),
@@ -445,6 +484,7 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerSignatureHelpProvider('dax', daxSignatureProvider, '(', ','),
         vscode.languages.registerDocumentDropEditProvider('dax', daxDropProvider),
         vscode.languages.registerHoverProvider('dax', daxHoverProvider),
+        // Equal language scores use the last registration first, so the card precedes DAX help.
         vscode.languages.registerDefinitionProvider('dax', daxDefinitionProvider),
         vscode.languages.registerDocumentSymbolProvider('dax', daxDocumentSymbolProvider),
         vscode.languages.registerDocumentFormattingEditProvider('dax', daxFormatProvider),
@@ -467,7 +507,7 @@ export async function activate(context: vscode.ExtensionContext) {
         registerPersonCommand('semanticus.refresh', () => tree.refresh()),
         registerPersonCommand('semanticus.findInModel', () => findInModelCmd(context)),
         registerPersonCommand('semanticus.editDax', (n?: TreeNode) => editDaxCmd(n)),
-        registerPersonCommand('semanticus.selectTreeObject', (n: TreeNode) => selectTreeObject(n)),
+        registerPersonCommand('semanticus.selectTreeObject', (n: TreeNode, mark?: string) => selectTreeObject(n, mark)),
         // The tree's primary Open Model now opens the shared floating hub on Open a model (Kane's ratified reversal);
         // the old keyboard-first native picker survives as a separately named Quick Open Model. Manage Connections opens
         // the hub on Current setup (also a gear on the tree title bar).
@@ -484,6 +524,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // webview computes the seed from its live connection state — 'seed' is the pseudo-target it recognises).
         registerPersonCommand('semanticus.openCompareSeeded', () => navigateStudio(context, 'compare', 'seed')),
         registerPersonCommand('semanticus.save', () => saveCommand()),
+        registerPersonCommand('semanticus.saveDax', () => saveDaxDocument(vscode.window.activeTextEditor?.document)),
         registerPersonCommand('semanticus.saveToLive', () => saveToLiveCommand()),
         registerPersonCommand('semanticus.applyPropertyField', () => propGrid.applyFocused()),
         registerPersonCommand('semanticus.restartEngine', () => restartEngineCmd(context)),
@@ -557,7 +598,7 @@ export async function activate(context: vscode.ExtensionContext) {
         // Studio jumps: right-click a tree object and land on the Studio tab that owns it (a key discoverability win —
         // the tree is the index, Studio is the workbench). All route through navigateStudio (opens + flushes nav).
         registerPersonCommand('semanticus.showLineage', (n: TreeNode) => { if (n?.ref) navigateStudio(context, 'lineage', n.ref); }),
-        registerPersonCommand('semanticus.tryCalculation', (n?: TreeNode) => { const node = n ?? treeView?.selection[0]; if (node?.ref) navigateStudio(context, 'query', node.ref); }),
+        registerPersonCommand('semanticus.tryCalculation', (n?: TreeNode) => { const node = n ?? treeView?.selection[0]; if (node?.ref) navigateStudio(context, 'query', node.ref, undefined, true); }),
         registerPersonCommand('semanticus.addTestForMeasure', (n?: TreeNode) => { const node = n ?? treeView?.selection[0]; if (node?.ref) navigateStudio(context, 'tests', node.ref); }),
         registerPersonCommand('semanticus.editMCode', (n: TreeNode) => {
             try {
@@ -609,7 +650,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     { label: 'AI instructions', key: 'instructions' }, { label: 'AI instructions: Notes', key: 'knowledge' },
                     { label: 'Advanced modelling', key: 'advmodels' }, { label: 'Power Query', key: 'mcode' },
                     { label: 'Model quality (BPA)', key: 'bpa' }, { label: 'AI readiness', key: 'readiness' }, { label: 'Copilot test', key: 'copilottest' },
-                    { label: 'Validation', key: 'tests' }, { label: 'Validation: Reports', key: 'evidence' }, { label: 'Docs', key: 'docs' },
+                    { label: 'Checks', key: 'tests' }, { label: 'Checks: Reports', key: 'evidence' }, { label: 'Docs', key: 'docs' }, { label: 'Your standard', key: 'standard' },
                     { label: 'Published', key: 'deploy' },
                     { label: 'Assistant permissions', key: 'permissions' },
                 ];
@@ -1637,7 +1678,7 @@ function scheduleEngineReconnect(context: vscode.ExtensionContext): void {
     reconnectTimer = setTimeout(() => {
         reconnectTimer = undefined;
         if (deactivating) return;
-        setStatusPlain('$(database) Semanticus: reconnecting…');
+        setStatusPlain('$(sync~spin) Starting Semanticus...');
         void connectEngine(context, true);
     }, waitMs);
 }
@@ -1645,6 +1686,9 @@ function scheduleEngineReconnect(context: vscode.ExtensionContext): void {
 async function connectEngine(context: vscode.ExtensionContext, quiet = false, restarted = false): Promise<void> {
     const epoch = connectionEpoch;
     if (connectInFlight?.epoch === epoch) return connectInFlight.promise;
+    engineStarting = true;
+    setStatusPlain('$(sync~spin) Starting Semanticus...');
+    postToPanels({ type: 'engineState', connected: false, starting: true });
     const promise = connectEngineAttempt(context, quiet, epoch, restarted);
     connectInFlight = { epoch, promise };
     try { await promise; }
@@ -1742,7 +1786,7 @@ async function saveOlderBuildThenSwitch(context: vscode.ExtensionContext): Promi
         connectionEpoch++;
         if (conn === door) conn = undefined;
         try { door.dispose(); } catch { /* already closed */ }
-        postToPanels({ type: 'engineState', connected: false });
+        postToPanels({ type: 'engineState', connected: false, starting: true });
         await connectEngine(context, false, true);
     }, undefined, OLDER_BUILD_SAVE_COPY);
     out.appendLine(outcome.line);
@@ -1895,6 +1939,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         connected.onNotification('model/didChange', (n: ChangeNotification) => {
             out.appendLine(`didChange rev=${n.revision} origin=${n.origin} label=${n.label ?? ''}`);
             noteHandChanges(n);
+            refreshChecksCount();
             tree.refresh();
             if (!n.replay && (n.by ?? (n.origin === 'agent' ? 'assistant' : n.origin)) === 'assistant') {
                 const refs = (n.deltas ?? []).filter((d) => d.kind !== 'remove').map((d) => d.ref);
@@ -1903,7 +1948,8 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
             }
             scheduleDaxSymbolRebuild();   // keep DAX IntelliSense in sync with renames/creates/deletes
             propGrid.followRename(n.deltas ?? []);   // a renamed selected object keeps its place on the grid (UAT 18 Oct N20)
-            void propGrid.refresh();   // live-update the property grid when the selected object changes (incl. agent edits)
+            // A verdict changes only the mark. Replacing the editors here interrupts typing.
+            void propGrid.refresh();
             for (const d of n.deltas ?? []) {
                 daxFs.signalChanged(d.ref, n.origin !== 'human' || !!n.replay, { sessionId: n.sessionId, revision: n.revision });
                 if (d.kind === 'remove') void closeDaxTabsForRef(d.ref);
@@ -1951,6 +1997,12 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         });
         // The change plan broadcasts separately so the Studio Optimize tab updates live as the plan
         // is proposed/filled/applied (by the human OR the user's Claude on the same session).
+        // The engine's check state (checks/didChange): the tree, the Studio page and Properties render it; each keeps the newest version.
+        connected.onNotification('checks/didChange', (v: unknown) => {
+            tree.acceptChecks(v);
+            postToPanels({ type: 'checkState', payload: v });
+            propGrid?.checkState(v);
+        });
         connected.onNotification('plan/didChange', (v: unknown) => {
             try { studioPanel?.webview.postMessage({ type: 'planDidChange', payload: v }); } catch { /* disposing */ }
         });
@@ -2015,6 +2067,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
             // too), so relaying them keeps the Connections hub AND the Compare picker current. Other kinds
             // (run_dax/…) don't touch connection state — skip them.
             const kind = (e as { kind?: string } | undefined)?.kind;
+            if (kind === 'checks_page_changed' || kind === 'run_tests' || kind === 'save_test' || kind === 'delete_test' || kind === 'try_test') refreshChecksCount();
             const liveConnChange = kind === 'connect_xmla' || kind === 'connect_local' || kind === 'disconnect';
             const registryChange = kind === 'remember_xmla_connection' || kind === 'label_connection' || kind === 'forget_connection' || kind === 'set_default_account_profile'
                 || kind === 'set_publish_destination';   // the assistant moving the destination must reach the Publish page and footer too (UAT-J9-S10b-003)
@@ -2031,9 +2084,10 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
             if (conn !== connected) return;   // an explicit restart already replaced/invalidated this connection
             conn = undefined;
             connectionEpoch++;
-            setStatusPlain('$(database) Semanticus: disconnected');
+            setStatusPlain('$(sync~spin) Starting Semanticus...');
             healthStatus.hide();
-            postToPanels({ type: 'engineState', connected: false });   // Studio shows a way back, not an empty page
+            engineStarting = true;
+            postToPanels({ type: 'engineState', connected: false, starting: true });
             scheduleEngineReconnect(context);
         });
 
@@ -2049,6 +2103,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         if (deactivating || epoch !== connectionEpoch) return;
         if (conn === connected) conn = undefined;
         try { connected?.dispose(); } catch { /* already closed */ }
+        engineStarting = false;
         postToPanels({ type: 'engineState', connected: false, reason: (engineFailureReason = engineFailureSentence(err)) });   // the pages say why, not a bare "not connected"
         setStatusPlain('$(error) Semanticus: engine error');
         out.appendLine('Engine connection failed: ' + (err?.stack ?? err));
@@ -2074,6 +2129,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
     tree.refresh();
     postToPanels({ type: 'reconnected' });   // settle + re-read on BOTH the Studio panel and the standalone Connections hub
     engineFailureReason = undefined;
+    engineStarting = false;
     postToPanels({ type: 'engineState', connected: true });
     void rebuildDaxSymbols();   // seed DAX IntelliSense for the just-opened model
     reconnectAttempt = 0;
@@ -2618,7 +2674,9 @@ async function restartEngineCmd(context: vscode.ExtensionContext): Promise<void>
             const previous = conn;
             conn = undefined;
             try { previous?.dispose(); } catch { /* already gone */ }
-            postToPanels({ type: 'engineState', connected: false });   // Studio shows its way back while the engine is down
+            engineStarting = true;
+            setStatusPlain('$(sync~spin) Starting Semanticus...');
+            postToPanels({ type: 'engineState', connected: false, starting: true });
             const ws = workspaceDir();
             progress.report({ message: 'stopping…' });
             killEngine(ws);
@@ -2633,7 +2691,7 @@ async function restartEngineCmd(context: vscode.ExtensionContext): Promise<void>
             }
 
             progress.report({ message: 'starting…' });
-            setStatusPlain('$(database) Semanticus: connecting…');
+            setStatusPlain('$(sync~spin) Starting Semanticus...');
             // restarted: true — the person just asked for this, so a live model is worth reopening through the
             // live open (its temp working copy belonged to the engine we just killed, and may already be swept).
             await connectEngine(context, false, true);
@@ -3733,6 +3791,8 @@ function stampModel(nodes: TreeNode[], model: string | undefined): TreeNode[] {
 }
 
 class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
+    private checksCount?: ReturnType<typeof checksCountView>;
+    setChecksCount(value: ReturnType<typeof checksCountView> | undefined): void { this.checksCount = value; this._emitter.fire(); }
     private readonly assistantRefs = new Set<string>();
     private assistantTimer: ReturnType<typeof setTimeout> | undefined;
     flashAssistant(refs: string[]) {
@@ -3755,9 +3815,49 @@ class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     // undefined means no model, and then the tree has no identity row at all.
     private identity?: ModelIdentity;
 
-    attach(c: MessageConnection) { this.clearAssistantFlash(); this.connection = c; }
+    // Each measure row shows its name and one glyph from the engine's check state. The states come from a read at attach and at
+    // each model open, and the checks/didChange push after it; the newest version per measure wins, so a late read never brings back old marks.
+    private checkStates = new Map<string, CheckCache>();
+    private descriptions = new Map<string, { oneLine?: string; text?: string; match?: ScoreMatch | null }>();
+    private marksRead = 0;
+    // A states read is asked for (attach, another model) until a read for the latest ask brings them. A newer read takes the
+    // ask over, so a refresh right after a reset never drops it, and a read that fails leaves it asked: a cold start attaches
+    // before the model reopens, then the reopen's reset is followed at once by a refresh (fx33, rc32 tester gap 2).
+    private statesAsked = 0;
+    private statesRead = 0;
+
+    attach(c: MessageConnection) { this.clearAssistantFlash(); this.connection = c; this.checkStates = new Map(); void this.readMarks(true); }
     clearAssistantFlash() { clearTimeout(this.assistantTimer); this.assistantRefs.clear(); }
-    refresh() { this.flat.clear(); this._emitter.fire(); }
+    refresh() { this.flat.clear(); this._emitter.fire(); void this.readMarks(false); }
+
+    /** Another model opened: its check states are read once, then pushed. */
+    resetChecks(): void { this.checkStates = new Map(); void this.readMarks(true); }
+
+    /** The checks/didChange push. */
+    acceptChecks(change: unknown): void {
+        const next = acceptStates(this.checkStates, change);
+        if (next) { this.checkStates = next; this._emitter.fire(); }
+    }
+
+    // The Descriptions (for the hover) change with the model. The check states are read once per connection; the push keeps them.
+    private async readMarks(states: boolean): Promise<void> {
+        if (states) this.statesAsked++;
+        const c = this.connection, at = ++this.marksRead;
+        if (!c) return;
+        try {
+            const page = await c.sendRequest<{ measures: { ref: string; oneLine?: string; description?: string; descriptionMatch?: ScoreMatch | null }[] }>('getChecksPage').catch(() => null);
+            if (at !== this.marksRead) return;
+            this.descriptions = new Map((page?.measures ?? []).map(m => [m.ref, { oneLine: m.oneLine, text: m.description, match: m.descriptionMatch }]));
+            this._emitter.fire();
+            if (this.statesRead === this.statesAsked) return;
+            const ask = this.statesAsked;
+            const read = await c.sendRequest<CheckCache[]>('getMeasureCheckCache').catch(() => null);
+            // A failed read keeps the ask; a read overtaken by a newer ask is another model's, and the newer read brings them.
+            if (!read || ask !== this.statesAsked) return;
+            this.statesRead = ask;
+            this.acceptChecks(read);
+        } catch { /* the rows keep their last marks */ }
+    }
 
     /// Tell the tree what the open model is. Accepts a PARTIAL so the sync-chip path can flip just the dirty
     /// flag without restating the model, and repaints only when something actually changed — every caller runs
@@ -3799,12 +3899,12 @@ class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             // The unsaved marker is a leading dot in the DESCRIPTION, not a different icon: a TreeItem has ONE
             // icon slot and it is already holding the model glyph, so swapping it would trade one fact for another.
             const dot = id?.unsaved ? '● ' : '';
-            row.description = dot + (id?.source ? `${id.source} · ${where}` : where);
-            row.tooltip = [id?.sourceFull || undefined, id?.unsaved ? 'Unsaved changes' : undefined]
+            row.description = dot + (id?.source ? `${id.source} · ${where}` : where) + (this.checksCount ? ` · ${this.checksCount.text}` : '');
+            row.tooltip = [id?.sourceFull || undefined, this.checksCount?.text, id?.unsaved ? 'Unsaved changes' : undefined]
                 .filter(Boolean).join('\n') || undefined;
             // The row is the way back into Studio's start page, the Plan (the Overview retired in slice 11,
             // Plan-heart contract 11.1). It is not an object, so it never drives the Properties grid.
-            row.command = { command: 'semanticus.studioGoTab', title: 'Open Studio', arguments: ['plan'] };
+            row.command = { command: 'semanticus.studioGoTab', title: 'Open Checks', arguments: ['tests'] };
             return row;
         }
         if (n.kind === 'emptyModel') {
@@ -3830,6 +3930,13 @@ class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         item.command = { command: 'semanticus.selectTreeObject', title: 'Select', arguments: [n] };
         if (DAX_KINDS.has(n.kind)) {
             item.tooltip = n.kind === 'function' ? 'Edit function (DAX UDF)' : 'Edit DAX';
+        }
+        if (n.kind === 'measure') {
+            const state = this.checkStates.get(n.ref);
+            const row = treeRowItem(n.name, stateMarks(state), { ...this.descriptions.get(n.ref), checked: !!state?.lastChecked });
+            item.description = row.description; item.tooltip = row.tooltip;
+            item.accessibilityInformation = { label: row.label };
+            item.command.arguments = [n, row.mark];
         }
         if (n.kind === 'dfolder') item.tooltip = 'Display folder: a label on its members, not a container (it lives in each member’s Display Folder property)';
         if (this.assistantRefs.has(n.ref)) {
@@ -4149,6 +4256,54 @@ function iconFor(kind: string): vscode.ThemeIcon {
 
 // ---- editable DAX as virtual files (Monaco) --------------------------------------------------
 
+// Check validity before native saving. Native saving owns the rename and applies the formula once.
+function installDaxSave(): vscode.Disposable {
+    let override: vscode.Disposable | undefined;
+    const sync = () => {
+        override?.dispose(); override = undefined;
+        if (vscode.window.activeTextEditor?.document.uri.scheme !== DAX_SCHEME) return;
+        // VS Code keeps command registrations in a stack. Dispose this registration when another editor takes focus.
+        override = registerPersonCommand('workbench.action.files.save', async (resource?: vscode.Uri) => {
+            const active = vscode.window.activeTextEditor?.document;
+            if (resource instanceof vscode.Uri && resource.toString() !== active?.uri.toString()) {
+                if (resource.scheme !== DAX_SCHEME) { await vscode.workspace.save(resource); return; }
+                await saveDaxDocument(vscode.workspace.textDocuments.find(doc => doc.uri.toString() === resource.toString()));
+            } else await saveDaxDocument(active);
+        });
+    };
+    const listener = vscode.window.onDidChangeActiveTextEditor(sync);
+    sync();
+    return new vscode.Disposable(() => { listener.dispose(); override?.dispose(); });
+}
+
+async function saveDaxDocument(document?: vscode.TextDocument): Promise<void> {
+    if (!document || document.uri.scheme !== DAX_SCHEME) return;
+    const reference = refFromUri(document.uri);
+    const text = document.getText();
+    try {
+        if (reference.startsWith('measure:')) {
+            if (!conn) throw new Error('Semanticus could not save the formula. Your text is still here.');
+            const expression = isDaxHeaderDoc(document.uri) ? splitDaxHeader(text).body : text;
+            const validation = await conn.sendRequest<{ valid: boolean }>('validateDax', expression, true);
+            if (!validation.valid) throw new Error('This is not valid DAX.');
+        }
+        await document.save();
+    } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        if (!/not valid DAX|invalid DAX/i.test(detail)) throw error;
+        const name = refParts(reference).name;
+        const pick = await vscode.window.showWarningMessage(
+            `The formula for ${name} is not valid. Your text is still here.`, 'Fix it', 'Undo my edit');
+        if (pick === 'Fix it') {
+            await askFormulaAssistant(`Fix the unsaved formula for ${reference}. The person's text is: ${text}. The problem is: ${detail}. Keep the calculation described by the person.`,
+                reference, `save-formula/${document.version}/fix`);
+        } else if (pick === 'Undo my edit') {
+            await vscode.window.showTextDocument(document, { preview: false });
+            await vscode.commands.executeCommand('workbench.action.files.revert');
+        }
+    }
+}
+
 function uriForRef(ref: string): vscode.Uri {
     const mk = daxHeaderModelKey ? '?mk=' + identityToken(daxHeaderModelKey) : '';
     return vscode.Uri.parse(`${DAX_SCHEME}:/${encodeURIComponent(ref)}.dax${mk}`);
@@ -4314,8 +4469,20 @@ function displayDax(raw: string): string {
     } catch { return raw; }
 }
 
+// A tree refresh or definition link can precede the status read that fills the URI cache.
+// Stamp ownership when opening the editor, so it survives reloads with the URI.
+async function resolveDaxEditorUri(uri: vscode.Uri): Promise<vscode.Uri> {
+    if (headerUriModelKey(uri) || !conn) return uri;
+    const key = modelKeyOf(await conn.sendRequest<SessionInfo>('sessionInfo'));
+    if (!key) return uri;
+    const query = new URLSearchParams(uri.query);
+    query.set('mk', identityToken(key));
+    return uri.with({ query: query.toString() });
+}
+
 async function openDaxAt(uri: vscode.Uri, ref: string) {
-    const liveMk = daxHeaderModelKey ? identityToken(daxHeaderModelKey) : undefined;
+    uri = await resolveDaxEditorUri(uri);
+    const liveMk = headerUriModelKey(uri);
     const open = vscode.window.tabGroups.all.flatMap((g) => g.tabs)
         .filter((t) => t.input instanceof vscode.TabInputText && (t.input as vscode.TabInputText).uri.scheme === DAX_SCHEME)
         .map((t) => {
@@ -4326,14 +4493,23 @@ async function openDaxAt(uri: vscode.Uri, ref: string) {
     const target = existingHref ? vscode.Uri.parse(existingHref) : uri;
     const doc = await vscode.workspace.openTextDocument(target);
     await vscode.languages.setTextDocumentLanguage(doc, 'dax');
-    await vscode.window.showTextDocument(doc, { preview: false });
+    await vscode.window.showTextDocument(doc, { preview: true });
     validateDaxDoc(doc);   // language is set after open, so onDidOpen may have missed it — lint now
 }
 
-async function selectTreeObject(n: TreeNode): Promise<void> {
+async function selectTreeObject(n: TreeNode, mark?: string): Promise<void> {
     if (!n) return;
     if (n.kind !== 'dfolder') await propGrid.showObjects([n]);
+    if (n.kind === 'measure' && mark) propGrid.showMark(n.ref, mark);
     if (DAX_KINDS.has(n.kind)) await openDax(n);
+}
+async function askFormulaAssistant(prompt: string, reference: string, key: string): Promise<void> {
+    if (!conn) return;
+    await conn.sendRequest('addPlanTask', {
+        words: `Fix ${refParts(reference).name}.`.slice(0, 280),
+        brief: prompt.slice(0, 4000), objects: [reference], doer: 'assistant', sourcePage: 'plan',
+        sendKey: `formula/${reference}/${key}`,
+    });
 }
 async function editDaxCmd(n?: TreeNode) {
     const node = resolveEditDaxNode(n, treeView?.selection, DAX_KINDS) as TreeNode | undefined;
@@ -4675,12 +4851,14 @@ class DaxFileSystem implements vscode.FileSystemProvider {
     // rename's returned revision, and a partial-rename RECOVERY resumes ONLY when this live revision still equals the one
     // the rename recorded (CRITICAL 1, round 8) — proving nothing mutated since — then fences the write on it, so a
     // same-session delete+recreate at the resumed name is refused inside the engine's dispatch.
-    private async liveModelIdentity(conn: MessageConnection): Promise<{ token?: string; sessionId?: string; revision?: number; fileSaveable: boolean }> {
+    private async liveModelIdentity(conn: MessageConnection): Promise<{ token?: string; earlierToken?: string; sessionId?: string; revision?: number; fileSaveable: boolean }> {
         const info = await conn.sendRequest<SessionInfo>('sessionInfo').catch(() => undefined);
         const k = modelKeyOf(info);
+        // An editor opened before this model had a file carries its session id as the key (D7); the same session is the same model.
+        const earlier = info?.source && info.sessionId ? identityToken(info.sessionId) : undefined;
         // Whether pressing Save here may also write the model's file: the model has a file of its own, is not a live model, and has no OTHER unsaved
         // change (read before this editor applies its formula, so the formula is the only thing the file write would add).
-        return { token: k ? identityToken(k) : undefined, sessionId: info?.sessionId ?? undefined, revision: info?.revision, fileSaveable: !!info?.source && !info?.liveBound && !info?.hasUnsavedChanges };
+        return { token: k ? identityToken(k) : undefined, earlierToken: earlier, sessionId: info?.sessionId ?? undefined, revision: info?.revision, fileSaveable: !!info?.source && !info?.liveBound && !info?.hasUnsavedChanges };
     }
 
     // UAT-J7-S5-001: Ctrl+S in the DAX editor applied the formula to the model and stopped there, so the person who pressed Save had a model
@@ -4705,8 +4883,9 @@ class DaxFileSystem implements vscode.FileSystemProvider {
     // surfaces any confirmed drift honestly, pointing at the undo/Edit-History trail, in case a token moved for a reason
     // the id fence didn't cover. Only warns on a CONFIRMED drift (both tokens known and different).
     private async warnIfModelDrifted(conn: MessageConnection, uriModelKey: string | undefined): Promise<void> {
-        const live = await this.liveModelToken(conn);
-        if (uriModelKey !== undefined && live !== undefined && uriModelKey !== live) {
+        const id = await this.liveModelIdentity(conn);
+        const live = id.token;
+        if (uriModelKey !== undefined && live !== undefined && uriModelKey !== live && uriModelKey !== id.earlierToken) {
             void vscode.window.showWarningMessage('The model changed while saving. Check Plan > History and undo if this landed on the wrong model.');
         }
     }
@@ -4736,11 +4915,13 @@ class DaxFileSystem implements vscode.FileSystemProvider {
         let liveSession: string | undefined;   // CRITICAL 1: passed to the mutation RPCs as expectedSession (engine-side swap fence)
         let liveRevision: number | undefined;   // CRITICAL (r7/r8): the live session revision (same one sessionInfo read) — the recovery-resume proof + write fence
         let fileSaveable = false;
-        if (conn) { const id = await this.liveModelIdentity(conn); liveModelKey = id.token; liveSession = id.sessionId; liveRevision = id.revision; fileSaveable = id.fileSaveable; }
+        let earlierModelKey: string | undefined;
+        if (conn) { const id = await this.liveModelIdentity(conn); liveModelKey = id.token; earlierModelKey = id.earlierToken; liveSession = id.sessionId; liveRevision = id.revision; fileSaveable = id.fileSaveable; }
         const decision = decideDaxSave(oldRef, header, body, {
             isHeaderUri: isHeaderDoc,
             uriModelKey,
             modelKey: liveModelKey,
+            earlierModelKey,
         });
 
         if (decision.kind === 'reject') {
@@ -5368,12 +5549,12 @@ async function resolveDaxDefinition(ref: DaxRef): Promise<vscode.Location | unde
     const top = new vscode.Position(0, 0);
     if (ref.kind === 'measure') {
         const meas = daxSymbols.measures.find((x) => eqi(x.name, ref.name));
-        if (meas) return new vscode.Location(uriForRef(meas.ref), top);
+        if (meas) return new vscode.Location(await resolveDaxEditorUri(uriForRef(meas.ref)), top);
         const cc = daxSymbols.columns.find((x) => eqi(x.name, ref.name) && x.kind === 'calcColumn');
-        if (cc) return new vscode.Location(uriForRef(cc.ref), top);
+        if (cc) return new vscode.Location(await resolveDaxEditorUri(uriForRef(cc.ref)), top);
     } else if (ref.kind === 'column') {
         const cc = daxSymbols.columns.find((x) => x.kind === 'calcColumn' && eqi(x.name, ref.name) && (!ref.table || eqi(x.table, ref.table!)));
-        if (cc) return new vscode.Location(uriForRef(cc.ref), top);
+        if (cc) return new vscode.Location(await resolveDaxEditorUri(uriForRef(cc.ref)), top);
     } else {
         return undefined;   // a bare 'Table' reference has no DAX body to open
     }
@@ -5383,7 +5564,7 @@ async function resolveDaxDefinition(ref: DaxRef): Promise<vscode.Location | unde
             const res = await conn.sendRequest<SearchResult>('searchModel', ref.name, 50);
             const hit = res.hits.find((h) => (h.kind === 'measure' || h.kind === 'calcColumn') && eqi(h.name, ref.name)
                 && (ref.kind !== 'column' || !ref.table || eqi(h.table ?? '', ref.table!)));
-            if (hit) return new vscode.Location(uriForRef(hit.ref), top);
+            if (hit) return new vscode.Location(await resolveDaxEditorUri(uriForRef(hit.ref)), top);
         } catch { /* engine busy / closed — fall through to no definition */ }
     }
     return undefined;
@@ -5558,7 +5739,9 @@ async function saveLiveModelToWorkspace(info: SessionInfo): Promise<boolean> {
 // The Learn tour, so a model opening anywhere can end it (learnHost.modelChanged). Set in activate.
 let learnTour: ReturnType<typeof createLearn> | undefined;
 function setStatusFromInfo(info?: SessionInfo): void {
+    if (currentSessionId !== info?.sessionId) { checksStatus?.hide(); tree.setChecksCount(undefined); }
     currentSessionId = info?.sessionId;
+    refreshChecksCount();
     learnTour?.modelChanged(info?.sessionId);
     hostModelIdentity = info?.sessionId ? info.modelIdentity : undefined;   // the model an action that starts from now on is for
     settlePendingReconnect(info);
@@ -5879,13 +6062,36 @@ function showOpenNote(note: string | undefined): void {
     if (note) vscode.window.showInformationMessage(note);
 }
 
+/// A published model opened again while a file saved from it holds work the service copy lacks (UAT 1.7 Free, D3). Say so, in plain words, and offer
+/// the saved copy. The person can keep the service copy: a later save then leaves the saved file alone (the engine's rule), so nothing is lost either way.
+async function offerSavedCopy(offer: SavedCopyOffer | undefined): Promise<void> {
+    if (!offer || !offer.path || !conn) return;
+    const things = offer.extra === 1 ? '1 thing' : `${offer.extra} things`;
+    const named = offer.names.length ? ` (${offer.names.join(', ')}${offer.extra > offer.names.length ? ', and more' : ''})` : '';
+    const open = 'Open the saved copy';
+    const pick = await vscode.window.showInformationMessage(`A saved copy of this model holds ${things} that the copy from the service does not have${named}.`, open, 'Keep the service copy');
+    if (pick !== open || !conn) return;
+    try {
+        const r = await confirmAndSendOpen<OpenResult>('open', 'Opening the saved copy throws those changes away unless you save first.', offer.path);
+        if (!r) return;
+        const info = await refreshStatus();
+        void rememberLastModel(info);
+        watchModelDisk(info?.source);
+        await bindGridAndTree(r.modelName, tree);
+        postToPanels({ type: 'reconnected', by: 'person' });
+    } catch (e: any) {
+        vscode.window.showErrorMessage('Could not open the saved copy: ' + (e?.message ?? e));
+    }
+}
+
 async function finishOpen(r: OpenResult | undefined, tree: ModelTreeProvider): Promise<void> {
     if (!r) return;
     const account = r.account ? ` · as ${r.account}` : '';
     // The engine's one plain line when the open had something to say (a copy saved inside the model folder was left out); both doors show it.
-    const note = r.note ? ` ${r.note}` : '';
+    const note = r.note && !r.savedCopy ? ` ${r.note}` : '';   // the saved-copy sentence is the offer below, not a second line
     vscode.window.showInformationMessage(`Opened ${r.modelName}: ${r.tables} tables, ${r.measures} measures${r.liveConnected ? ' · live' : ''}${account}.${note}`);
     await bindGridAndTree(r.modelName, tree);
+    void offerSavedCopy(r.savedCopy);
 }
 
 // `by` says whose swap this was. 'otherDoor' is a swap the person did not make here (the assistant, or another
@@ -5893,6 +6099,7 @@ async function finishOpen(r: OpenResult | undefined, tree: ModelTreeProvider): P
 async function bindGridAndTree(modelName: string | undefined, tree: ModelTreeProvider, by: 'person' | 'otherDoor' = 'person'): Promise<void> {
     tree.clearAssistantFlash();
     await propGrid.showModel(modelName);   // a model swap never inherits an old object's property target
+    tree.resetChecks();   // and the tree never keeps the old model's check states
     tree.refresh();
     const info = await refreshStatus();
     // The SESSION says what was opened. Recording info.source alone turned a published or running-Desktop
@@ -6194,6 +6401,11 @@ async function commitStudioFocused(): Promise<void> {
         try { void panel.webview.postMessage({ type: 'commitFocused', id }); } catch { clearTimeout(timer); studioCommitWaiters.delete(id); resolve(); }
     });
 }
+// A save is quiet (Kane 8 Oct), with one exception: a save that went to a NEW file because the earlier saved copy holds work this model lacks (D3).
+// The person asked to save one file and another got the work, so that is said where it is read, not only for eight seconds in the status bar.
+function noteSavedCopyLeftAlone(note: string | null | undefined): void {
+    if (note && /was left as it was/.test(note)) void vscode.window.showInformationMessage(note);
+}
 async function saveCommand(overwrite = false): Promise<boolean> {
     if (!conn) { vscode.window.showWarningMessage('Semanticus engine not connected.'); return false; }
     // Whatever is being typed in the Properties grid goes in first, and Save waits for it: the file and the Saved
@@ -6226,6 +6438,7 @@ async function saveCommand(overwrite = false): Promise<boolean> {
         watchModelDisk(r.path);
         // A live model's save goes to a lasting place, not in place: the engine's sentence says where (the same as the first save above).
         vscode.window.setStatusBarMessage(r.note ? r.note : 'Saved', r.note ? 8000 : 4000);
+        noteSavedCopyLeftAlone(r.note);
         return true;
     } catch (e: any) {
         const msg = String(e?.message ?? e);
@@ -6290,6 +6503,7 @@ async function pickLiveOnlyDeletes(database: string | undefined, liveOnly: strin
 // The token is never written into .mcp.json argv: that would put it on the MCP process command line.
 // On POSIX an installed build writes the STABLE launcher instead (see mcpLauncher.ts): the bundled path is
 // inside the versioned extension folder, which VS Code deletes after an update.
+// The selected POSIX apphost keeps a durable engine copy before serving either door (EngineCache.cs).
 function semanticusMcpEntry(engine: ResolvedEngine, ws: string): McpServerEntry {
     if (mcpLauncher && engine.kind === 'exe' && process.platform !== 'win32') return launcherEntry(mcpLauncher, ws);
     const command = engine.kind === 'exe' ? engine.path : resolveDotnet();
@@ -7645,6 +7859,12 @@ async function roleAddMemberCmd(n: TreeNode) {
 
 // The grid's pure halves (the merge of a selection's properties, and the engine calls one write makes) live in propSet.ts.
 
+// What the marks in Properties may ask the engine: read marks, Descriptions and the run plan, and set up a check.
+const MARKS_GRID_METHODS = new Set(['getMeasureMarks', 'getMeasureDescription', 'setDescription', 'draftMeasureDescription', 'proposeMeasureDescription',
+    'keepMeasureDescription', 'planMeasureRun', 'runMeasurePlan', 'stopMeasureRun', 'getMeasureCheckCache', 'keepMeasureEdit', 'setMeasureFiltersOnPurpose',
+        // getConsent, read only: Turn on in Properties checks again once permission is on (fx29b F).
+    'setMeasurePerformance', 'setMeasureTotals', 'listSqlSources', 'saveTest', 'getConsent', 'getChecksPage']);
+
 class PropertyGridProvider implements vscode.WebviewViewProvider {
     private view?: vscode.WebviewView;
     private refs: string[] = [];
@@ -7654,11 +7874,14 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
     private templatesPosted = false;        // whether THIS webview instance has the catalog (reset when the view is recreated)
     private modelName = 'Model';
     private pendingFocusKey: string | null = null;   // an F2 rename asked for the Name row before the webview was live — flushed on 'ready', keyed to its object
+    private markRequest: { key: string; name: string; id: number } | undefined;
+    private markRequestId = 0;
     private settling: Promise<void> = Promise.resolve();   // every property write received so far; Save waits on it
     private commitSeq = 0;
     private readonly commitWaiters = new Map<number, () => void>();   // commit id -> the grid has answered it
 
-    constructor(private readonly getConn: () => MessageConnection | undefined, private readonly extensionUri: vscode.Uri) {}
+    constructor(private readonly getConn: () => MessageConnection | undefined, private readonly extensionUri: vscode.Uri,
+        private readonly openFromMarks?: (where: 'connections' | 'checks' | 'advice', ref?: string) => void) {}
 
     applyFocused(): void {
         this.view?.webview.postMessage({ type: 'applyFocused' });
@@ -7714,12 +7937,40 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
                 if (typeof msg.notice === 'string' && msg.notice) void vscode.window.showInformationMessage(msg.notice);
                 this.commitWaiters.get(msg.id)?.(); return;
             }
+            if (msg?.type === 'marksRpc' && typeof msg.id === 'number') { void this.marksRpc(conn, msg); return; }
+            if (msg?.type === 'marksEditFormula' && typeof msg.ref === 'string') { this.editFormula(msg.ref, msg.model); return; }
+            if (msg?.type === 'marksOpen') { if (msg.where === 'connections' || msg.where === 'checks' || msg.where === 'advice') this.openFromMarks?.(msg.where, typeof msg.ref === 'string' ? msg.ref : undefined); return; }
             if (msg?.type === 'set' && conn && this.refs.length) {
                 // The write is tracked from the moment it is received, so a Save that asks right after can wait for it.
                 const landed = this.holdSettling();
                 try { await this.applySet(conn, msg); } finally { landed(); }
             }
         });
+    }
+
+    /// The marks under the grid's header read and set up checks through these engine methods only. Each request names the
+    /// model the grid shows, so a write meant for another model is refused, as a property write is.
+    /// Fix the formula (a lost filter): open the measure's formula, only for the model the grid shows.
+    private editFormula(ref: string, model: unknown): void {
+        if (typeof model === 'string' && model !== hostModelIdentity) return;
+        const p = refParts(ref);
+        if (p.kind === 'measure' && p.name) void editDaxCmd({ ref, name: p.name, kind: 'measure', hasChildren: false });
+    }
+
+    /// The engine's check state push: the card under the grid shows the newest version at once.
+    checkState(change: unknown): void { void this.view?.webview.postMessage({ type: 'checkState', payload: change }); }
+
+    private async marksRpc(conn: MessageConnection | undefined, msg: any): Promise<void> {
+        const reply = (body: { result?: unknown; error?: string }) => void this.view?.webview.postMessage({ type: 'marksRpcResult', id: msg.id, ...body });
+        if (!conn) { reply({ error: 'Open a model to read its marks.' }); return; }
+        if (typeof msg.method !== 'string' || !MARKS_GRID_METHODS.has(msg.method)) { reply({ error: 'Properties cannot do that here.' }); return; }
+        try {
+            const args = Array.isArray(msg.args) ? msg.args : [];
+            reply({ result: await withModelIdentity(msg.model, () => args.length
+                ? conn.sendRequest(msg.method, ParameterStructures.byPosition, ...args)
+                : conn.sendRequest(msg.method)) });
+        }
+        catch (e: any) { reply({ error: String(e?.message ?? e) }); }
     }
 
     /// One property write from the grid: one atomic undoable change, then the grid re-reads the canonical value.
@@ -7806,6 +8057,12 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
         await this.push();
     }
     async showObject(node?: TreeNode): Promise<void> { await this.showObjects(node ? [node] : []); }
+    showMark(reference: string, name: string): void {
+        if (this.refs.length !== 1 || this.refs[0] !== reference) return;
+        this.markRequest = { key: JSON.stringify([reference]), name, id: ++this.markRequestId };
+        if (this.view) { this.view.show(true); void this.push(); }
+        else void vscode.commands.executeCommand('semanticusProperties.focus');
+    }
     async showModel(name?: string): Promise<void> {
         if (name) this.modelName = name;
         this.refs = [MODEL_REF];
@@ -7828,7 +8085,8 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
         const next = followRename(this.refs, deltas);
         if (next) this.refs = next;   // the names are read again from the object itself by the push that follows
     }
-    async refresh(): Promise<void> { if (this.refs.length) await this.push(); }
+    // A model change (an Undo of a kept Description) reaches the card before the slower reflected property reload (G1 a).
+    async refresh(): Promise<void> { if (this.refs.length) { void this.view?.webview.postMessage({ type: 'didChange' }); await this.push(); } }
 
     /// F2 rename lands here: ask the grid to put the caret in its Name row (text selected, type-over ready).
     /// If the webview isn't live yet (the focus command may be resolving it right now), the intent is parked
@@ -7876,7 +8134,9 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
             const title = refs.length === 1 ? (canonical[0] ?? refs[0]) : `${refs.length} objects selected`;
             // key = the selection's refs, NOT the header name: two same-named objects on different tables must
             // still read as a selection change in the webview (it resets in-progress editors on a new key).
-            this.view.webview.postMessage({ type: 'load', key: JSON.stringify(refs), model: draftModelKeyOf(info), name: title, multi: refs.length > 1, props });
+            const key = JSON.stringify(refs);
+            const markRequest = this.markRequest?.key === key ? this.markRequest : undefined;
+            this.view.webview.postMessage({ type: 'load', key, model: draftModelKeyOf(info), name: title, multi: refs.length > 1, props, markRequest });
         } catch { if (seq === this._pushSeq && this.view) this.view.webview.postMessage({ type: 'empty' }); }
     }
 
@@ -7888,6 +8148,8 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
         // studio.css, and it must be linked before propgrid.css so the grid's own rules can read the tokens.
         const tokensUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, 'media', 'studio', 'tokens.css'));
         const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(base, 'propgrid.js'));
+        const checkedJsUri = webview.asWebviewUri(vscode.Uri.joinPath(base, 'checked-ui.js'));
+        const checkedCssUri = webview.asWebviewUri(vscode.Uri.joinPath(base, 'checked-ui.css'));
         const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
         // The grid's CSS + JS live in media/propgrid/* (single source of truth, shared with the uishot
         // screenshot harness). Edit them there, not here.
@@ -7895,9 +8157,10 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <link rel="stylesheet" href="${tokensUri}">
 <link rel="stylesheet" href="${cssUri}">
+<link rel="stylesheet" href="${checkedCssUri}">
 </head>
 <body><div id="root"></div>
-<script nonce="${nonce}" src="${jsUri}"></script></body></html>`;
+<script nonce="${nonce}" src="${jsUri}"></script><script nonce="${nonce}" src="${checkedJsUri}"></script></body></html>`;
     }
 }
 
@@ -7905,17 +8168,39 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
 
 function openStudio(context: vscode.ExtensionContext) {
     if (studioPanel) { studioPanel.reveal(vscode.ViewColumn.Active); return; }
+    if (studioOpening) return studioOpening;
+    const open = async () => {
+        // VS Code restores inactive webview tabs lazily. They exist before the serializer gives us their panel.
+        const restored = studioTabs();
+        if (restored.length && !await vscode.window.tabGroups.close(restored, true)) return;
+        if (studioPanel) { studioPanel.reveal(vscode.ViewColumn.Active); return; }
+        const panel = vscode.window.createWebviewPanel(
+            'semanticusStudio',
+            'Semanticus Studio',
+            vscode.ViewColumn.Active,
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true,
+                localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')],
+            });
+        adoptStudioPanel(panel, context);
+    };
+    studioOpening = open().finally(() => { studioOpening = undefined; });
+    return studioOpening;
+}
 
-    const panel = vscode.window.createWebviewPanel(
-        'semanticusStudio',
-        'Semanticus Studio',
-        vscode.ViewColumn.Active,
-        {
-            enableScripts: true,
-            retainContextWhenHidden: true,
-            localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')],
-        });
-    adoptStudioPanel(panel, context);
+function studioTabs(): vscode.Tab[] {
+    return vscode.window.tabGroups.all.flatMap(g => g.tabs).filter(t => t.input instanceof vscode.TabInputWebview
+        && (t.input.viewType === 'semanticusStudio' || t.input.viewType === 'mainThreadWebview-semanticusStudio'));
+}
+
+function closeOtherStudioTabs(panel: vscode.WebviewPanel): void {
+    if (!panel.visible) return;
+    const active = vscode.window.tabGroups.all.find(g => g.viewColumn === panel.viewColumn)?.activeTab;
+    const tabs = studioTabs();
+    if (!active || !tabs.includes(active)) return;
+    const others = tabs.filter(t => t !== active);
+    if (others.length) void vscode.window.tabGroups.close(others, true);
 }
 
 // Make a panel THE Studio panel: the one bridge, the one html, the one disposal hook. Both doors in are
@@ -7937,6 +8222,8 @@ function adoptStudioPanel(panel: vscode.WebviewPanel, context: vscode.ExtensionC
         studioPanel = undefined; studioReady = false;
     } });
     panel.webview.onDidReceiveMessage(pageScoped(studioRelayHandler(panel, false)));
+    panel.onDidChangeViewState(() => closeOtherStudioTabs(panel));
+    closeOtherStudioTabs(panel);
     panel.webview.html = studioHtml(panel.webview, context);
 }
 
@@ -8022,10 +8309,10 @@ function runWebviewHostCommand(command: unknown, targetRef?: unknown, targetSess
     // WITH a ref this is the tree's own gesture relayed from a webview row, and the ref has to be checked
     // against the live session or a stale row would write to the wrong model. With NO ref it is the ask
     // box, which never claims to have a table, and that falls through to the create allowlist below.
-    if (command === 'semanticus.editDax' || (command === 'semanticus.newMeasure' && targetRef !== undefined)) {
+    if (command === 'semanticus.editDax' || command === 'semanticus.tryCalculation' || (command === 'semanticus.newMeasure' && targetRef !== undefined)) {
         if (typeof targetRef !== 'string' || typeof targetSessionId !== 'string' || targetSessionId !== currentSessionId) return;
         const p = refParts(targetRef);
-        const allowed = command === 'semanticus.editDax' ? DAX_KINDS.has(p.kind) : p.kind === 'table' || p.kind === 'calcgroup';
+        const allowed = command === 'semanticus.editDax' ? DAX_KINDS.has(p.kind) : command === 'semanticus.tryCalculation' ? p.kind === 'measure' : p.kind === 'table' || p.kind === 'calcgroup';
         if (!p.name || !allowed) return;
         const node = { ref: targetRef, name: p.name, kind: p.kind, hasChildren: false };
         if (command === 'semanticus.editDax') void editDaxCmd(node); else void vscode.commands.executeCommand(command, node);
@@ -8145,6 +8432,13 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             return;
         }
         if (msg?.type === 'setPersonalitySetting') { await writePersonalitySetting(msg).catch(() => undefined); return; }
+        if (msg?.type === 'openFileInEditor') {                                          // Your standard > File > Open in the editor
+            const file = String(msg.path ?? '');
+            if (path.isAbsolute(file) && fs.existsSync(file)) {
+                try { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(file)), { preview: false }); } catch { /* the file went away */ }
+            }
+            return;
+        }
         if (msg?.type === 'openExternal') {                                              // sandboxed-iframe links → the user's browser
             const url = String(msg.url ?? '');
             if (/^https?:\/\//i.test(url)) void vscode.env.openExternal(vscode.Uri.parse(url));
@@ -8172,7 +8466,7 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             // to wait on, and one that never hears back simply stays at 100%.
             try { panel.webview.postMessage({ type: 'studioZoom', level: extCtx?.workspaceState.get<number>(STUDIO_ZOOM_KEY) ?? 100 }); } catch { /* disposing */ }
             // A panel that mounts while the engine is already down never saw the transition, so answer it here.
-            try { panel.webview.postMessage({ type: 'engineState', connected: !!conn, reason: conn ? undefined : engineFailureReason }); } catch { /* disposing */ }
+            try { panel.webview.postMessage({ type: 'engineState', connected: !!conn && !engineStarting, starting: engineStarting, reason: conn ? undefined : engineFailureReason }); } catch { /* disposing */ }
             // Likewise a model that is waiting for a sign-in: the page shows its name, not "Open a model to begin".
             try { panel.webview.postMessage({ type: 'reconnectPending', name: pendingReconnect ? (pendingReconnect.modelName || pendingReconnect.database || 'your model') : null, offer: pendingIsOffer }); } catch { /* disposing */ }
             if (!isStandalone) {
@@ -8258,6 +8552,7 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             const swapBy = msg.method === 'restoreHistoryCheckpoint' ? 'restore' : 'person';
             if (modelSwapped) {
                 if (msg.method === 'open') showOpenNote(result?.note);   // a hub recent row, or any page's open
+                if (msg.method === 'openLive') void offerSavedCopy(result?.savedCopy);   // the hub's Open on a published model
                 try { await propGrid.showModel(result?.context?.editing?.modelName ?? result?.modelName ?? result?.destination?.name ?? 'Model'); } catch { }
                 tree.refresh();
                 const swapped = await refreshStatus();
@@ -8292,14 +8587,14 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
 // Open Studio (revealing an existing panel) and navigate it to a tab, optionally selecting a target object (e.g.
 // a Model-tree "Preview data" → the Data tab + that table). If the webview is still mounting, the navigation is
 // queued and flushed once it posts 'studioReady', so a cold open never drops the message.
-function navigateStudio(context: vscode.ExtensionContext, tab: string, target?: string, addTables?: string[]) {
-    pendingNav = { tab, target, addTables, sessionId: currentSessionId };
+function navigateStudio(context: vscode.ExtensionContext, tab: string, target?: string, addTables?: string[], run?: boolean) {
+    pendingNav = { tab, target, addTables, sessionId: currentSessionId, run };
     openStudio(context);
     flushNav();
 }
 function flushNav() {
     if (studioPanel && studioReady && pendingNav) {
-        try { studioPanel.webview.postMessage({ type: 'navigate', tab: pendingNav.tab, target: pendingNav.target, addTables: pendingNav.addTables, sessionId: pendingNav.sessionId }); } catch { /* disposing */ }
+        try { studioPanel.webview.postMessage({ type: 'navigate', tab: pendingNav.tab, target: pendingNav.target, addTables: pendingNav.addTables, sessionId: pendingNav.sessionId, prompt: pendingNav.prompt, run: pendingNav.run }); } catch { /* disposing */ }
         pendingNav = undefined;
     }
 }

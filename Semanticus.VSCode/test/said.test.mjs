@@ -121,11 +121,16 @@ const vscode = {
   ThemeIcon: class { constructor(id, color) { this.id = id; this.color = color; } },
   ThemeColor: class { constructor(id) { this.id = id; } },
 };
-const tree = new Function('vscode', 'iconFor', 'DAX_KINDS', 'setTimeout', 'clearTimeout',
+const marksModule = { exports: {} };
+new Function('exports', ts.transpileModule(readFileSync(new URL('../src/marksModel.ts', import.meta.url), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText)(marksModule.exports);
+const tree = new Function('vscode', 'iconFor', 'DAX_KINDS', 'treeRowItem', 'acceptStates', 'stateMarks', 'setTimeout', 'clearTimeout',
   nativeJs + '; return new ModelTreeProvider();')(vscode, () => ({ id: 'symbol-method' }), new Set(['measure']),
+  marksModule.exports.treeRowItem, marksModule.exports.acceptStates, marksModule.exports.stateMarks,
   (fn, ms) => { assert.equal(ms, 3000); timers.set(++timerId, fn); return timerId; }, (id) => timers.delete(id));
 const node = { ref: 'measure:Sales/Net Sales', name: 'Net Sales', kind: 'measure', hasChildren: false };
 assert.equal(tree.getTreeItem(node).iconPath.id, 'symbol-method');
+assert.equal(tree.getTreeItem(node).description, '', 'an uncached measure has no glyph until a mark that applies has run (d1 section 4.1)');
 tree.flashAssistant([node.ref]);
 assert.equal(tree.getTreeItem(node).iconPath.id, 'circle-filled');
 assert.equal(tree.getTreeItem(node).iconPath.color.id, 'charts.purple');

@@ -5,28 +5,11 @@ import { fileURLToPath } from 'url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
-const calendars = read('webview/src/advmodels.tsx');
 const lineage = read('webview/src/lineage.tsx');
 const pkg = JSON.parse(read('package.json'));
 const extension = read('src/extension.ts');
 
-// D-028: a VS Code webview disables window.confirm, so a delete that waits on it is always inert.
-assert.doesNotMatch(calendars, /window\.confirm/,
-  'calendar delete must not wait on a browser-native confirmation dialog');
-assert.match(calendars, /setConfirmDelete\(true\)/,
-  'Delete calendar must open an in-panel confirmation');
-assert.match(calendars, /rpc\('deleteCalendar', cal\.table, cal\.name\)/,
-  'the confirmed action must call deleteCalendar');
-assert.match(calendars, /Keep this calendar/,
-  'the confirmation must offer a cancel that keeps the calendar');
-
-// D-022: the mapping picker must not offer a string column for the Date category, and the Add path must refuse it.
-assert.match(calendars, /dataType\?: string/,
-  'calendar column rows must carry the column type so the mapping picker can filter');
-assert.match(calendars, /calendarMappingAllowed/,
-  'mapping a column onto a calendar category must go through a type check');
-assert.match(calendars, /Cannot map/,
-  'a refused mapping must tell the person why, not fail silently');
+// The old calendar panel (hand mapping, delete confirm, mapping type check) went with the 1.7 plan page (test/calendars-page.test.mjs).
 
 // Lineage deletes had the same inert window.confirm pattern (also reported with D-028).
 assert.doesNotMatch(lineage, /window\.confirm/,
@@ -53,4 +36,4 @@ const palette = pkg.contributes.menus.commandPalette ?? [];
 assert.ok(palette.some((e) => e.command === 'semanticus.timeIntelligence'),
   'Generate Time-Intelligence must declare a commandPalette when-clause so it is not a silent no-op from the palette');
 
-console.log('calendar mapping, delete, and time-intelligence UI contract tests passed');
+console.log('lineage delete and time-intelligence UI contract tests passed');

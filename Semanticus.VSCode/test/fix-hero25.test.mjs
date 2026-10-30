@@ -72,7 +72,8 @@ check('H1: the page is wired so (notebook, seed, Run)', () => {
   const nb = web('query-notebook.tsx'), lab = web('daxlab.tsx');
   assert.match(nb, /if \(!rowOwnsResult\(row, q\.producedBy, q\.assistantShown\)\) return;/, 'a figure is written only by the row\'s own run');
   assert.match(nb, /q\.claudeEvent\?\.kind === 'run_dax'[\s\S]{0,900}assistantRowFor\(list \?\? \[\], ran\)[\s\S]{0,900}setActive\(mine\.id\); setLiveRow\(mine\.id\)/, 'the assistant\'s run opens its own row (the notebook follows the run_dax event the Query page keeps; it is not a second consumer)');
-  assert.match(nb, /q\.onSeeded\.current = \(\) => \{[^}]*setActive\(DRAFT\)/, 'a seed opens the draft, not the open row');
+  assert.match(nb, /q\.onSeeded\.current = \(run\) => \{ setTabRaw\(run \? 'answer' : 'dax'\); setActive\(DRAFT\); setLiveRow\(null\); q\.activeRow\.current = null; \}/,
+    'a seed opens the draft and detaches the old row; an explicit calculation opens its answer');
   assert.match(lab, /if \(activeRow\.current\) onSeeded\.current\?\.\(\);/, 'a seed with a row open leaves that row alone');
   assert.match(lab, /function run\(\) \{ setTab\('result'\); void runQuery\(assistantShown && assistantDax \? assistantDax : personQuery\(\)\); \}/, 'Run runs the DAX the DAX view shows');
   assert.match(lab, /assistantRun: !!assistantDax && !!res && producedByOf\(res, resQuery\) === squash\(assistantDax\)/);
@@ -172,7 +173,10 @@ check('H7: figures read with separators, Run on rows that cannot run says why, h
   assert.equal(hist.data.vLabel, 'Off now'); assert.equal(hist.data.v2Label, 'Off before');
   const t = web('tests.tsx');
   assert.match(t, /plainFigure\(outcome\.expected \?\? value\?\.expectedValue\)/);
-  assert.match(t, /data-testid="v-notrun-why"/);
+  assert.match(t, /This check has not run yet\.\{!liveModel && ' There is no live test model to ask\.'\}/,
+    'an unrun check explains the missing connection in its detail');
+  assert.match(t, /if \(!liveModel\) actions\.push\(action\('Connect a test model', props\.onConnect, 'connect', true\)\)/,
+    'the explanation has a working connection action');
   assert.doesNotMatch(t, /<strong>\{outcome\.actual \?\? '·'\}<\/strong> from the model/);
 });
 

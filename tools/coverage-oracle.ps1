@@ -16,7 +16,8 @@ function Get-PascalName([string]$operation) {
 
 function Get-Family([string]$operation) {
     switch -Regex ($operation) {
-        '^(edit_objects|write_words)$' { return 'metadata-and-properties' }
+        '^(plan_measure_run|run_measure_plan|stop_measure_run|sweep_measure_checks|configure_measure_sweep|get_measure_check_cache|get_measure_marks|keep_measure_edit|set_measure_performance|set_measure_totals|set_measure_filters_on_purpose|get_checks_page)$' { return 'change-plan-and-verified-edits' }
+        '^(edit_objects|write_words|cleanup_meaning_annotations|(get|draft|propose|keep)_measure_description)$' { return 'metadata-and-properties' }
         '^set_object_permissions$' { return 'model-security' }
         '^plan_rows$' { return 'living-plan' }
         '^(open_|create_model|save_model|session_info|resolve_file_recovery|get_entitlement|get_trial_tally|start_trial|get_personality_settings|set_personality_settings|undo_change|redo_change|list_local_instances|list_workspace_models|list_workspace_sql_endpoints|connect_assistant|connect_local|connect_xmla|disconnect|connection_status)' { return 'session-and-lifecycle' }
@@ -25,7 +26,7 @@ function Get-Family([string]$operation) {
         '^(get_properties|set_property|set_properties|set_description|set_display_folder|rename_display_folder|set_measure_format|set_measure_format_expression|set_column_|set_sort_by_column|set_data_category|set_summarize_by|set_relationship_|get_named_expression|list_named_expressions|update_named_expression|get_partition_m|set_partition_m|list_partitions|list_calculation_groups|list_format_templates|get_perspectives|set_perspective_member|set_calc_group_precedence|set_calc_item_format_string)' { return 'metadata-and-properties' }
         '^(get_dax|update_measure|validate_dax|run_dax|cancel_query|run_dmv|preview_table|pivot_measure|benchmark_|profile_dax|capture_query_plan|evaluate_and_log|clear_cache|verify_dax_equivalence|lint_dax|optimize_measure|probe_measure|reconcile_measure|explain_value|blame_value|list_value_history|list_functions|vpaq_scan|ask_data|list_data_questions|query_notebook|pick_chart_kind)' { return 'dax-and-query' }
         '^(get_source_schema|diff_schema|apply_schema_update|preview_m|profile_m|get_source_sql|set_source_sql|get_incremental_refresh_policy|set_incremental_refresh_policy|remove_incremental_refresh_policy|list_refresh_types)' { return 'source-and-m' }
-        '^(list_calendars|define_calendar|delete_calendar|tag_calendar_column|define_calendar_from_template|generate_date_table|mark_date_table|generate_time_intelligence)' { return 'calendars' }
+        '^(list_calendars|define_calendar|delete_calendar|tag_calendar_column|define_calendar_from_template|generate_date_table|mark_date_table|generate_time_intelligence|propose_calendar|setup_calendars|add_time_measures)' { return 'calendars' }
         '^(create_role|delete_role|list_roles|set_role_|set_table_permission|set_table_ols|set_column_ols)' { return 'model-security' }
         '^(ai_readiness_|reading_card|fix_them|make_model_ai_ready|apply_safe_fixes|apply_fix|get_fix_prompt|get_grounding|load_rules|reset_rules|get_custom_rules|validate_rule|create_linguistic_schema|set_synonyms|set_ai_|get_ai_instructions)' { return 'ai-readiness' }
         '^(bpa_|list_waivers|waive_finding|unwaive_finding)' { return 'bpa-and-waivers' }
@@ -45,6 +46,9 @@ function Get-Family([string]$operation) {
         '^(get_decision_points|set_decision_point_enabled|get_consent|set_consent|withdraw_consent|get_decision_budget|propose_measure_defaults)' { return 'typed-decisions' }
         '^(get_model_plan|get_words_queue|skip_model_plan_item|unskip_model_plan_item|model_plan_action|get_next_actions|route_ask|add_plan_target|remove_plan_target|add_plan_task|pause_plan_item|set_plan_doer|move_plan_task_up|set_assistant_queue|set_plan_task_note|remove_plan_row|restore_plan_row|refresh_plan|add_plan_repeat|set_plan_repeat|delete_plan_repeat|list_assistant_requests|claim_request|complete_request|decline_request)$' { return 'living-plan' }
         '^(show_in_studio|suggest_next|get_next_step|set_next_step)$' { return 'studio' }
+        '^(get_standard|set_standard|preview_standard|apply_standard)$' { return 'standard' }
+        '^check_calendar_data$' { return 'calendars' }
+        '^check_same_numbers$' { return 'dax-and-query' }
         default { return 'unclassified' }
     }
 }
@@ -59,6 +63,8 @@ function Get-ReleaseClass([string]$operation) {
 }
 
 function Get-Risk([string]$operation) {
+    if ($operation -eq 'cleanup_meaning_annotations') { return 'high' }
+    if ($operation -eq 'keep_measure_description') { return 'high' }
     if ($operation -match '(deploy|fabric|cicd|publish|entitlement|verified|dry_run|apply_plan|save_model|undo_change|redo_change|agent_policy|approve_agent|deny_agent|refresh_partition)') { return 'critical' }
     if ($operation -match '^(create_|set_|update_|delete_|apply_|rename_|remove_|purge_|restore_|resolve_file_recovery|rollback_|git_|tag_|define_|mark_|generate_)') { return 'high' }
     # The spec-first start's writers: they create a model on disk, change the plan the person approves, or build it.
@@ -90,6 +96,9 @@ foreach ($file in $evidenceFiles) {
 # This oracle is deliberately lexical, so reflection over DTO properties and receipt member names can look like
 # MCP calls. Keep reviewed false matches explicit instead of crediting tests that never exercise the operation.
 $falsePositiveReferences = @{
+    # UI summary rendering and a ResizeObserver stand-in do not exercise these MCP operations.
+    'disconnect' = @('Semanticus.VSCode/test/checked.test.mjs')
+    'plan_rows' = @('Semanticus.VSCode/test/checked.test.mjs')
     'get_lineage' = @('Semanticus.Tests/WorkflowRunFrameTests.cs')
     'get_properties' = @(
         'Semanticus.Tests/CertificateComputationTests.cs',
@@ -116,13 +125,11 @@ $operations = foreach ($tool in $toolNames) {
     }
 }
 
-$rpcPaths = @(
-    'Semanticus.Engine/EngineRpcTarget.cs',
-    'Semanticus.Engine/HumanGovernanceRpcTarget.cs'
-)
+$rpcPaths = @(git ls-files --cached --others --exclude-standard -- 'Semanticus.Engine/EngineRpcTarget*.cs' 'Semanticus.Engine/HumanGovernanceRpcTarget*.cs' | Sort-Object -Unique)
 $rpcSource = ($rpcPaths | ForEach-Object { Get-Content -LiteralPath $_ -Raw }) -join "`n"
 $rpcCount = ([regex]::Matches($rpcSource, 'public\s+(?:async\s+)?Task(?:<[^>]+>)?\s+[A-Za-z0-9_]+\s*\(')).Count
-$iEngineSource = Get-Content -LiteralPath 'Semanticus.Engine/IEngine.cs' -Raw
+$iEnginePaths = @(git ls-files --cached --others --exclude-standard -- 'Semanticus.Engine/IEngine*.cs' | Sort-Object -Unique)
+$iEngineSource = ($iEnginePaths | ForEach-Object { Get-Content -LiteralPath $_ -Raw }) -join "`n"
 $iEngineCount = ([regex]::Matches($iEngineSource, '^\s*Task<', [Text.RegularExpressions.RegexOptions]::Multiline)).Count
 
 $appSource = Get-Content -LiteralPath 'Semanticus.VSCode/webview/src/App.tsx' -Raw
@@ -153,7 +160,7 @@ $withoutReference = @($operations | Where-Object { $_.referenceEvidence.Count -e
 $inventory = [ordered]@{
     schemaVersion = 1
     sourceHash = $sourceHash
-    sources = @($mcpPaths) + $rpcPaths + @('Semanticus.Engine/IEngine.cs', 'Semanticus.VSCode/webview/src/App.tsx', $routePath)
+    sources = @($mcpPaths) + $rpcPaths + $iEnginePaths + @('Semanticus.VSCode/webview/src/App.tsx', $routePath)
     summary = [ordered]@{
         mcpOperations = $operations.Count
         rpcActions = $rpcCount

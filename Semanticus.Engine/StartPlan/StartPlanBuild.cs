@@ -105,13 +105,36 @@ namespace Semanticus.Engine.StartPlan
             // A kept name is not a change to the model: it is an answer. It is carried out below, as the acceptance of the naming finding the name raises.
             var keeps = clones.Where(c => c.Line.Kept && IsKeptName(c.Item)).ToList();
             var toApply = clones.Where(c => c.Line.Kept && !IsKeptName(c.Item)).Select(c => c.Item).ToList();
+            // The plan owns the words' author. Preview and either build door must write the same provenance.
+            // Capture the measures now so the provenance follows a rename in this same batch.
+            var measures = m.AllMeasures.ToDictionary(ObjectRefs.For, StringComparer.OrdinalIgnoreCase);
+            var descriptions = clones.Where(c => c.Line.Kept && c.Item.Kind == "set_description")
+                .Select(c => (Measure: measures.GetValueOrDefault(c.Item.ObjectRef ?? ""),
+                    Source: DescriptionSource(c.Line)))
+                .Where(d => d.Measure != null).ToList();
             PlanLineExecutor.ApplyInBatch(engine, m, s, toApply,
                 new PlanLineOptions { CloseNeedsAgainst = clones.Where(c => !IsKeptName(c.Item)).Select(c => c.Item).ToList() });
             var lost = toApply.FirstOrDefault(i => !string.Equals(i.Status, "applied", StringComparison.OrdinalIgnoreCase));
             if (lost != null)
                 throw new StartPlanBuildRefusedException("One change in the plan could not be made, so nothing was built. "
                     + (string.IsNullOrWhiteSpace(lost.ObjectName) ? lost.ObjectRef : lost.ObjectName) + ": " + (lost.Note ?? "it could not be made."));
+            foreach (var description in descriptions.Where(d => m.AllMeasures.Contains(d.Measure)))
+                description.Measure.SetAnnotation(LocalEngine.DescriptionProvenanceAnnotation, description.Source);
             AcceptKeptNames(doc, m, keeps);
+        }
+
+        private static string DescriptionSource(StartLine line)
+        {
+            var author = line.DescriptionBy;
+            // Older word lines recorded the writer in Rationale. Use it only while those words remain unchanged.
+            if (author == null && line.Word == line.Item?.After)
+                author = line.Item?.Rationale switch
+                {
+                    "Written by you." => StartDecidedBy.Person,
+                    "Written by your assistant." => StartDecidedBy.Assistant,
+                    _ => null,
+                };
+            return author switch { StartDecidedBy.Person => "person", StartDecidedBy.Assistant => "ai", _ => null };
         }
 
         /// <summary>Carry out the plan's kept names: accept the naming finding each name raises, so the scan counts it as passed. Runs after the lines that rename, because a

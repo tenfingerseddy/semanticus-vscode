@@ -110,7 +110,8 @@ assert.match(query, /!measured && \(r\.coldMs != null \|\| r\.warmMs != null\) &
 assert.match(query, /!measured && r\.coldMs == null && r\.warmMs == null && <div/);
 
 // ── N5. Validation reads again ────────────────────────────────────────────────────────────────────────────────────────────────────────────
-assert.match(tests, /const \{ id: sessionId \} = useSessionIdentity\(\);\n\s+useEffect\(\(\) => \{\n\s+suiteTries\.current = 0;\n\s+void loadSuite\(\); void loadSources\(\); void loadMappings\(\); void loadHistory\(\);\n\s+\}, \[loadSuite, loadSources, loadMappings, loadHistory, sessionId\]\);/, 'the page reads again when the open model arrives');
+assert.ok(tests.includes('setChecksPage(null); void loadChecksPage();'), 'a new session reads its Checked page');
+assert.ok(tests.includes('void loadSuite(); void loadSources(); void loadMappings(); void loadHistory();'), 'a new session reads its saved checks and table data');
 assert.match(tests, /suiteTries\.current\+\+ < 4/, 'a failed read is tried again');
 assert.match(tests, /document\.addEventListener\('visibilitychange', again\)/, 'coming back to the window reads again');
 assert.match(tests, /foldRunResults\(current, checks\.filter\(\(c\) => !!c\.defId\)\.map\(recordedOutcome\), newest\.when\)/, 'the newest recorded run fills an empty page');

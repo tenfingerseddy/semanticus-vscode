@@ -379,7 +379,7 @@ function HistoryRowView({ row, parent, now, selected, busy, open, onSelect, onTo
           </>
         )}
       </span>
-      <span className="ph-ver">{ver && <span className={'ph-word ph-' + ver.tone}>{ver.tone === 'good' ? <Check /> : <Dot />}{ver.word}</span>}</span>
+      <span className="ph-ver">{ver && !M.hasMeasureWrite(row) && <span className={'ph-word ph-' + ver.tone}>{ver.tone === 'good' ? <Check /> : <Dot />}{ver.word}</span>}</span>
       <span className="ph-act" onClick={(e) => e.stopPropagation()}>
         {a.kind === 'undo' && <>
           <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" disabled={busy} onClick={() => onAction(row)} data-testid={`ph-undo-${row.id}`}>Undo to here</button>
@@ -459,7 +459,7 @@ export function HistoryDetail({ row, parent, chain, now, busy, sessionId, onClos
         </ol>
       )}
 
-      {ver && (
+      {!M.hasMeasureWrite(row) && ver && (
         <div className="ph-verline">
           {ver.tone === 'good' ? <Check /> : <Dot tone={ver.tone} />}
           <span><b>{ver.word}.</b> {record?.overrideReason ? '"' + record.overrideReason + '"' : M.recordWords(record)}{' '}

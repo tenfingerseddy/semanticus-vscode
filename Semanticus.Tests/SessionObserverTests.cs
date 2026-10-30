@@ -114,7 +114,8 @@ namespace Semanticus.Tests
             await engine.CreateTableAsync("T", "human");
             var s = sm.Current;
 
-            var probe = Assert.Single(s.Observers);   // the engine-installed HealthDeltaProbe
+            // Marks add a peer observer. This test isolates the health contribution, not the observer count.
+            var probe = Assert.Single(s.Observers.OfType<HealthDeltaProbe>());
             s.UnregisterObserver(probe);
             var planter = new Planter();
             s.RegisterObserver(planter);
@@ -148,7 +149,7 @@ namespace Semanticus.Tests
         private static async Task<ChangeNotification> CaptureAsync(SessionManager sm, Func<Task> act)
         {
             ChangeNotification last = null;
-            Action<ChangeNotification> handler = n => last = n;
+            Action<ChangeNotification> handler = n => { if (n.IsCommit) last = n; };
             sm.Bus.Changed += handler;
             try { await act(); } finally { sm.Bus.Changed -= handler; }
             return last;

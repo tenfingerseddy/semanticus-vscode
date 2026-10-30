@@ -1,6 +1,7 @@
 // tokens.css first, ahead of every module that brings its own stylesheet: every other style reads the
 // visual-language tokens it defines, and the bundle keeps CSS in import order.
 import './tokens.css';
+import './checked.css';
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';

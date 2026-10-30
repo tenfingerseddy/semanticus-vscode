@@ -63,7 +63,10 @@ function makePage(typed) {
     querySelectorAll: () => [],
     addEventListener: (type, fn) => { (listeners.document[type] ??= []).push(fn); },
   };
-  const window = { addEventListener: (type, fn) => { (listeners.window[type] ??= []).push(fn); } };
+  const window = {
+    addEventListener: (type, fn) => { (listeners.window[type] ??= []).push(fn); },
+    dispatchEvent: event => { (listeners.window[event.type] ?? []).forEach(fn => fn(event)); return true; },
+  };
   new Function('acquireVsCodeApi', 'document', 'window', 'navigator', 'getComputedStyle', gridSource)(
     () => ({ postMessage: (m) => posted.push(m) }), document, window, { platform: 'Linux' }, () => ({}));
   return {

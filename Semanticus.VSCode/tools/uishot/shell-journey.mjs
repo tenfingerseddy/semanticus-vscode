@@ -88,7 +88,7 @@ try {
   const awkwardRef = 'measure:Sales/Net "Sales]';
   await dispatch(page, { type: 'navigate', sessionId: 'uishot', tab: 'daxlab', target: awkwardRef });
   await page.waitForFunction(() => window.__uishotHarness.state()['input:lab.bq.uishot'] === 'EVALUATE ROW("Net ""Sales]", [Net "Sales]]])');
-  assert.equal(await activeArea(page), 'Edit');
+  assert.equal(await activeArea(page), 'Explore');   // the Query page lives in Explore since 15 Oct
   const editor = await page.$('.cm-content');
   assert.ok(editor, 'DAX query editor mounted');
   await editor.click();

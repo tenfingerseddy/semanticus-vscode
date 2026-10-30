@@ -54,6 +54,44 @@ namespace Semanticus.Tests
             return (engine, (await engine.ListMeasuresAsync()).First().Ref);
         }
 
+        // TC (DEC-0017) scope 3: a Checked proof is evidence of one check on this machine, so it never rides a checkpoint commit,
+        // even from a sidecar whose .gitignore was written before the checked/ line existed.
+        [Fact]
+        public async Task A_checkpoint_commit_holds_no_checked_proof_file()
+        {
+            var (dir, model) = Repo();
+            try
+            {
+                var side = LayoutStore.DirFor(model);
+                Directory.CreateDirectory(side);
+                File.WriteAllText(Path.Combine(side, ".gitignore"), "engine.lock\nengine.json\nexperience.jsonl\n");   // an older sidecar
+                var (engine, measure) = await Open(model);
+                using (engine)
+                {
+                    await engine.SetDaxAsync(measure, "1", "human");
+                    var proofs = Path.Combine(side, "checked");
+                    Directory.CreateDirectory(proofs);
+                    File.WriteAllText(Path.Combine(proofs, "tag.json"), "{\"verdict\":\"wrong\"}");
+                    // fx27: the saved check results hold live model numbers in their cells, so they stay on this machine too.
+                    File.WriteAllText(Path.Combine(side, "measure-checks-0123456789abcdef.json"), "[{\"MeasureRef\":\"measure:Sales/Total\"}]");
+                    File.WriteAllText(Path.Combine(side, "measure-checks-0123456789abcdef.json.new"), "[]");
+                    File.WriteAllText(Path.Combine(side, "layout.json"), "{}");   // a sidecar file that should ride along, so the commit is not empty by accident
+
+                    var made = await engine.CreateHistoryCheckpointAsync("Accepted total", commit: true, "human");
+                    Assert.Null(made.Error);
+                    Assert.True(made.Committed);
+                    Assert.DoesNotContain(made.Files, x => x.Contains("checked/", StringComparison.Ordinal));
+                    Assert.DoesNotContain(made.Files, x => x.Contains("measure-checks-", StringComparison.Ordinal));
+                    var tracked = Git(dir, "ls-files");
+                    Assert.DoesNotContain("checked/", tracked);
+                    Assert.DoesNotContain("measure-checks-", tracked);
+                    Assert.Contains("checked/", File.ReadAllText(Path.Combine(side, ".gitignore")));
+                    Assert.Contains("measure-checks-*.json", File.ReadAllText(Path.Combine(side, ".gitignore")));
+                }
+            }
+            finally { Delete(dir); }
+        }
+
         [Fact]
         public async Task Preview_and_commit_are_model_scoped_and_listed_from_git()
         {

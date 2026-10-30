@@ -174,7 +174,7 @@ check('the card: plain words, no dash, and the choices are named in the card', (
   const text = JSON.stringify(C.START_CARD);
   assert.doesNotMatch(text, /[—–]/);
   for (const k of ['tableOut', 'tablePutBack', 'tableSample', 'sampleSome', 'sampleNone', 'sampleReading']) assert.ok(C.START_CARD[k], k + ' is in the card copy');
-  assert.match(C.START_CARD.sampleSome(['Sales', 'Store']), /Sales and Store/); assert.match(C.START_CARD.sampleSome(['Sales']), /never sees the rows/);
+  assert.match(C.START_CARD.sampleSome(['Sales', 'Store']), /Sales and Store/); assert.match(C.START_CARD.sampleSome(['Sales']), /Source sample rows stay on your computer/);
   const consent = src('consent.tsx');
   assert.match(consent, /consent-table-sample/); assert.match(consent, /consent-table-toggle/);
   assert.match(consent, /op: 'set_table_sample'/, 'the same op the assistant uses');

@@ -416,6 +416,7 @@ namespace Semanticus.Engine
                         {
                             if (s.Revision != serializedAt) return false;
                             s.MarkSavedToDisk(false);
+                            MarksPublished(s);
                             return true;
                         });
                         if (marked) PublishSaveNotification(s, "save", origin: origin);
@@ -628,6 +629,7 @@ namespace Semanticus.Engine
                     // row, so the page can untick it and count only what will go. Nothing is written and no connection is opened.
                     var cannotGo = RehearsePush(ldb, adb, diff, pushRefs);
                     var note = $"Preview: {pushRefs.Length - cannotGo.Count} object(s) would be pushed to {right.Database} on {right.Endpoint}." + DeleteNote() + RepublishNote() + CommitHint(origin, "push");
+                    note = JoinNotes(note, ModelCompare.RenameBreakNote(diff.Items, applicable, right.Database));
                     return new ApplyDiffResult { Applied = false, Count = applicable.Length, AppliedRefs = applicable, FailedRefs = republishDeleteRefs.Concat(cannotGo).ToArray(), Target = tlabel, Note = note };
                 }
 
@@ -921,6 +923,7 @@ namespace Semanticus.Engine
                 // A publish that landed changes what the footer says (the publish target is set by it) and, through its own record, what the
                 // model reads as unsaved. The window only re-reads on a change notice, so it is sent whether or not the saved mark above was.
                 if (!markedSaved && rep != null && rep.Committed && sess != null) PublishSaveNotification(sess, "publish", origin: origin);
+                // The service's model changed under any proof made against it (Checked): retire its scheduler and caches.
 
                 // APPLIED is truthful — tied to the deploy: either it committed real change(s), or (nothing was left to
                 // change AND nothing failed) it's a clean, verified no-op. A push where everything the merge claimed
@@ -948,6 +951,7 @@ namespace Semanticus.Engine
                 // knows a new calc table exists-but-is-empty and needs a refresh. Never dropped.
                 var partialErr = (rep != null && rep.Committed && rep.Error != null) ? rep.Error : null;
                 if (partialErr != null) noteOut += " Warning: " + partialErr;
+                noteOut = JoinNotes(noteOut, ModelCompare.RenameBreakNote(bdiff.Items, appliedRefs, right.Database));
                 return new ApplyDiffResult { Applied = applied, Count = appliedCount, AppliedRefs = appliedRefs, FailedRefs = failed.ToArray(), Target = tlabel, Note = noteOut, Error = partialErr,
                     RestorePointId = applied ? restorePoint?.Id : null };
             }

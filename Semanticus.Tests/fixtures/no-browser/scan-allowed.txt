@@ -45,3 +45,6 @@ Semanticus.Tests/PlanStatementCheck4FixTests.cs	Assert.Contains("az login", mess
 # hero20 D8: these assert the product never tells the person to run it.
 Semanticus.Tests/NewModelPublishCreateTests.cs	Assert.DoesNotContain("az login", NewModelPublish.NoSignInSaved);
 Semanticus.Tests/NewModelPublishCreateTests.cs	Assert.DoesNotContain("az login", ex.Message, StringComparison.OrdinalIgnoreCase);
+# The calculation harness uses headless Chromium with its own scratch profile. These lines select its binary and report an exit.
+Semanticus.VSCode/test/try-calculation.test.mjs	const browserPath = process.env.SEMANTICUS_BROWSER || '/usr/bin/chromium';
+Semanticus.VSCode/test/try-calculation.test.mjs	child.once('exit', (code) => no(new Error(`Chromium exited ${code}: ${stderr}`)));

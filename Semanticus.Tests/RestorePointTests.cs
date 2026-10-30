@@ -389,6 +389,8 @@ namespace Semanticus.Tests
             Assert.Contains("Rolled", r.Note);
         }
 
+
+
         [Fact]
         public async Task Rollback_of_an_unchanged_target_is_a_clean_no_op()
         {

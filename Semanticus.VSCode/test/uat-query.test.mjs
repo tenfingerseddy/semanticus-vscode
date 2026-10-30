@@ -409,7 +409,7 @@ assert.match(src('query.tsx'), /gridRowsInTimeOrder\(/, 'the Table tab uses it')
   const lab = src('daxlab.tsx'), nb = src('query-notebook.tsx');
   assert.match(lab, /quietFieldsRun\.current = true; setConfig\(shown\.config\)/, 'P7: Fields on a question marks the run that follows as quiet');
   assert.match(lab, /const quiet = quietFieldsRun\.current; quietFieldsRun\.current = false;[\s\S]*runQuery\(q, !quiet\)/, 'P7: and the wells run that follows is told not to record');
-  assert.match(lab, /async function runQuery\(q: string, record = true\)/);
+  assert.match(lab, /async function runQuery\(q: string, record = true, calculation = false\)/);
   assert.match(lab, /if \(record\) void rpc<string \| null>\('recordQueryRun'/, 'P7: a quiet run records no row');
   assert.match(lab, /function moveCompareTo\(next: string \| null, adopt = false\)/, 'P5: Compare moves with the open row');
   assert.match(lab, /setExprARaw\(s\?\.exprARaw \?\? ''\); setExprB\(s\?\.exprB \?\? ''\); setEqEv\(s\?\.eqEv \?\? null\)/, 'P5: a row never opened here starts blank, with no rewrite and no verdict');

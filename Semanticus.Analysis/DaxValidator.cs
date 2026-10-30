@@ -399,21 +399,25 @@ namespace Semanticus.Engine
 
         private static (int count, int end) CountArgs(string s, int openParen)
         {
-            var depth = 0;
+            var depth = 1;
+            var braces = 0;
             var count = 0;
             var any = false;
-            for (var i = openParen; i < s.Length; i++)
+            // Strings, names and comments are already masked. Only outer commas separate arguments.
+            for (var i = openParen + 1; i < s.Length; i++)
             {
                 var c = s[i];
-                if (c == '(') { depth++; continue; }
                 if (c == ')')
                 {
                     depth--;
                     if (depth == 0) return (any ? count : 0, i);
                     continue;
                 }
-                if (c == ',' && depth == 1) { count++; continue; }
-                if (depth == 1 && !char.IsWhiteSpace(c) && !any) { any = true; count = 1; }
+                if (c == ',' && depth == 1 && braces == 0) { count++; continue; }
+                if (!char.IsWhiteSpace(c) && !any) { any = true; count = 1; }
+                if (c == '(') depth++;
+                else if (c == '{') braces++;
+                else if (c == '}') braces--;
             }
             return (0, -1);
         }
@@ -431,7 +435,7 @@ namespace Semanticus.Engine
         {
             "APPROXIMATEDISTINCTCOUNT", "AVERAGE", "AVERAGEA", "AVERAGEX", "COUNT", "COUNTA", "COUNTAX", "COUNTBLANK", "COUNTROWS", "COUNTX", "DISTINCTCOUNT", "DISTINCTCOUNTNOBLANK", "MAX", "MAXA", "MAXX", "MIN", "MINA", "MINX", "PRODUCT", "PRODUCTX", "SUM", "SUMX",
             "CALENDAR", "CALENDARAUTO", "DATE", "DATEDIFF", "DATEVALUE", "DAY", "EDATE", "EOMONTH", "HOUR", "MINUTE", "MONTH", "NETWORKDAYS", "NOW", "QUARTER", "SECOND", "TIME", "TIMEVALUE", "TODAY", "UTCNOW", "UTCTODAY", "WEEKDAY", "WEEKNUM", "YEAR", "YEARFRAC",
-            "CLOSINGBALANCEMONTH", "CLOSINGBALANCEQUARTER", "CLOSINGBALANCEYEAR", "DATEADD", "DATESBETWEEN", "DATESINPERIOD", "DATESMTD", "DATESQTD", "DATESYTD", "ENDOFMONTH", "ENDOFQUARTER", "ENDOFYEAR", "FIRSTDATE", "FIRSTNONBLANK", "LASTDATE", "LASTNONBLANK", "NEXTDAY", "NEXTMONTH", "NEXTQUARTER", "NEXTYEAR", "OPENINGBALANCEMONTH", "OPENINGBALANCEQUARTER", "OPENINGBALANCEYEAR", "PARALLELPERIOD", "PREVIOUSDAY", "PREVIOUSMONTH", "PREVIOUSQUARTER", "PREVIOUSYEAR", "SAMEPERIODLASTYEAR", "STARTOFMONTH", "STARTOFQUARTER", "STARTOFYEAR", "TOTALMTD", "TOTALQTD", "TOTALYTD",
+            "CLOSINGBALANCEMONTH", "CLOSINGBALANCEQUARTER", "CLOSINGBALANCEYEAR", "DATEADD", "DATESBETWEEN", "DATESINPERIOD", "DATESMTD", "DATESQTD", "DATESYTD", "ENDOFMONTH", "ENDOFQUARTER", "ENDOFYEAR", "FIRSTDATE", "FIRSTNONBLANK", "FIRSTNONBLANKVALUE", "LASTDATE", "LASTNONBLANK", "LASTNONBLANKVALUE", "NEXTDAY", "NEXTMONTH", "NEXTQUARTER", "NEXTYEAR", "OPENINGBALANCEMONTH", "OPENINGBALANCEQUARTER", "OPENINGBALANCEYEAR", "PARALLELPERIOD", "PREVIOUSDAY", "PREVIOUSMONTH", "PREVIOUSQUARTER", "PREVIOUSYEAR", "SAMEPERIODLASTYEAR", "STARTOFMONTH", "STARTOFQUARTER", "STARTOFYEAR", "TOTALMTD", "TOTALQTD", "TOTALYTD",
             "ALL", "ALLCROSSFILTERED", "ALLEXCEPT", "ALLNOBLANKROW", "ALLSELECTED", "CALCULATE", "CALCULATETABLE", "EARLIER", "EARLIEST", "FILTER", "KEEPFILTERS", "LOOKUPVALUE", "REMOVEFILTERS", "SELECTEDVALUE",
             "ACCRINT", "ACCRINTM", "AMORDEGRC", "AMORLINC", "COUPDAYBS", "COUPDAYS", "COUPDAYSNC", "COUPNCD", "COUPNUM", "COUPPCD", "CUMIPMT", "CUMPRINC", "DB", "DDB", "DISC", "DOLLARDE", "DOLLARFR", "DURATION", "EFFECT", "FV", "INTRATE", "IPMT", "ISPMT", "MDURATION", "NOMINAL", "NPER", "ODDFPRICE", "ODDFYIELD", "ODDLPRICE", "ODDLYIELD", "PDURATION", "PMT", "PPMT", "PRICE", "PRICEDISC", "PRICEMAT", "PV", "RATE", "RECEIVED", "RRI", "SLN", "SYD", "TBILLEQ", "TBILLPRICE", "TBILLYIELD", "VDB", "XIRR", "XNPV", "YIELD", "YIELDDISC", "YIELDMAT",
             "COLUMNSTATISTICS", "CONTAINS", "CONTAINSROW", "CONTAINSSTRING", "CONTAINSSTRINGEXACT", "CUSTOMDATA", "HASONEFILTER", "HASONEVALUE", "ISAFTER", "ISBLANK", "ISCROSSFILTERED", "ISEMPTY", "ISERROR", "ISEVEN", "ISFILTERED", "ISINSCOPE", "ISLOGICAL", "ISNONTEXT", "ISNUMBER", "ISODD", "ISONORAFTER", "ISSELECTEDMEASURE", "ISSUBTOTAL", "ISTEXT", "SELECTEDMEASURE", "SELECTEDMEASUREFORMATSTRING", "SELECTEDMEASURENAME", "USERCULTURE", "USERNAME", "USEROBJECTID", "USERPRINCIPALNAME", "INFO.VIEW.COLUMNS", "INFO.VIEW.MEASURES", "INFO.VIEW.RELATIONSHIPS", "INFO.VIEW.TABLES",

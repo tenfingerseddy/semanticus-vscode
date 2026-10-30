@@ -816,7 +816,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     if (back) { setRemoved(null); setSentence(null); }
   }, [control, removed]);
 
-  const planItems = plan?.items ?? [];
+  const planItems = useMemo(() => plan?.items ?? [], [plan?.items]);
   // A row that turned done and that a re-read no longer lists is drawn from the last time it was seen, as Done: Done just
   // now never loses a row the run finished.
   const items = useMemo(() => {
@@ -1183,7 +1183,7 @@ export function ObjectActions({ sessionId, objectRef, onGo, onHistory }: {
     primary = <><button className={main} onClick={() => onGo('data', ref)}>Preview data</button><button className={btn} onClick={() => onGo('mcode', ref)}>Edit Power Query</button><button className={btn} onClick={() => onGo('diagram', ref, [object.table])}>Show in diagram</button></>;
     also = <><button className={quiet} onClick={() => onGo('lineage', ref)}>Lineage</button><button className={quiet} onClick={() => onGo('stats', ref)}>Table size</button><button className={quiet} onClick={() => runHostCommand('semanticus.newMeasure', ref, sessionId)}>Add measure</button><button className={quiet} onClick={onHistory}>History</button></>;
   } else if (object.kind === 'measure') {
-    primary = <><button className={main} onClick={() => runHostCommand('semanticus.editDax', ref, sessionId)}>Edit formula</button><button className={btn} onClick={() => onGo('query', ref)}>Try calculation</button><button className={btn} onClick={() => onGo('tests', ref)}>Add check</button></>;
+    primary = <><button className={main} onClick={() => runHostCommand('semanticus.editDax', ref, sessionId)}>Edit formula</button><button className={btn} onClick={() => runHostCommand('semanticus.tryCalculation', ref, sessionId)}>Try calculation</button></>;
     also = <><button className={quiet} onClick={() => onGo('lineage', ref)}>Lineage</button><button className={quiet} onClick={onHistory}>History</button></>;
   } else if (object.kind === 'relationship') {
     primary = <><button className={main} onClick={() => onGo('diagram', ref)}>Edit in diagram</button><button className={btn} onClick={() => onGo('lineage', ref)}>Lineage</button></>;

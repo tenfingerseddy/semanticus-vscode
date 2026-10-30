@@ -10,6 +10,8 @@ import { useFeature } from './pro';
 import { DataTable, PickLine, Visual, type Kind } from './visuals';
 import { Icon, Item, Mark, Menu, moodOf } from './validation-parts';
 import './validation.css';
+import { ChecksPage } from './checks-page';
+import type { ChecksPageView } from './checks-page-model';
 import {
   NO_VISUAL, boardHeadline, boardParts, boardTally, notRunRunWhy, oneNotice, quickChecksNote, plainFigure, plainToolNote, readableTitle, changesVisual, checkVisual, chosenVisual, countsVisual, historyVisual, movedCount,
   relationshipVisual, statusOf, visualAsk,
@@ -248,6 +250,27 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
   // The eight newest recorded runs, each opened once: what the history card and Before and after draw from.
   const [runDetails, setRunDetails] = useState<Record<string, TestRunDetailW>>({});
   const [busy, setBusy] = useState(false);
+  const [checksPage, setChecksPage] = useState<ChecksPageView | null>(null);
+  const checksRead = useRef(0);
+  const checksReading = useRef(false);
+  const checksAgain = useRef(false);
+  const loadChecksPage = useCallback(async (): Promise<void> => {
+    if (checksReading.current) { checksAgain.current = true; checksRead.current++; return; }
+    checksReading.current = true;
+    const read = ++checksRead.current;
+    try { const next = await rpc<ChecksPageView>('getChecksPage'); if (read === checksRead.current) setChecksPage(next); }
+    catch { /* Keep the last read while the connection returns. */ }
+    finally {
+      checksReading.current = false;
+      if (checksAgain.current) { checksAgain.current = false; void loadChecksPage(); }
+    }
+  }, []);
+  useEffect(() => {
+    void loadChecksPage();
+    const off = [onDidChange(() => { void loadChecksPage(); }), onReconnect(() => { void loadChecksPage(); }), onTestSuiteChanged(() => { void loadChecksPage(); }),
+      onActivity(event => { if (event.kind === 'check_waiver' || event.kind === 'checks_page_changed') void loadChecksPage(); })];
+    return () => { checksRead.current++; checksAgain.current = false; off.forEach(fn => fn()); };
+  }, [loadChecksPage]);
   // How far the run this page started has got. The page names its run, so only its own progress moves the count.
   const [progress, setProgress] = useState<RunProgress | null>(null);
   const ownRunId = useRef<string | null>(null);
@@ -327,6 +350,7 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
   const { id: sessionId } = useSessionIdentity();
   useEffect(() => {
     suiteTries.current = 0;
+    setChecksPage(null); void loadChecksPage();
     void loadSuite(); void loadSources(); void loadMappings(); void loadHistory();
   }, [loadSuite, loadSources, loadMappings, loadHistory, sessionId]);
   // Coming back to the window (a tab switch, a restored window) reads the engine's saved checks again, so a stale page never stays.
@@ -409,6 +433,7 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
     // History still showing July after a September recorded run because nothing invalidated it.
     void loadMappings();
     if (persisted) void loadHistory();
+    void loadChecksPage();
   };
   // The assistant's run. Its call opens the page on "running", its result is the run on screen (the same fold as the person's own),
   // and a run that did not happen says why. A person pressing Run takes the page back.
@@ -450,7 +475,7 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
     rpcPressed<TestRunW>('runTests', options.persist ?? false, 'human', options.only ?? null, options.sections ?? null, runId)
       .then((next) => adoptRun(next, startedAt, !!options.persist))
       .catch((error: unknown) => setErr(error instanceof Error ? error.message : String(error)))
-      .finally(() => { ownRunId.current = null; setProgress(null); setBusy(false); });
+      .finally(() => { ownRunId.current = null; setProgress(null); setBusy(false); void loadChecksPage(); });
   };
   const runEverything = (persist = false) => runSuite({ persist });
   const runTicked = () => {
@@ -511,13 +536,13 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
 
   return (
     <div className="h-full overflow-auto">
-      {author && <AuthorDrawer shape={author} editing={editing} focus={authorFocus} latestSources={sources} onClose={closeAuthor}
+      {author && <AuthorDrawer shape={author} editing={editing} focus={authorFocus} latestSources={sources} onClose={closeAuthor} runOnSave
         onSaved={() => { void loadSuite(); void loadMappings(); }} addSourceOnOpen={authorAddSource} addSourceHost={authorHost} onSourcesChanged={() => { void loadSources(); }} />}
       {mappingTable != null && <AuthorDrawer shape="tableRowCount" table={mappingTable} latestSources={sources} onClose={() => setMappingTable(null)}
         onSaved={() => { void loadMappings(); setMappingTable(null); }} onSourcesChanged={() => { void loadSources(); }} />}
       {reportOpen && <ReportExportDialog modelName={run?.modelName} onClose={() => setReportOpen(false)} />}
       <main className="sem-page vc-page" data-testid="validation-A">
-        <h1 className="sr-only">Validation</h1>
+        <h1 className="sr-only">Checks</h1>
         {/* Checks and Reports are still two real routes, so the area strip, a deep link and Kept reports in the "..." menu all agree
             about which one is open. Reports is not a tab any more: it is reached from the menu and says how to come back. */}
         {page === 'reports'
@@ -530,6 +555,8 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
           </>
           : <div className="va-col">
             <ValidationBoard
+              checksPage={checksPage} onChecksChanged={loadChecksPage} onAddNumber={ref => openAuthor('measureValue', { id: '', kind: 'measureValue', title: '', targetRef: ref, enabled: true, paramsJson: JSON.stringify({ measureRef: ref }) })}
+              onSqlCheck={ref => openAuthor('measureReconcile', { id: '', kind: 'measureReconcile', title: '', targetRef: ref, enabled: true, paramsJson: JSON.stringify({ measureRef: ref }) })}
               definitions={definitions} latest={latest} loading={loadingSuite} liveModel={!!testModelLabel}
               ticked={ticked} onTick={setTicked}
               onEdit={(def, focus, host) => openAuthor(def.kind === 'measureValue' ? 'measureValue' : 'measureReconcile', def, focus, false, host)}
@@ -552,66 +579,6 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
 
 // ---------------------------------------------------------------------------------------------------
 // 1. Run, and the scope menu that says exactly what "all" includes.
-// ---------------------------------------------------------------------------------------------------
-function RunMenu({ busy, groups, onRunAll, onRunGroup, onChoose }: {
-  busy: boolean; groups: RunGroup[]; onRunAll: () => void; onRunGroup: (group: RunGroup) => void; onChoose: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const wrap = useRef<HTMLSpanElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const outside = (event: MouseEvent) => { if (!wrap.current?.contains(event.target as Node)) setOpen(false); };
-    const escape = (event: globalThis.KeyboardEvent) => { if (event.key !== 'Escape') return; setOpen(false); buttonRef.current?.focus(); };
-    window.addEventListener('mousedown', outside); window.addEventListener('keydown', escape);
-    return () => { window.removeEventListener('mousedown', outside); window.removeEventListener('keydown', escape); };
-  }, [open]);
-  const pick = (fn: () => void) => { setOpen(false); fn(); };
-  return (
-    <span ref={wrap} className="va-rel va-split">
-      <button type="button" disabled={busy} className="sem-btn sem-btn-primary" data-testid="v-run" onClick={onRunAll}>{busy ? 'Running…' : 'Run checks'}</button>
-      <button ref={buttonRef} type="button" aria-label="What to run" aria-haspopup="menu" aria-expanded={open} disabled={busy}
-        className="sem-btn sem-btn-primary" onClick={() => setOpen((v) => !v)}>{Icon.down}</button>
-      {open && (
-        <div role="menu" aria-label="What to run" className="va-pop va-pop-right va-pop-wide">
-          {groups.length === 0
-            ? <div className="va-pop-note">Nothing to run yet. Add a check, or map a table to a SQL source.</div>
-            : groups.map((group) => (
-              // Each row names its own family, so no two rows read the same (Astra, finding 3).
-              <button key={group.id} type="button" role="menuitem" aria-label={runOnlyLabel(group)} className="va-item va-item-count"
-                onClick={() => pick(() => onRunGroup(group))}>
-                <span>{group.label}</span>
-                <span className="va-faint va-num">{group.count ?? 'every one'}</span>
-              </button>
-            ))}
-          <button type="button" role="menuitem" className="va-item" onClick={() => pick(onChoose)}>Choose checks…</button>
-        </div>
-      )}
-    </span>
-  );
-}
-
-// ---------------------------------------------------------------------------------------------------
-// 2. One status line.
-// ---------------------------------------------------------------------------------------------------
-/** While a run goes: the count in words and a thin bar. Before the first count arrives it is just the words. */
-function RunProgressLine({ progress }: { progress: RunProgress | null }) {
-  const percent = runProgressPercent(progress);
-  return (
-    <div className="sem-tests-progress basis-full" role="status" aria-live="polite">
-      <span className="sem-num">{runProgressText(progress)}</span>
-      {percent !== null && (
-        <div role="progressbar" aria-label="Checks run" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}
-          style={{ marginTop: 'var(--sem-space-2)', height: 'var(--sem-space-1)', borderRadius: 'var(--sem-radius-chip)', background: 'var(--sem-border)', overflow: 'hidden' }}>
-          <div style={{ width: `${percent}%`, height: '100%', background: 'var(--sem-accent)', transition: 'width 200ms ease-out' }} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------------------------------
-// 3. ONE list of saved checks.
 // ---------------------------------------------------------------------------------------------------
 function parseValueParams(def?: TestDefinitionW): MeasureValueParamsW {
   if (!def?.paramsJson) return {};
@@ -696,10 +663,12 @@ function findingOf(row: BoardRow): string {
 }
 
 function ValidationBoard({
+  checksPage, onChecksChanged, onAddNumber, onSqlCheck,
   definitions, latest, loading, liveModel, ticked, onTick, onEdit, onNew, onRunOne, onChanged, onConnect, onOpenDaxLab,
   retained, relSkipped, hasRun, mappings, countsSkipped, onMapSource, onRunSection, busy, history, recorded, runKey,
   run, running, progress, partRun, notices, groups, onRunAll, onRunTicked, onRunGroup, onRecord, onNewPick, onAddSqlSource, onOpenReport, onOpenReports, onWaiverChanged,
 }: {
+  checksPage: ChecksPageView | null; onChecksChanged: () => void; onAddNumber: (ref: string) => void; onSqlCheck?: (ref: string) => void;
   definitions: TestDefinitionW[]; latest: Record<string, StoredResult<ReconcileOutcomeW>>; loading: boolean; liveModel: boolean;
   ticked: Set<string>; onTick: (next: Set<string>) => void;
   onEdit: (def: TestDefinitionW, focus?: AuthorFocus, sourceHost?: string) => void; onNew: () => void;
@@ -714,73 +683,28 @@ function ValidationBoard({
   /** A check was waived or taken back: the page reads the stored waivers again. */
   onWaiverChanged: () => void;
 }) {
-  const askOn = useFeature('askData') === 'granted';
-  const [open, setOpen] = useState<string | null>(null);
-  const [showPass, setShowPass] = useState(false);
-  const [showAllProblems, setShowAllProblems] = useState(false);
-  const [showNotRun, setShowNotRun] = useState(false);
-  const [notRunWhy, setNotRunWhy] = useState<string | null>(null);
-  const [passFilter, setPassFilter] = useState('');
-  const [panel, setPanel] = useState<PanelId>(null);
+  const [panel, setPanel] = useState<'new' | 'history' | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
-  const [picks, setPicks] = useState<Record<string, VisualPick>>({});
-  // 10b. A failed row action writes its reason into ITS OWN row. Astra turned a check off with a save
-  // error injected: the menu closed, the check stayed on, and nothing at all was said.
   const [rowError, setRowError] = useState<Record<string, string>>({});
-  const setRowErrorFor = (id: string, message: string | null) => setRowError((current) => {
-    const next = { ...current };
-    if (message) next[id] = message; else delete next[id];
-    return next;
-  });
-
-  const rows = useMemo<BoardRow[]>(() => definitions.map((def) => {
-    const stored = latest[def.id];
-    return { def, outcome: stored?.outcome, whenIso: stored?.whenIso, chip: resultChip(def.enabled, stored?.outcome) };
-  }), [definitions, latest]);
-
-  const toggleTick = (id: string) => { const next = new Set(ticked); if (next.has(id)) next.delete(id); else next.add(id); onTick(next); };
-  const toggleEnabled = (def: TestDefinitionW) => {
-    setRowErrorFor(def.id, null);
-    // The switch changes one flag, so it flips it on the check as it stands NOW: the row may be older than an edit
-    // the assistant just saved (save_test), and writing the row's copy back would undo that edit.
-    rpc<TestSuiteInfoW>('listTests')
-      .then((suite) => { const live = (suite.definitions ?? []).find((d) => d.id === def.id) ?? def; return rpc('saveTest', { ...live, enabled: !def.enabled }); })
-      .then(() => { announceTestSuiteChanged(); onChanged(); })
-      .catch((e: unknown) => setRowErrorFor(def.id, `Could not turn this check ${def.enabled ? 'off' : 'on'}: ${e instanceof Error ? e.message : String(e)}`));
-  };
-  // Waive: accept the difference a check shows. One press, the note is optional, and Undo waive takes it back in one press. The engine writes
-  // it to the same store the findings' waivers use, so the assistant's waive_finding (system 'test') is the same act.
-  const waive = (def: TestDefinitionW, note: string) => {
-    setRowErrorFor(def.id, null);
-    rpc('waiveFinding', CHECK_WAIVER_SYSTEM, def.id, null, note.trim() || null, 'human').then(() => onWaiverChanged())
-      .catch((e: unknown) => setRowErrorFor(def.id, `Could not accept this difference: ${plainCheckError(e instanceof Error ? e.message : String(e))}`));
-  };
-  const unwaive = (def: TestDefinitionW) => {
-    setRowErrorFor(def.id, null);
-    rpc('unwaiveFinding', CHECK_WAIVER_SYSTEM, def.id, null, 'human').then(() => onWaiverChanged())
-      .catch((e: unknown) => setRowErrorFor(def.id, `Could not take this back: ${plainCheckError(e instanceof Error ? e.message : String(e))}`));
-  };
-  const remove = (def: TestDefinitionW) => {
-    setRowErrorFor(def.id, null);
-    rpc<boolean>('deleteTest', def.id).then(() => { setConfirmId(null); announceTestSuiteChanged(); onChanged(); })
-      .catch((e: unknown) => { setConfirmId(null); setRowErrorFor(def.id, `Could not delete this check: ${e instanceof Error ? e.message : String(e)}`); });
-  };
-
-  // ---- the parts that are not saved checks: relationships, table counts, and the two recorded-run views
-  const rels = retained?.value.relationships ?? [];
-  const relTally: RelationshipTally = relationshipTally(rels.map(relationshipChecks));
-  const relChip: ResultChip | null = rels.length > 0 ? relationshipChip(relTally) : null;
-  const relVisual = useMemo(() => relationshipVisual(rels.map((r) => ({
-    name: r.name, manyTable: r.manyTable, oneTable: r.oneTable, manyRowCount: r.manyRowCount,
-    refVerdict: verdictKey(r.referentialIntegrity.verdict), refCount: r.referentialIntegrity.count,
-  }))), [rels]);
-  const countRows = mappings?.rows ?? [];
-  const countsVis = useMemo(() => countsVisual(countRows.map((r) => ({ table: r.modelTable, model: r.lastModelCount, source: r.lastSourceCount }))), [countRows]);
-  // A calculated table has nothing to count against, and a row nobody made is not a check: see countsFamilyChip.
-  const countsChip: ResultChip | null = countsFamilyChip(countRows);
-  const changes = useMemo(() => changesVisual(recorded), [recorded]);
-  const histVisual = useMemo(() => historyVisual(recorded), [recorded]);
-
+  const changed = () => { onChanged(); onChecksChanged(); };
+  const fail = (id: string, error: unknown, label: string) => setRowError(current => ({ ...current, [id]: label + plainCheckError(error instanceof Error ? error.message : String(error)) }));
+  const action = (id: string, request: Promise<unknown>, label = '') => { request.then(changed).catch(error => fail(id, error, label)); };
+  const page = checksPage;
+  const outcomes = page?.results ?? {};
+  const askOn = useFeature('askData') === 'granted';
+  const [picks, setPicks] = useState<Record<string, VisualPick>>({});
+  const rows = useMemo<BoardRow[]>(() => definitions.map(def => {
+    const outcome = (page ? outcomes[def.id] : latest[def.id]?.outcome) as ReconcileOutcomeW | undefined;
+    return { def, outcome, whenIso: page?.resultTimes?.[def.id] ?? latest[def.id]?.whenIso, chip: resultChip(def.enabled, outcome) };
+  }), [definitions, outcomes, latest, page?.when]);
+  const rels = (page?.relationships?.relationships ?? retained?.value.relationships ?? []) as RelationshipResultW[];
+  const relTally = relationshipTally(rels.map(relationshipChecks));
+  const relChip = rels.length ? relationshipChip(relTally) : null;
+  const relVisual = useMemo(() => relationshipVisual(rels.map(r => ({ name: r.name, manyTable: r.manyTable, oneTable: r.oneTable, manyRowCount: r.manyRowCount,
+    refVerdict: verdictKey(r.referentialIntegrity.verdict), refCount: r.referentialIntegrity.count }))), [rels]);
+  const countRows = (page?.tables.rows ?? mappings?.rows ?? []) as TableMappingRowW[];
+  const countsVis = useMemo(() => countsVisual(countRows.map(r => ({ table: r.modelTable, model: r.lastModelCount, source: r.lastSourceCount }))), [countRows]);
+  const countsChip = countsFamilyChip(countRows);
   // ---- Jev picks every check's visual in ONE call per run: words and counts only (checks.visual_kind, Pro, off until
   // its bar is cleared). The rules' pick is drawn and labelled as the rules' pick whenever Jev is off, unsure or not asked.
   const visuals = useMemo(() => {
@@ -824,183 +748,45 @@ function ValidationBoard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [askOn, askKey]);
 
-  // ---- one line per check, the two families included
-  const items: BoardItem[] = [
-    ...rows.map<BoardItem>((row) => ({ id: row.def.id, name: readableTitle(row.def.title), chip: row.chip, finding: findingOf(row), row })),
-    ...(relChip ? [{
-      id: 'relationships', name: 'Relationships', chip: relChip, family: 'relationships' as const,
-      finding: relTally.attention > 0 ? `${relTally.attention.toLocaleString()} ${relTally.attention === 1 ? 'needs' : 'need'} attention`
-        : relTally.unknown > 0 ? `${relTally.unknown.toLocaleString()} could not be checked` : `All ${rels.length.toLocaleString()} match`,
-    }] : []),
-    ...(countsChip ? [{
-      id: 'rowcounts', name: 'Table row counts', chip: countsChip, family: 'rowcounts' as const,
-      finding: countsFamilyFinding(countRows),
-    }] : []),
-  ];
-  const rank = (chip: ResultChip) => (chip === 'Differs' ? 0 : chip === 'Could not check' ? 1 : chip === 'Accepted' ? 1.5 : chip === 'Not run' ? 2 : chip === 'Pass' ? 3 : 4);
-  const ordered = [...items].sort((a, b) => rank(a.chip) - rank(b.chip) || a.name.localeCompare(b.name));
-  const problems = ordered.filter((item) => NEEDS_A_LOOK.includes(item.chip));
-  const notRunItems = ordered.filter((item) => item.chip === 'Not run');
-  // Accepted differences are not buried with the passes: they stay in view in a list of their own.
-  const acceptedItems = ordered.filter((item) => item.chip === 'Accepted');
-  const quiet = ordered.filter((item) => !NEEDS_A_LOOK.includes(item.chip) && item.chip !== 'Not run' && item.chip !== 'Accepted');
-  const shownProblems = showAllProblems || problems.length <= PROBLEMS_SHOWN ? problems : problems.slice(0, PROBLEMS_SHOWN);
-  const filterOn = showPass && quiet.length > PASS_FILTER_FROM;
-  const wanted = passFilter.trim().toLowerCase();
-  const shownQuiet = filterOn && wanted ? quiet.filter((item) => item.name.toLowerCase().includes(wanted)) : quiet;
-  const live = items.filter((item) => item.chip !== 'Off');
-  const tally = boardTally(items.map((item) => item.chip));
-  const { passed, differs, cannot, accepted } = tally;
-  const off = items.length - live.length;
-  const anyResult = passed + differs + cannot + accepted > 0;
-  // The grade panel talks about the checks that ran, so it keeps its own count.
-  const checked = passed + differs + cannot + accepted;
-  const headline = boardHeadline(tally);
-  // Relationships and Table row counts are added to every run, so the count of checks is never a surprise (round 2 N16).
-  // Only this run's own results count: a chip kept from an older run says nothing about what this run added.
-  const quickNote = quickChecksNote(!!relChip && relChip !== 'Not run' && !relSkipped, !!countsChip && countsChip !== 'Not run' && !countsSkipped);
-  // Every check is in one state, so the line under the headline adds up to the number in it.
-  const counts = boardParts(tally).map((part) => <span key={part.kind} className={part.kind === 'differs' ? 'va-bad va-num' : part.kind === 'cannot' ? 'va-warn va-num' : part.kind === 'notRun' ? 'va-num' : undefined}>{part.text}</span>);
-
-  // ---- the head: the verdict first, a strip with one cell per check, one line under it
-  const head = <div className="va-head">
-    <div className="va-verdict" data-testid="v-verdict">
-      {items.length === 0 && !loading
-        ? null
-        : anyResult
-          ? <div className="va-figure" aria-live="polite"><span className="va-n va-num">{headline.big}</span><span className="va-of">{headline.rest}</span></div>
-          : <div className="va-figure"><span className="va-n va-num va-faint">{headline.big}</span><span className="va-of">{headline.rest}</span></div>}
-      {/* One cell for each check that has a result, drawn only once something has run: a check with no result has nothing to show, and an empty outline means nothing to a person. */}
-      {anyResult && <span className="va-strip" data-testid="v-strip" role="img"
-        aria-label={boardParts(tally).length ? `${passed} pass, ${boardParts(tally).map((part) => part.text).join(', ')}` : `${passed} pass`}>
-        {ordered.filter((item) => item.chip !== 'Off' && item.chip !== 'Not run').map((item) => <span key={item.id} className={`va-cell va-c-${moodOf(item.chip)}`} title={`${item.name}: ${item.chip}`} />)}</span>}
-      {running
-        ? <RunProgressLine progress={progress} />
-        : <div className="va-sub" data-testid="v-sub">
-          {counts.map((node, i) => <Fragment key={i}>{i > 0 && <span className="va-sep">·</span>}{node}</Fragment>)}
-          {run?.when
-            ? <><span className="va-sep">·</span><button type="button" className="va-link" onClick={() => setPanel(panel === 'history' ? null : 'history')}
-              title="Run history and grade" data-testid="v-when">Ran {whenShort(run.when)}</button></>
-            : items.length > 0 && !anyResult && <span>Press Run checks.</span>}
-        </div>}
-      {!running && anyResult && quickNote && <p className="va-line va-faint" data-testid="v-quick">{quickNote}</p>}
-    </div>
-    <div className="va-tools" data-testid="v-head">
-      <Menu label="More" trigger={Icon.more} className="va-icon-btn" testid="v-more">{(close) => <>
-        <Item onClick={() => { close(); setPanel('new'); }}>New check</Item>
-        <Item disabled={!run} title={run ? undefined : 'Run the checks first.'} onClick={() => { close(); onOpenReport(); }}>Report of this run</Item>
-        <Item onClick={() => { close(); onOpenReports(); }}>Kept reports</Item>
-        <Item onClick={() => { close(); setPanel('history'); }}>Run history and grade</Item>
-        <Item disabled={!run || !!run.persisted || running} title={!run ? 'Run the checks first.' : run.persisted ? 'This run is already recorded.' : undefined}
-          onClick={() => { close(); onRecord(); }}>Record this run</Item>
-      </>}</Menu>
-      <RunMenu busy={running} groups={groups} onRunAll={onRunAll} onRunGroup={onRunGroup} onChoose={() => setPanel('choose')} />
-    </div>
-  </div>;
-
-  // ---- one line, and its detail on demand
-  const detailFor = (item: BoardItem) => {
-    if (item.row) {
-      const row = item.row;
-      return <CheckDetail def={row.def} outcome={row.outcome} whenIso={row.whenIso} chip={row.chip} visual={visuals[row.def.id] ?? NO_VISUAL} pick={picks[row.def.id]}
-        liveModel={liveModel} error={rowError[row.def.id]} onDismissError={() => setRowErrorFor(row.def.id, null)}
-        confirming={confirmId === row.def.id} onConfirm={() => setConfirmId(row.def.id)} onCancelConfirm={() => setConfirmId(null)}
-        onDelete={() => remove(row.def)} onToggleEnabled={() => toggleEnabled(row.def)}
-        onEdit={onEdit} onRunOne={() => onRunOne(row.def.id)} onConnect={onConnect} onOpenDaxLab={onOpenDaxLab}
-        onWaive={(note) => waive(row.def, note)} onUnwaive={() => unwaive(row.def)} />;
-    }
-    return item.family === 'relationships'
-      ? <RelationshipsBody retained={retained} skipped={relSkipped} cv={relVisual} pick={picks.relationships} busy={busy} onRun={() => onRunSection('relationships')} />
-      : <RowCountsBody list={mappings} skipped={countsSkipped} onMapSource={onMapSource} cv={countsVis} pick={picks.rowcounts} busy={busy} onRun={() => onRunSection('tableCounts')} />;
+  const numberDetail = (id: string) => {
+    const def = (page?.numbers.definitions.find(d => d.id === id) ?? definitions.find(d => d.id === id)) as TestDefinitionW | undefined;
+    if (!def) return null;
+    const outcome = (page ? outcomes[id] : latest[id]?.outcome) as ReconcileOutcomeW | undefined;
+    const chip = resultChip(def.enabled, outcome);
+    const params = def.kind === 'measureValue' ? parseValueParams(def) : parseReconcileParams(def);
+    const visual = outcome ? checkVisual(outcome, { title: def.title, trusted: def.kind === 'measureValue', sourceLabel: 'your source', expectedText: (params as MeasureValueParamsW).expectedValue }) : NO_VISUAL;
+    return <CheckDetail def={def} outcome={outcome} whenIso={page?.resultTimes?.[id] ?? latest[id]?.whenIso} chip={chip} visual={visuals[id] ?? visual} pick={picks[id]}
+      liveModel={liveModel} error={rowError[id]} onDismissError={() => setRowError(current => ({ ...current, [id]: '' }))}
+      confirming={confirmId === id} onConfirm={() => setConfirmId(id)} onCancelConfirm={() => setConfirmId(null)}
+      onDelete={() => action(id, rpc('deleteTest', id), 'Could not delete this check: ')}
+      onToggleEnabled={() => action(id, rpc<TestSuiteInfoW>('listTests').then(suite => {
+        const live = suite.definitions.find(d => d.id === id);
+        if (!live) throw new Error('This saved number was removed.');
+        return rpc('saveTest', { ...live, enabled: !def.enabled });
+      }), 'Could not turn this check on or off: ') }
+      onEdit={onEdit} onRunOne={() => onRunOne(id)} onConnect={onConnect} onOpenDaxLab={onOpenDaxLab}
+      onWaive={note => action(id, rpc('waiveFinding', CHECK_WAIVER_SYSTEM, id, null, note.trim() || null, 'human').then(onWaiverChanged))}
+      onUnwaive={() => action(id, rpc('unwaiveFinding', CHECK_WAIVER_SYSTEM, id, null, 'human').then(onWaiverChanged))} />;
   };
-  const line = (item: BoardItem) => {
-    const isOpen = open === item.id;
-    const mood = moodOf(item.chip);
-    return <div key={item.id} className="va-rowwrap" data-testid={`card-${item.id}`}>
-      <button type="button" className={`va-row ${isOpen ? 'va-row-on' : ''}`} aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : item.id)} data-testid={`va-row-${item.id}`}>
-        <Mark mood={mood} word={item.chip} />
-        <span className="va-name" title={item.name}>{item.name}</span>
-        <span className={`va-find va-num ${mood === 'differs' ? 'va-bad' : mood === 'cannot' && item.chip !== 'Not run' ? 'va-warn' : 'va-faint'}`}>{item.finding}</span>
-        <span className="va-chev">{isOpen ? Icon.down : Icon.right}</span>
-      </button>
-      {isOpen && <div className="va-detail" data-testid={`va-detail-${item.id}`}>{detailFor(item)}</div>}
-    </div>;
-  };
-
-  const emptyCard = (text: ReactNode, id: string) => <section className="sem-card va-empty" data-testid={`empty-${id}`}>{text}</section>;
-  const empty = loading && items.length === 0 ? emptyCard('Loading your saved checks…', 'sources')
-    : definitions.length === 0 && items.length === 0 ? emptyCard(<div className="flex flex-wrap items-center gap-2">
-      <span>Start with a check: compare a number with your database, or save one you trust.</span>
-      <button type="button" className="sem-btn sem-btn-sm" onClick={onNew}>New check</button>
-    </div>, 'sources') : null;
-
-  // The Run on the "not run yet" row runs those checks: one family alone, one check alone, or everything when they are mixed.
-  const runNotRun = () => {
-    const why = notRunRunWhy(notRunItems, liveModel);
-    setNotRunWhy(why);
-    if (why) { setShowNotRun(true); return; }
-    const only = notRunItems.length === 1 ? notRunItems[0] : null;
-    if (only?.family === 'rowcounts') onRunSection('tableCounts');
-    else if (only?.family === 'relationships') onRunSection('relationships');
-    else if (only?.row) onRunOne(only.id);
-    else onRunAll();
-  };
-
-  const closePanel = () => setPanel(null);
+  const tableDetail = (id: 'relationships' | 'rowcounts') => id === 'relationships'
+    ? <RelationshipsBody retained={page?.relationships ? { value: page.relationships as RelationshipReportW, whenIso: page.relationshipsWhen ?? '', modelKey: '' } : retained}
+        skipped={relSkipped} cv={relVisual} pick={picks.relationships} busy={busy} onRun={() => onRunSection('relationships')} />
+    : <RowCountsBody list={page?.tables as TableMappingListW ?? mappings} skipped={countsSkipped} onMapSource={onMapSource} cv={countsVis} pick={picks.rowcounts} busy={busy} onRun={() => onRunSection('tableCounts')} />;
+  const seen = boardTally(definitions.map(d => resultChip(d.enabled, (outcomes[d.id] ?? latest[d.id]?.outcome) as ReconcileOutcomeW | undefined)));
   const panelBody = panel === 'history'
-    ? <HistoryPanel seen={{ passed, differs, cannot, checked, accepted }} run={run} partRun={partRun} history={history} histVisual={histVisual} changes={changes} picks={picks} recorded={recorded} busy={running} onRecord={onRecord} onClose={closePanel} />
-    : panel === 'new'
-      ? <Panel title="New check" onClose={closePanel}><div className="va-choices"><NewCheckChoices onPick={(shape) => { closePanel(); onNewPick(shape); }} onAddSqlSource={() => { closePanel(); onAddSqlSource(); }} /></div></Panel>
-      : panel === 'choose'
-        ? <Panel title="Choose checks to run" onClose={closePanel}>
-          {rows.filter((r) => r.def.enabled).length === 0 ? <p className="va-line va-faint">No check is turned on.</p>
-            : <div className="va-pick" role="group" aria-label="Checks to run">{rows.filter((r) => r.def.enabled).map((r) => <label key={r.def.id} className="va-pickrow">
-              <input type="checkbox" checked={ticked.has(r.def.id)} onChange={() => toggleTick(r.def.id)} aria-label={`Tick ${r.def.title} to run on its own`} />
-              <span className="va-name">{readableTitle(r.def.title)}</span></label>)}</div>}
-          <div className="va-actions-row">
-            <button type="button" className="sem-btn sem-btn-primary sem-btn-sm" disabled={running || ticked.size === 0} title={tickedRunRefusal(ticked.size) ?? undefined}
-              onClick={() => { closePanel(); onRunTicked(); }}>{ticked.size > 0 ? `Run ${ticked.size.toLocaleString()} chosen` : 'Run the chosen'}</button>
-            {ticked.size > 0 && <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" onClick={() => onTick(new Set())}>Clear</button>}
-          </div></Panel>
-        : null;
-
-  return <>
-    {head}
-    {notices}
-    {panelBody}
-    {empty}
-    {(problems.length > 0 || notRunItems.length > 0) && <section className="sem-card va-list" data-testid="v-problems" aria-label="Checks that need a look">
-      {shownProblems.map(line)}
-      {shownProblems.length < problems.length && <div className="va-rowwrap"><button type="button" className="va-row va-moreline" onClick={() => setShowAllProblems(true)} data-testid="v-problems-more">
-        <span /><span className="va-name">and {(problems.length - shownProblems.length).toLocaleString()} more</span><span /><span className="va-chev">{Icon.right}</span></button></div>}
-      {notRunItems.length > 0 && <div className="va-rowwrap" data-testid="v-notrun">
-        <div className="va-row va-notrun">
-          <Mark mood="off" word="Not run" />
-          <button type="button" className="va-link va-name va-notrun-name" aria-expanded={showNotRun} onClick={() => setShowNotRun(!showNotRun)} data-testid="v-notrun-toggle">
-            {notRunItems.length === 1 ? notRunItems[0].name : `${notRunItems.length.toLocaleString()} not run yet`}</button>
-          <button type="button" className="sem-btn sem-btn-sm" disabled={running} onClick={runNotRun} data-testid="v-notrun-run">Run</button>
-          <button type="button" className="va-chev va-chev-btn" aria-label={showNotRun ? 'Hide the checks not run yet' : 'Show the checks not run yet'} aria-expanded={showNotRun}
-            onClick={() => setShowNotRun(!showNotRun)} data-testid="v-notrun-arrow">{showNotRun ? Icon.down : Icon.right}</button>
-        </div>
-        {notRunWhy && <p className="va-note" role="status" data-testid="v-notrun-why">{notRunWhy}</p>}
-        {showNotRun && <div className="va-notrun-list">{notRunItems.map(line)}</div>}
-      </div>}
-    </section>}
-    {hasRun && !liveModel && rels.length === 0 && !relSkipped && <p className="va-line va-faint" data-testid="v-norels">
-      Relationships need a live test model to count rows. <button type="button" className="va-link" onClick={onConnect}>Connect a test model</button> and run again.</p>}
-    {acceptedItems.length > 0 && <section className="sem-card va-list" data-testid="v-accepted" aria-label="Accepted differences">
-      {acceptedItems.map(line)}
-    </section>}
-    {quiet.length > 0 && <button type="button" className="va-link va-passlink" aria-expanded={showPass} onClick={() => setShowPass(!showPass)} data-testid="v-show-pass">
-      {showPass ? 'Hide them' : passed === 0 ? `Show the ${off.toLocaleString()} turned off`
-        : `Show the ${passed.toLocaleString()} that pass${off ? ` and ${off.toLocaleString()} turned off` : ''}`}</button>}
-    {showPass && quiet.length > 0 && <section className="sem-card va-list" data-testid="v-passing" aria-label="Checks that pass">
-      {filterOn && <div className="va-filter"><input type="search" className="va-filter-input" value={passFilter} onChange={(e) => setPassFilter(e.target.value)}
-        placeholder="Find a check by name" aria-label="Find a check by name" data-testid="v-pass-filter" /></div>}
-      {shownQuiet.map(line)}
-      {shownQuiet.length === 0 && <p className="va-line va-faint va-nomatch">No check has that name.</p>}
-    </section>}
-  </>;
+    ? <HistoryPanel seen={{ passed: seen.passed, differs: seen.differs, cannot: seen.cannot, accepted: seen.accepted, checked: seen.passed + seen.differs + seen.cannot + seen.accepted }}
+        run={run} partRun={partRun} history={history} histVisual={historyVisual(recorded)} changes={changesVisual(recorded)} picks={picks} recorded={recorded} busy={running} onRecord={onRecord} onClose={() => setPanel(null)} />
+    : panel === 'new' ? <Panel title="Add a number you trust" onClose={() => setPanel(null)}><div className="va-choices"><NewCheckChoices onPick={shape => { setPanel(null); onNewPick(shape); }} onAddSqlSource={() => { setPanel(null); onAddSqlSource(); }} /></div></Panel> : null;
+  if (!page) return <p role="status" className="va-faint">Loading Checks…</p>;
+  return <ChecksPage page={page} busy={running} progress={progress} onRun={onRunAll} onAdd={ref => ref ? onAddNumber(ref) : setPanel('new')}
+    onConnect={onAddSqlSource} onSqlCheck={onSqlCheck} onChanged={onChecksChanged} notices={notices} renderNumber={numberDetail} renderTable={tableDetail} after={panelBody}
+    more={cleanup => <Menu label="More" trigger={Icon.more} className="va-icon-btn" testid="v-more">{close => <>
+      <Item onClick={() => { close(); setPanel('new'); }}>Add a number you trust</Item>
+      <Item disabled={!run} onClick={() => { close(); onOpenReport(); }}>Report of this run</Item>
+      <Item onClick={() => { close(); onOpenReports(); }}>Kept reports</Item>
+      <Item onClick={() => { close(); setPanel('history'); }}>Run history and grade</Item>
+      <Item disabled={cleanup.disabled} onClick={() => { close(); cleanup.run(); }}>Remove old annotations</Item>
+    </>}</Menu>} />;
 }
 
 function Panel({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
@@ -1557,7 +1343,7 @@ export function EvidenceBody() {
   return <>
     {openEvidence && <EvidenceArtifactDialog
       title={openEvidence.title || 'Report'}
-      subtitle={`${openEvidence.kind === 'workflow-run' ? 'Workflow' : 'Validation'} · ${formatDate(openEvidence.createdUtc)} · saved with ${openEvidence.modelName || 'the current model'}`}
+      subtitle={`${openEvidence.kind === 'workflow-run' ? 'Workflow' : 'Checks'} · ${formatDate(openEvidence.createdUtc)} · saved with ${openEvidence.modelName || 'the current model'}`}
       baseName={`${(openEvidence.modelName || 'semanticus').replace(/[^\w.-]+/g, '_')}-${openEvidence.id}`}
       stateKey="tests.evidence.saved.format"
       load={() => rpc<EvidenceArtifactW>('getEvidence', openEvidence.id)}
@@ -1592,7 +1378,7 @@ export function EvidenceLibraryView({ library, onOpen }: { library: EvidenceLibr
   if (!library) return <Card className="text-(length:--sem-text-meta)"><span style={{ color: 'var(--sem-muted)' }}>Loading the reports…</span></Card>;
   if (items.length === 0) return <Card className="text-(length:--sem-text-meta)">
     <strong>No reports yet.</strong>
-    <p className="m-0 mt-1" style={{ color: 'var(--sem-muted)' }}>{library.note ?? 'Run the checks in Validation, then use Report to keep one with this model.'}</p>
+    <p className="m-0 mt-1" style={{ color: 'var(--sem-muted)' }}>{library.note ?? 'Open Checks, then use Report to keep a run with this model.'}</p>
     {library.directoryPath && <div className="mt-2"><PathDisclosure label="Where these are kept" path={library.directoryPath} /></div>}
   </Card>;
   return <>
@@ -1600,7 +1386,7 @@ export function EvidenceLibraryView({ library, onOpen }: { library: EvidenceLibr
     {items.map((item) => { const countsLine = evidenceCountsLine(item); return (
         <Card key={item.id} className="sem-span-3 flex flex-col gap-2 text-(length:--sem-text-meta)">
           <strong className="text-(length:--sem-text-meta)">{item.title || 'Report'}</strong>
-          <span style={{ color: 'var(--sem-muted)' }}>{item.kind === 'workflow-run' ? 'Workflow run' : 'Validation run'} · {formatDate(item.createdUtc)}</span>
+          <span style={{ color: 'var(--sem-muted)' }}>{item.kind === 'workflow-run' ? 'Workflow run' : 'Checks run'} · {formatDate(item.createdUtc)}</span>
           {/* No "by" here: the record's producer is the op or workflow that made it, never who saved it. */}
           {/* Said only when the report describes another model than the one that is open. */}
           {item.modelName && library.modelName && item.modelName.toLocaleLowerCase() !== library.modelName.toLocaleLowerCase()

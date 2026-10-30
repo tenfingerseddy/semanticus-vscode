@@ -30,7 +30,8 @@ const BTN_QUIET = 'sem-btn sem-btn-sm sem-btn-quiet';
 
 function Head({ title, onBack, children }: { title: string; onBack: () => void; children?: React.ReactNode }) {
   return (
-    <div className="sem-inline">
+    // Wraps at a narrow width, so the account line and its button move under the title instead of off the edge.
+    <div className="sem-inline flex-wrap">
       <button type="button" className={BTN_QUIET} data-testid="pick-back" onClick={onBack}>{'‹'} Back</button>
       <h2 className="sem-section-title">{title}</h2>
       {children}
@@ -214,6 +215,10 @@ export function SignInCheck({ authMode, tenant }: { authMode: string; tenant: st
 
 export interface WorkspacePickerViewProps {
   account?: string | null;
+  /** A new sign-in for another account is under way: the header asks for the account, not "as" the saved one. */
+  askingAccount?: boolean;
+  /** "Use another account" beside the account the list is read as. Absent for a sign-in way that has no accounts. */
+  onAnotherAccount?: () => void;
   workspaces: Load<FabricWorkspace>;
   /** Where the engine is. Absent means fine. A starting engine is a wait; a failed one says why. */
   engine?: EngineView;
@@ -273,7 +278,10 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
   return (
     <section className="sem-grid" data-testid="pick-workspace">
       <Head title={COPY.workspaceTitle} onBack={p.onBack}>
-        <span className="sem-text-meta sem-push truncate">{p.account ? `as ${p.account}` : 'You may be asked to sign in'}</span>
+        <span className="sem-push flex min-w-0 max-w-full flex-wrap items-center justify-end gap-x-2">
+          <span className="sem-text-meta min-w-0 truncate" data-testid="pick-as">{p.account ? `as ${p.account}` : p.askingAccount ? COPY.anotherAccountAsk : 'You may be asked to sign in'}</span>
+          {p.onAnotherAccount && <button type="button" className={BTN_QUIET} data-testid="pick-another-account" disabled={p.busy} onClick={p.onAnotherAccount}>{COPY.anotherAccount}</button>}
+        </span>
       </Head>
 
       {p.engine?.state === 'starting' ? (
@@ -366,12 +374,23 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
   );
 }
 
-export function WorkspacePicker({ account, pressedFirst = false, initialAuthMode = 'interactive', initialTenant = '', onBack, onPasteAddress, onConnect }: {
-  account?: string | null; pressedFirst?: boolean; initialAuthMode?: string; initialTenant?: string;
+// Who the list is read as (si2). 'saved': the saved account, as before. 'another': the next read is a new browser sign-in
+// that pins no saved account, so any account in any tenant can be picked. 'chosen': read as the account that sign-in
+// saved (its profile id), so picking a workspace and Connect use it too. The saved default does not move.
+type AccountPick = { mode: 'saved' | 'another' | 'chosen'; profileId: string | null; account: string | null };
+const SAVED_ACCOUNT: AccountPick = { mode: 'saved', profileId: null, account: null };
+
+export function WorkspacePicker({ account, anotherAccount = false, pressedFirst = false, initialAuthMode = 'interactive', initialTenant = '', onBack, onPasteAddress, onConnect }: {
+  account?: string | null; anotherAccount?: boolean; pressedFirst?: boolean; initialAuthMode?: string; initialTenant?: string;
   onBack: () => void; onPasteAddress: () => void; onConnect: PickAction<WorkspaceChoice>;
 }) {
-  const [authMode, setAuthMode] = useState(initialAuthMode);
-  const [tenant, setTenant] = useState(isAdvancedSignIn(initialAuthMode) ? initialTenant : '');
+  // Another account is a browser sign-in, whatever way the last model was opened.
+  const startMode = anotherAccount ? 'interactive' : initialAuthMode;
+  const [authMode, setAuthMode] = useState(startMode);
+  const [tenant, setTenant] = useState(isAdvancedSignIn(startMode) ? initialTenant : '');
+  const [accountPick, setAccountPickState] = useState<AccountPick>(anotherAccount ? { ...SAVED_ACCOUNT, mode: 'another' } : SAVED_ACCOUNT);
+  const accountPickRef = useRef(accountPick);
+  const setAccountPick = (v: AccountPick) => { accountPickRef.current = v; setAccountPickState(v); };
   const [workspaces, setWorkspaces] = useState<Load<FabricWorkspace>>({ kind: 'loading' });
   const [wsId, setWsId] = useState<string | null>(null);
   const [models, setModels] = useState<Load<WorkspaceModel> | null>(null);
@@ -399,8 +418,12 @@ export function WorkspacePicker({ account, pressedFirst = false, initialAuthMode
     // A browser sign-in lives in a window of its own. When the person closes it nothing answers, so the wait is bounded and can be cancelled.
     const bounded = pressed && authMode === 'interactive';
     const showWaiting = bounded ? setTimeout(() => { if (mine === wsGen.current && live.current) setSignIn('waiting'); }, 1500) : undefined;
+    const asked = accountPickRef.current;
+    // A chosen account whose list came back empty left no profile id behind, so a retry signs in again.
+    const anotherAccount = asked.mode === 'another' || (asked.mode === 'chosen' && !asked.profileId);
+    const accountProfileId = asked.mode === 'chosen' ? asked.profileId : null;
     try {
-      const call = (pressed ? rpcPressed : rpc)<FabricWorkspace[]>('listWorkspaces', authMode, tenantArg());
+      const call = (pressed ? rpcPressed : rpc)<FabricWorkspace[]>('listWorkspaces', authMode, tenantArg(), 'human', anotherAccount, accountProfileId);
       let list: FabricWorkspace[];
       if (bounded) {
         const wait = waitForSignIn(call);
@@ -410,7 +433,13 @@ export function WorkspacePicker({ account, pressedFirst = false, initialAuthMode
         if (out.kind === 'unfinished') { setSignIn('unfinished'); return; }
         list = out.value ?? [];
       } else list = (await call) ?? [];
-      if (mine === wsGen.current && live.current) { setEngine({ state: 'ok' }); setSignIn(null); setWorkspaces({ kind: 'ready', items: sortWorkspaces(list) }); }
+      if (mine === wsGen.current && live.current) {
+        if (asked.mode !== 'saved') {
+          const as = list.find((w) => w.accountProfileId);
+          setAccountPick({ mode: 'chosen', profileId: as?.accountProfileId ?? accountProfileId, account: as?.account ?? asked.account });
+        }
+        setEngine({ state: 'ok' }); setSignIn(null); setWorkspaces({ kind: 'ready', items: sortWorkspaces(list) });
+      }
     } catch (e) {
       if (mine !== wsGen.current || !live.current) return;
       // The host has already waited for an engine that was starting. Seeing its not-connected answer now means the engine is still
@@ -444,8 +473,9 @@ export function WorkspacePicker({ account, pressedFirst = false, initialAuthMode
   const pickWorkspace = async (id: string) => {
     const mine = ++modelGen.current;
     setWsId(id); setModelId(null); setModels({ kind: 'loading' }); setConnectError(null);
+    const as = workspaces.kind === 'ready' ? workspaces.items.find((w) => w.id === id)?.accountProfileId ?? null : null;
     try {
-      const list = sortModels((await rpcPressed<WorkspaceModel[]>('listWorkspaceModels', id, authMode, tenantArg())) ?? []);
+      const list = sortModels((await rpcPressed<WorkspaceModel[]>('listWorkspaceModels', id, authMode, tenantArg(), 'human', as)) ?? []);
       if (mine !== modelGen.current || !live.current) return;
       setModels({ kind: 'ready', items: list });
       if (list.length === 1) setModelId(list[0].id);   // one model: it is the pick, one click saved
@@ -459,7 +489,7 @@ export function WorkspacePicker({ account, pressedFirst = false, initialAuthMode
     if (!w || !m) return;
     setBusy(true); setConnectError(null);
     let failure: string | null;
-    try { failure = await onConnect(workspaceChoice(w, m, env, authMode, tenant)); }
+    try { failure = await onConnect(workspaceChoice(w, m, env, authMode, tenant, w.accountProfileId ?? null)); }
     catch (e) { failure = engineSentence(e); }
     if (!live.current) return;
     setBusy(false);
@@ -467,10 +497,12 @@ export function WorkspacePicker({ account, pressedFirst = false, initialAuthMode
   };
 
   return (
-    <WorkspacePickerView account={account} workspaces={workspaces} engine={engine} wsId={wsId} models={models} modelId={modelId} env={env}
+    <WorkspacePickerView account={accountPick.mode === 'saved' ? account : accountPick.account} askingAccount={accountPick.mode === 'another'}
+      onAnotherAccount={authMode === 'interactive' ? () => { setAccountPick({ ...SAVED_ACCOUNT, mode: 'another' }); void loadWorkspaces(); } : undefined}
+      workspaces={workspaces} engine={engine} wsId={wsId} models={models} modelId={modelId} env={env}
       authMode={authMode} tenant={tenant} otherOpen={otherOpen} busy={busy} connectError={connectError}
       onBack={onBack} onRetry={() => void loadWorkspaces()} onPickWorkspace={(id) => void pickWorkspace(id)} onPickModel={setModelId}
-      onEnv={setEnv} onAuthMode={(m) => { setAuthMode(m); if (!isAdvancedSignIn(m)) setTenant(''); }} onTenant={setTenant}
+      onEnv={setEnv} onAuthMode={(m) => { setAuthMode(m); if (!isAdvancedSignIn(m)) setTenant(''); if (m !== 'interactive') setAccountPick(SAVED_ACCOUNT); }} onTenant={setTenant}
       onToggleOther={() => setOtherOpen((v) => !v)} onPasteAddress={onPasteAddress} onConnect={() => void connect()}
       signIn={signIn} onCancelSignIn={cancelWorkspaces} onOpenOther={() => setOtherOpen(true)} />
   );

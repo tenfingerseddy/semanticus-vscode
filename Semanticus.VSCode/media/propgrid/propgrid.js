@@ -1,8 +1,18 @@
 // Properties grid webview logic. Loaded by the extension's PropertyGridProvider AND by the uishot screenshot
 // harness (tools/uishot/propgrid.html), so this file is the single source of truth — edit here, not inline.
 const vscode = acquireVsCodeApi();
+// The marks bundle (checked-ui.js) shares this page's one VS Code API, the model and the selection on screen.
+window.semanticusGrid = { post: (m) => vscode.postMessage(m), model: () => heldModel, key: () => (state ? heldObject : null) };
 const root = document.getElementById('root');
 let state = null;
+let replacingBoxes = false;
+function replaceBoxes(html) {
+  // Chromium fires change and blur while removing a focused, edited box.
+  // Those events are not a save gesture; its draft already lives in drafts.
+  replacingBoxes = true;
+  try { root.innerHTML = html; } finally { replacingBoxes = false; }
+}
+
 let filter = '';
 // Collapsed category names (persist across object switches in this view). Metadata starts folded: its lineage tag and
 // timestamps are bookkeeping, and every other category holds something a person edits.
@@ -67,7 +77,7 @@ function persistObject() {
     delete all[k];
   }
   // Words sent and not confirmed stay held (any object, any model: the key says which); words typed since win over them.
-  for (const [k, v] of inflight) all[k] = heldEntry(v.value, v.base, v.bases);
+  for (const [k, v] of inflight) if (!(k in all)) all[k] = heldEntry(v.value, v.base, v.bases);
   for (const [name, d] of drafts) {
     const p = propNamed(name);
     if ((p && !holdsText(p)) || (d.base !== null && d.draft === d.base)) continue;
@@ -111,10 +121,10 @@ window.addEventListener('message', e => {
       fx.open = false; fx.draft = null; fx.base = null; fx.bases = null; fx.moved = false; comboOpen = null; drafts.clear();
       heldModel = model; heldObject = selKey(m);
     }
-    restoreHeld(m.props);
     state = m; lastError = null;
-    reconcileDrafts();
     confirmSent(m.props);
+    restoreHeld(m.props);
+    reconcileDrafts();
     // A draft that matches the canonical value has landed (or was never changed) — drop it so later edits
     // by the other driver aren't shadowed by a stale draft.
     if (fx.draft != null) { const p = (state.props || []).find(x => x.kind === 'formatExpression'); if (p && p.value === fx.draft.trim()) { fx.draft = null; fx.moved = false; } }
@@ -139,6 +149,7 @@ window.addEventListener('message', e => {
   else if (m.type === 'setOk') {
     // The engine took a write: its words are not the person's to keep any more, whichever object is on screen. Only THOSE words end: words typed since stay.
     const k = JSON.stringify([typeof m.model === 'string' ? m.model : heldModel, typeof m.key === 'string' ? m.key : heldObject, m.name]);
+    acceptSent(k, inflight.get(k), String(m.value == null ? '' : m.value));
     inflight.delete(k);
     const all = readHeld(), e = all[k];
     if (e && typeof e.value === 'string' && e.value.trim() === String(m.value == null ? '' : m.value).trim()) { delete all[k]; writeHeld(all); }
@@ -152,7 +163,7 @@ window.addEventListener('message', e => {
     // A draft this gesture did not write is said out loud (the host shows the line), never dropped without a word.
     if (m.id != null) vscode.postMessage({ type: 'applied', id: m.id, notice: notice || undefined });
   }
-  else if (m.type === 'empty') { state = null; root.innerHTML = '<div class="empty">Open a model to inspect its properties. Select model objects to edit them; clear the selection to return to model settings.</div>'; }
+  else if (m.type === 'empty') { state = null; replaceBoxes('<div class="empty">Open a model to inspect its properties. Select model objects to edit them; clear the selection to return to model settings.</div>'); window.dispatchEvent(new CustomEvent('semanticus-marks-load')); }
 });
 // A Save (or the apply key) commits ONE thing: the field the person is in. An open format editor counts only while its own box has the focus, the
 // person typed a change into it, and its stored expression has not moved under the words (then the person chooses with Apply or Use the new one).
@@ -210,19 +221,41 @@ function reconcileDrafts() {
     d.moved = movedOver(d, p);
   }
 }
+// Typing can continue before the accepted write comes back. That write advances the draft's base;
+// it is not another writer's edit. A later, different stored value still fails the normal comparison.
+function acceptSent(key, sent, value) {
+  if (!sent) return;
+  const sameBase = d => d.base === sent.base && (d.base !== null || sameList(d.bases, sent.bases));
+  const all = readHeld(), held = all[key], owner = heldParts(key);
+  if (held) {
+    if (String(held.value || '').trim() === value.trim()) delete all[key];
+    else if (sameBase(held)) all[key] = heldEntry(held.value, value, null);
+    writeHeld(all);
+  }
+  if (owner && owner[0] === heldModel && owner[1] === heldObject) {
+    const row = propNamed(owner[2]);
+    if (row && sameBase({ base: row.varies ? null : (row.value || ''), bases: basesOf(row) })) {
+      row.value = value; row.varies = false;
+      if (Array.isArray(row.values)) row.values = row.values.map(() => value);
+    }
+    const draft = drafts.get(owner[2]);
+    if (draft && sameBase(draft)) { draft.base = value; draft.bases = null; }
+  }
+}
 // A load that shows the engine took the words ends the hold on them (R-B): only then are they not the person's to keep.
 function confirmSent(props) {
   if (!heldModel || heldObject == null) return;
-  let any = false;
   for (const k of Array.from(inflight.keys())) {
     const p = heldParts(k);
     if (!p || p[0] !== heldModel || p[1] !== heldObject) continue;
     const row = (props || []).find((x) => x.name === p[2]);
     if (!row) continue;
     const sent = inflight.get(k);
-    if (String(row.value || '').trim() === String(sent.value || '').trim() && !row.varies) { inflight.delete(k); any = true; }
+    if (String(row.value || '').trim() === String(sent.value || '').trim() && !row.varies) {
+      acceptSent(k, sent, String(row.value || ''));
+      inflight.delete(k);
+    }
   }
-  if (any) persistObject();
 }
 function restoreSent(name, sent) {
   const s = sent || inflight.get(JSON.stringify([heldModel, heldObject, name]));
@@ -366,7 +399,8 @@ function render() {
     if (f && !((p.displayName||'').toLowerCase().includes(f) || (p.name||'').toLowerCase().includes(f))) continue;
     (groups[p.category] = groups[p.category] || []).push(p);
   }
-  let h = '<div class="hdr">' + esc(state.name) + (state.multi ? ' <span class="multi">(multi-edit)</span>' : '') + '</div>';
+  let h = '<div class="hdr"><span class="hdr-name" title="' + esc(state.name) + '">' + esc(state.name) + '</span>'
+    + (state.multi ? ' <span class="multi">(multi-edit)</span>' : '') + '</div>';
   h += '<div class="search"><input id="f" type="search" placeholder="Filter properties…" value="' + esc(filter) + '"></div>';
   const cats = Object.keys(groups);
   if (cats.length === 0) h += '<div class="empty">No properties match “' + esc(filter) + '”.</div>';
@@ -381,7 +415,8 @@ function render() {
   const act = document.activeElement;
   const held = act && act.getAttribute && act.getAttribute('data-prop') && (act.tagName === 'INPUT' || act.tagName === 'TEXTAREA') && act.type !== 'checkbox'
     ? { name: act.getAttribute('data-prop'), start: act.selectionStart, end: act.selectionEnd } : null;
-  root.innerHTML = h;
+  replaceBoxes(h);
+  window.dispatchEvent(new CustomEvent('semanticus-marks-load'));
   wire();
   wireKept();
   persistObject();   // every gesture that re-renders (a load, a choice, Cancel, Apply, a refusal) leaves the held state matching the screen
@@ -654,6 +689,7 @@ function wire() {
     if (el.hasAttribute('indeterminate')) el.indeterminate = true;   // multi-select varies → tri-state checkbox
     if (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type !== 'checkbox')) el.addEventListener('input', () => noteDraft(el));
     el.addEventListener('change', () => {
+      if (replacingBoxes) return;
       lastError = null;
       const value = el.type === 'checkbox' ? String(el.checked) : el.value;
       const name = el.getAttribute('data-prop');

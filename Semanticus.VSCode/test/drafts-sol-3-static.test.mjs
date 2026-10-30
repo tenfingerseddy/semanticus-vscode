@@ -1,6 +1,6 @@
 // drafts-sol round 3, J3: the structure that makes the model fence impossible to forget (the advisor's redesign of the check's T1). Three facts, each checked on the source:
 //   * ONE `registerCommand(` call exists in src/, inside registerPersonCommand, so no command can be added that skips the scope that names its model;
-//   * every command package.json contributes (87) is registered through it;
+//   * every command package.json contributes (88) is registered through it;
 //   * the extension has ONE engine connection constructor, its writer is the fenced writer, and the pipe is opened outside any action's scope (a socket created inside an action
 //     would carry that action's model for ever).
 import assert from 'node:assert/strict';
@@ -41,10 +41,10 @@ test('J3: every command id package.json contributes is registered through regist
   const registered = new Set();
   for (const m of extension.matchAll(/registerPersonCommand\(\s*('([^']+)'|([A-Z_]+))/g)) registered.add(m[2] ?? consts.get(m[3]));
   const ids = manifest.contributes.commands.map((c) => c.command);
-  assert.equal(ids.length, 87, 'package.json contributes 87 commands (a number change here means a command was added or removed: check it is registered)');
+  assert.equal(ids.length, 88, 'package.json contributes 88 commands (a number change here means a command was added or removed: check it is registered)');
   const missing = ids.filter((id) => !registered.has(id));
   assert.deepEqual(missing, [], `contributed commands not registered through registerPersonCommand: ${missing.join(', ')}`);
-  assert.ok(registered.size >= 87, `${registered.size} ids registered through the wrapper`);
+  assert.ok(registered.size >= 88, `${registered.size} ids registered through the wrapper`);
   assert.equal([...extension.matchAll(/vscode\.commands\.registerCommand\(/g)].length, 1, 'no raw vscode.commands.registerCommand outside the wrapper');
 });
 

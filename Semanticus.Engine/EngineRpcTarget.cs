@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Semanticus.Analysis;
@@ -12,7 +13,7 @@ namespace Semanticus.Engine
     /// at connection authentication, never from a caller-supplied payload value. Legacy origin slots remain only
     /// to keep older installed clients wire-compatible; they are ignored.
     /// </summary>
-    public sealed class EngineRpcTarget
+    public sealed partial class EngineRpcTarget
     {
         private readonly IEngine _engine;
         private readonly string _origin;
@@ -60,7 +61,13 @@ namespace Semanticus.Engine
         public Task<ObjectInfo> getObject(string objRef) => _engine.GetObjectAsync(objRef);
         public Task<bool> resolveFileRecovery(string expectedSession, bool restore) => _engine.ResolveFileRecoveryAsync(expectedSession, restore, _origin);
         public Task<string> getDax(string objRef) => _engine.GetDaxAsync(objRef);
+        public Task<MeaningAnnotationCleanup> cleanupMeaningAnnotations() => _engine.CleanupMeaningAnnotationsAsync(_origin);
+        public Task<MeasureDescription> getMeasureDescription(string measureRef) => _engine.GetMeasureDescriptionAsync(measureRef);
+        public Task<DescriptionProposal> draftMeasureDescription(string measureRef, int timeoutSeconds = 60) => _engine.DraftMeasureDescriptionAsync(measureRef, timeoutSeconds);
+        public Task<DescriptionProposal> proposeMeasureDescription(string measureRef, int timeoutSeconds = 60) => _engine.ProposeMeasureDescriptionAsync(measureRef, timeoutSeconds);
+        public Task<SetResult> keepMeasureDescription(string proposalId) => _engine.KeepMeasureDescriptionAsync(proposalId, _origin);
         public Task<SetResult> setDax(string objRef, string expression, string origin = "human", string expectedSession = null, long? expectedRevision = null, string expectedExpression = null) => _engine.SetDaxAsync(objRef, expression, _origin, expectedSession, expectedRevision, expectedExpression);
+        public Task<ChecksPageView> getChecksPage() => _engine.GetChecksPageAsync();
         public Task<DaxLintResult> lintDax(string expression) => _engine.LintDaxAsync(expression);
         public Task<OptimizeMeasureResult> optimizeMeasure(string measureRef, string[] candidates, string[] verifyGroupBy = null, string[] verifyFilters = null, bool apply = true, string origin = "human") => _engine.OptimizeMeasureAsync(measureRef, candidates, verifyGroupBy, verifyFilters, apply, _origin);
         public Task<ProbeResult> probeMeasure(string expr, string primaryAxis = null, ProbeScenario[] scenarios = null, bool includeDefaults = true, int rowCap = 5000) => _engine.ProbeMeasureAsync(expr, primaryAxis, scenarios, includeDefaults, rowCap);
@@ -227,7 +234,7 @@ namespace Semanticus.Engine
         public Task<SetResult> unwaiveFinding(string system, string ruleId, string objRef, string origin = "human") => _engine.UnwaiveFindingAsync(system, ruleId, objRef, _origin);
         public Task<Semanticus.Analysis.WaiverRecord[]> listWaivers() => _engine.ListWaiversAsync();
         public Task<DaxValidation> validateDax(string expression, bool strict = false) => _engine.ValidateDaxAsync(expression, strict);
-        public Task<SetResult> setDescription(string objRef, string text, string origin = "human") => _engine.SetDescriptionAsync(objRef, text, _origin);
+        public Task<SetResult> setDescription(string objRef, string text, string origin = "human", string expectedText = null) => _engine.SetDescriptionAsync(objRef, text, _origin, expectedText);
         // displayFolder stays after the ignored legacy-origin slot so installed clients retain their positional shape.
         public Task<string> createMeasure(string tableRef, string name, string expression, string origin = "human", string displayFolder = null) => _engine.CreateMeasureAsync(tableRef, name, expression, _origin, displayFolder);
         public Task<TreeNode[]> listFunctions() => _engine.ListFunctionsAsync();
@@ -324,11 +331,20 @@ namespace Semanticus.Engine
         public Task<ModelSummary> getOrientation() => _engine.GetOrientationAsync();
         public Task<HarnessReportResult> harnessReport(int topN = 10) => _engine.HarnessReportAsync(topN);
         public Task<CalendarListResult> listCalendars(string tableRef = null) => _engine.ListCalendarsAsync(tableRef);
+        public Task<GetStandardResult> getStandard() => _engine.GetStandardAsync();
+        public Task<SetStandardResult> setStandard(string patch, string target = null, string origin = "human") => _engine.SetStandardAsync(patch, target, _origin);
+        public Task<PreviewStandardResult> previewStandard(string patch = null) => _engine.PreviewStandardAsync(patch);
+        public Task<ApplyStandardResult> applyStandard(string origin = "human") => _engine.ApplyStandardAsync(_origin);
+        public Task<CalendarDataCheckResult> checkCalendarData(string tableRef = null) => _engine.CheckCalendarDataAsync(tableRef);
+        public Task<MeasureNumbersResult> checkSameNumbers(string[] oldMeasures, string[] newMeasures, string[] by = null) => _engine.CheckSameNumbersAsync(oldMeasures, newMeasures, by);
         public Task<CalendarResult> defineCalendar(string tableRef, string name, CalendarMappingSpec[] mappings, string description = null, string origin = "human") => _engine.DefineCalendarAsync(tableRef, name, mappings, description, _origin);
         public Task<SetResult> deleteCalendar(string tableRef, string name, string origin = "human") => _engine.DeleteCalendarAsync(tableRef, name, _origin);
         public Task<CalendarResult> tagCalendarColumn(string tableRef, string calendarName, string column, string timeUnit = null, bool associated = false, bool remove = false, string origin = "human") => _engine.TagCalendarColumnAsync(tableRef, calendarName, column, timeUnit, associated, remove, _origin);
         public Task<CalendarResult> defineCalendarFromTemplate(string template, string tableName = null, string dateColumn = null, int fiscalStartMonth = 7, string startExpr = null, string endExpr = null, string calendarName = null, string origin = "human") => _engine.DefineCalendarFromTemplateAsync(template, tableName, dateColumn, fiscalStartMonth, startExpr, endExpr, calendarName, _origin);
-        public Task<ConnectionStatus> connectXmla(string endpoint, string database, string authMode = "azcli", string rawToken = null, string tenantId = null, bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human") => _engine.ConnectXmlaAsync(endpoint, database, authMode, rawToken, tenantId, forceReauth, accountProfileId, makeDefault, loginHint, _origin);
+        public Task<CalendarProposal> proposeCalendar(string dateTable = null, string[] calendars = null, int fiscalStartMonth = 0, CalendarLevelChoice[] levels = null) => _engine.ProposeCalendarAsync(dateTable, calendars, fiscalStartMonth, levels);
+        public Task<CalendarSetupResult> setupCalendars(string dateTable = null, string[] calendars = null, int fiscalStartMonth = 0, CalendarLevelChoice[] levels = null, bool moveMeasures = true, string origin = "human") => _engine.SetupCalendarsAsync(dateTable, calendars, fiscalStartMonth, levels, moveMeasures, _origin);
+        public Task<AddTimeMeasuresResult> addTimeMeasures(string[] measures = null, string origin = "human") => _engine.AddTimeMeasuresAsync(measures, _origin);
+        public Task<ConnectionStatus> connectXmla(string endpoint, string database, string authMode = null, string rawToken = null, string tenantId = null, bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human") => _engine.ConnectXmlaAsync(endpoint, database, authMode, rawToken, tenantId, forceReauth, accountProfileId, makeDefault, loginHint, _origin);
         public Task<ConnectionStatus> connectLocal(string dataSource = null, string database = null) => _engine.ConnectLocalAsync(dataSource, database);
         public Task<LocalInstance[]> listLocalInstances() => _engine.ListLocalInstancesAsync();
         public Task<ConnectionStatus> connectionStatus() => _engine.ConnectionStatusAsync();
@@ -423,8 +439,8 @@ namespace Semanticus.Engine
         public Task<RestorePointPurgeResult> purgeRestorePoints(string id = null, int? olderThanDays = null,
             bool confirm = false, string confirmToken = null, string origin = "human") =>
             _engine.PurgeRestorePointsAsync(id, olderThanDays, confirm, confirmToken, _origin);
-        public Task<FabricWorkspace[]> listWorkspaces(string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListWorkspacesAsync(authMode, tenantId, _origin, cancellationToken);
-        public Task<FabricSemanticModel[]> listWorkspaceModels(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListWorkspaceModelsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
+        public Task<FabricWorkspace[]> listWorkspaces(string authMode = "azcli", string tenantId = null, string origin = "human", bool anotherAccount = false, string accountProfileId = null, CancellationToken cancellationToken = default) => _engine.ListWorkspacesAsync(authMode, tenantId, _origin, cancellationToken, anotherAccount, accountProfileId);
+        public Task<FabricSemanticModel[]> listWorkspaceModels(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", string accountProfileId = null, CancellationToken cancellationToken = default) => _engine.ListWorkspaceModelsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken, accountProfileId);
         public Task<WorkspaceSqlEndpointList> listWorkspaceSqlEndpoints(string workspaceId = null, string authMode = null, string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListWorkspaceSqlEndpointsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
         public Task<DeploymentPipeline[]> listDeploymentPipelines(string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListDeploymentPipelinesAsync(authMode, tenantId, _origin, cancellationToken);
         public Task<PipelineStage[]> getPipelineStages(string pipelineId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.GetPipelineStagesAsync(pipelineId, authMode, tenantId, _origin, cancellationToken);

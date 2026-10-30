@@ -127,8 +127,8 @@ namespace Semanticus.Tests
             var strip = StripTools();
             var routableOnTheStrip = AskRouteCatalog.StripTools.Select(t => t.Id).ToArray();
 
-            Assert.Equal(16, strip.Count);                              // measured, then asserted (Query replaced Ask your data and Queries, and the Copilot test joined Review, 15 Oct)
-            Assert.Equal(21, AskRouteCatalog.Tools.Count);              // the strip plus the five tabs
+            Assert.Equal(17, strip.Count);                              // Your standard joined Review in 1.7
+            Assert.Equal(22, AskRouteCatalog.Tools.Count);              // the strip plus the five tabs
             Assert.Equal(strip.OrderBy(x => x, StringComparer.Ordinal).ToArray(),
                 routableOnTheStrip.OrderBy(x => x, StringComparer.Ordinal).ToArray());
 
@@ -224,7 +224,8 @@ namespace Semanticus.Tests
         [InlineData("bpa", "review", "Model quality (BPA)")]
         [InlineData("readiness", "review", "AI readiness")]
         [InlineData("copilottest", "review", "Copilot test")]
-        [InlineData("tests", "review", "Validation")]
+        [InlineData("standard", "review", "Your standard")]
+        [InlineData("tests", "review", "Checks")] // The Validation label retired with the meaning surface.
         [InlineData("evidence", "review", "Reports")]
         [InlineData("docs", "review", "Docs")]
         [InlineData("deploy", "publish", "Published")]
@@ -948,6 +949,7 @@ namespace Semanticus.Tests
         // The Copilot test (15 Oct 2026) claims its own phrases, and a bare "copilot" stays with AI readiness.
         [InlineData("run the copilot test", "copilottest")]
         [InlineData("where is the question bank", "copilottest")]
+        [InlineData("where is your standard", "standard")]
         [InlineData("is the model ready for copilot", "readiness")]
         public void R6_the_catalogue_names_the_page_the_words_are_actually_about(string words, string tool)
         {

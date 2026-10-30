@@ -17,8 +17,8 @@ namespace Semanticus.Tests
     /// Verifier attacks on m11/sol6-seal (Sol join 6, area B item 2): Sol's exact scenario through the assistant's own door under
     /// Locked, the person's single undo of the same batch, cascades the lane's list does not name (a culture's linguistic schema
     /// replaced straight in TOM, a level added, moved and deleted, a calculation item added, moved and deleted, an aggregation's
-    /// base table and base column clearing each other), each set there and back in one batch, and ordinary edits that must add
-    /// no seal step.
+    /// base table and base column clearing each other), each set there and back in one batch, and ordinary edits that need
+    /// no seal beyond the Description provenance annotation.
     /// </summary>
     [Collection("restore-root")]
     public sealed class VerifySol6SealTests : IDisposable
@@ -301,10 +301,10 @@ namespace Semanticus.Tests
             Assert.Empty(fails);
         }
 
-        // ---- (3) ordinary edits add no seal step ---------------------------------------------------------------------------
+        // ---- (3) ordinary edits seal only Description provenance ---------------------------------------------------------
 
         [Fact]
-        public async Task Ordinary_edits_add_one_step_each_and_no_seal()
+        public async Task Ordinary_edits_add_one_step_and_seal_only_Description_provenance()
         {
             var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
@@ -328,7 +328,9 @@ namespace Semanticus.Tests
                 var d = await StepsAsync(sessions) - s0;
                 _out.WriteLine(label + ": " + d + " step(s), sealed: " + string.Join(", ", settings.Sealed));
                 if (d > 1) bad.Add(label + ": " + d + " steps");
-                if (settings.Sealed.Count > 0) bad.Add(label + ": sealed " + string.Join(", ", settings.Sealed));
+                // Description now writes an undoable provenance annotation. No other ordinary edit needs a seal.
+                var expected = label == "description" ? new[] { "annotation " + LocalEngine.DescriptionProvenanceAnnotation } : Array.Empty<string>();
+                if (!settings.Sealed.SequenceEqual(expected)) bad.Add(label + ": sealed " + string.Join(", ", settings.Sealed));
             }
             Assert.Empty(bad);
         }

@@ -117,7 +117,7 @@ namespace Semanticus.Tests
                 await rig.Engine.SkipModelPlanItemAsync(item.Id, "Not today.", "human");
             var afterSkip = await rig.Engine.GetNextStepAsync();
             Assert.Equal("run-checks", afterSkip.Step.Kind);
-            Assert.Equal("Run your checks", afterSkip.Step.Ask);
+            Assert.Equal("Run checks", afterSkip.Step.Ask);
             Assert.Equal("Saved, checks not run", afterSkip.Step.Source);
             Assert.Equal("run_checks", afterSkip.Step.DoIt.Op);
             Assert.Equal(3, afterSkip.Stage);
@@ -154,8 +154,8 @@ namespace Semanticus.Tests
         [Theory]
         [InlineData("open", "run-plan", null, "Ask your assistant to run the plan", "14 tasks are ready. They run in Plan order.", "14 tasks are ready. Jev put \"Mark Date as the date table\" first.", "From your Plan", null)]
         [InlineData("changed", "save", null, "Save your changes", "6 changes are not saved yet.", "6 changes are not saved yet. Save before the next task.", "Not saved yet", "Saved.")]
-        [InlineData("plandone", "check-then-publish", "Your plan is done.", "Check the numbers, then publish to test", "12 checks test the measures the plan changed.", "12 checks test the measures the plan changed. Then test is the next stop.", "Plan done", "Checks running.")]
-        [InlineData("saved", "run-checks", null, "Run your checks", "12 checks test the measures you changed. They have not run since your save.", "12 checks test the measures you changed. Run them before you publish.", "Saved, checks not run", "Checks running.")]
+        [InlineData("plandone", "check-then-publish", "Your plan is done.", "Run checks", "12 checks test the measures the plan changed.", "12 checks test the measures the plan changed. Then test is the next stop.", "Plan done", "Checks opened.")]
+        [InlineData("saved", "run-checks", null, "Run checks", "12 checks test the measures you changed. They have not run since your save.", "12 checks test the measures you changed. Run them before you publish.", "Saved, checks not run", "Checks opened.")]
         [InlineData("repeat", "workflow", null, "Save these steps as a workflow", "You did the same 3 steps on 4 tables.", "You did the same 3 steps on 4 tables.", "Same steps 3 times", "Draft workflow made. Open Workflows to see it.")]
         public void Each_moment_has_the_mocks_words_on_free_and_pro(string moment, string kind, string lead, string ask, string free, string pro, string source, string done)
         {
@@ -493,14 +493,14 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public void The_point_is_registered_pro_only_live_with_its_fields_and_the_consent_version_is_six()
+        public void The_point_is_registered_pro_only_live_with_its_fields_and_the_consent_version_is_seven()
         {
             var p = DecisionRegistry.Require(DecisionRegistry.NextStep);
             Assert.True(p.ProOnly);
             Assert.Equal(0.85, p.ConfidenceBar);
             Assert.Equal("get_next_step", p.Caller);
             Assert.Equal(new[] { "journey_stage", "journey_counts", "journey_flags", "candidate_kinds", "plan_top_kind" }, p.SnapshotFields.ToArray());
-            Assert.Equal(6, DecisionRegistry.ConsentSchemaVersion);   // 1.5.1: copilot.misses joined (the Copilot test) and the version stayed at the 6 next.step set: it ships off and sends nothing
+            Assert.Equal(7, DecisionRegistry.ConsentSchemaVersion);   // 1.7 Totals adds chosen probe rows and totals to the consent card.
             Assert.True(LocalEngine.NextStepJevDecides);
         }
     }

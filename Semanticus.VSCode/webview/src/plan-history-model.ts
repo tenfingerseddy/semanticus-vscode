@@ -37,6 +37,7 @@ export interface HistoryRow {
   redoable?: boolean;
   undone?: boolean;
   verified?: string | null;
+  formatString?: string | null;
   beforeThisSession?: boolean;
   /** An edit of an earlier session the file never held and nothing took back: the model open now lacks it (PlanHistoryRow.NotSaved). */
   notSaved?: boolean;
@@ -49,6 +50,12 @@ export interface HistoryRow {
 }
 
 export interface HistoryView { sessionId?: string; rows: HistoryRow[]; more?: boolean; seamSentence?: string; kept?: boolean }
+
+/** Verified Edits records change history. It does not establish the current value of a measure. */
+export function hasMeasureWrite(row: HistoryRow): boolean {
+  return !!(row.deltas?.some((d) => d.ref.startsWith('measure:')) || row.record?.objectRef?.startsWith('measure:')
+    || row.children?.some(hasMeasureWrite));
+}
 
 // The Verified Edits record, as listVerifiedEdits sends it (VerifiedEditsChain / VerifiedEditRecord).
 export interface VerifiedEditRecord {

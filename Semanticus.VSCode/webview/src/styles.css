@@ -41,8 +41,10 @@
 :root, body {
   --sem-rel: var(--sem-accent);   /* active 1-way relationship lines */
   --sem-on-warn: #241403;   /* dark ink for text on the amber fill; theme foreground is too pale */
-  /* Not-verifiable: a deliberately colourless slate (Tests-tab I1), so an unknown never reads as pass or fail. */
-  --sem-nv: color-mix(in srgb, var(--sem-muted) 62%, var(--sem-bg) 38%);
+  /* Not-verifiable: a deliberately colourless slate (Tests-tab I1), so an unknown never reads as pass or fail. It is the
+     muted text colour, which holds 4.5:1 on every ground in every theme (token-contrast.test.mjs): the old mix of muted
+     and the page read the word Unknown at 2.2:1 on Light Modern and 2.8:1 on Dark Modern (fx29b D). */
+  --sem-nv: var(--sem-muted);
 }
 /* Light VS Code themes: the diff hues take the darker, higher-contrast GitHub-light pair. */
 body.vscode-light, body.vscode-high-contrast-light {
@@ -468,6 +470,11 @@ body.vscode-reduce-motion .sem-flash { animation: none; }
 /* Between 3 and 4: the brand word folds before the areas do (measureHeaderFold, data-brand-folded). */
 .studio-chrome[data-brand-folded="1"] .studio-identity { display: none; }
 .studio-chrome[data-fold="4"] .studio-groups { display: none; }
+/* A narrow Studio (a 290px side panel, fx29b D): even folded, the brand, More, Help, Pro, Your assistant and Publish are
+   wider than the panel, and the header scrolled the whole Studio sideways and cut Publish off. Here the actions wrap onto
+   a second line, right-aligned, so every control stays whole and nothing scrolls. Publish and Help still never fold. */
+.studio-chrome[data-fold="4"] { flex-wrap: wrap; row-gap: var(--sem-space-1); padding-block: var(--sem-space-1); }
+.studio-chrome[data-fold="4"] .studio-actions { flex: 1 1 0; min-width: 0; flex-wrap: wrap; justify-content: flex-end; row-gap: var(--sem-space-1); }
 .studio-chrome[data-fold="4"] .compact-areas { display: grid; border-bottom: var(--sem-hairline) solid var(--sem-rule); padding-bottom: var(--sem-space-1); margin-bottom: var(--sem-space-1); }
 
 /* Tab-bar busy affordance: a subtle monochrome ring that spins while a converted surface (Lineage / DAX Lab /
@@ -578,6 +585,13 @@ body.vscode-reduce-motion .studio-zoom-toast { animation: none; }
 /* The tabs fill the row's own height, so the line under the open one sits on the row's rule. */
 .area-tabs .sem-tab { height: auto; }
 .area-tabs button { transition: background var(--sem-t-base) var(--sem-ease-out), color var(--sem-t-fast) var(--sem-ease-out); }
+/* The one exception to "never wrap": a narrow Studio (fx29b D). At a 290px side panel the strip held two of nine segments
+   and scrolled sideways; Kane's rule there is that nothing scrolls sideways and every word reads. Below a 560px Studio the
+   segments wrap onto more lines, and the row grows to hold them. Wider rows keep one line and scroll as above. */
+@media (max-width: 560px) {
+  .area-tabs { flex-wrap: wrap; overflow-x: visible; overflow-y: visible; padding-block: var(--sem-space-1); }
+  .area-tabs .sem-tab { height: var(--sem-control-h-sm); }
+}
 /* The two header chip menus (Your assistant, Help). One shape for both, so the header reads as one system: a
    row is a label on the left and an optional plain note on the right (a count, a state, a key). Same highlight
    contract as the Create segment's menu, because the keyboard contract is the same. */

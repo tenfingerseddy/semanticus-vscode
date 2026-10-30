@@ -279,7 +279,9 @@ namespace Semanticus.Tests
         {
             var revision = sessions.Current.Revision;
             var seen = new List<ChangeNotification>();
-            void Handler(ChangeNotification notification) => seen.Add(notification);
+            // A Checked notice (a measure checked, a check that ended Not checked) is not a commit: an earlier create_measure's check
+            // can land inside this window, and it writes nothing.
+            void Handler(ChangeNotification notification) { if (notification.IsCommit) seen.Add(notification); }
             sessions.Bus.Changed += Handler;
             try { await action(); }
             finally { sessions.Bus.Changed -= Handler; }

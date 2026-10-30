@@ -4,10 +4,12 @@
 
 /**
  * Does this change notice make the last run's results old? A save and a publish that landed tell the window too, with a notice that carries no change;
- * they move nothing in the model the checks read. Anything else, an undo or redo included, does (UAT recheck 19 Oct, D3).
+ * they move nothing in the model the checks read.
+ * A model delta or timeline replay makes results old. Unknown notices keep the earlier conservative behavior.
  */
 export function makesResultsOld(n: { label?: string; replay?: string; deltas?: unknown[] | null }): boolean {
   if (n.replay) return true;
+  if (n.deltas?.length) return true;
   return !((n.label === 'save' || n.label === 'publish') && !(n.deltas?.length));
 }
 
@@ -629,7 +631,7 @@ export const TABLE_COUNT_FOOTER =
 export const RUN_PROGRESS_KEY = 'run_tests';
 
 export interface RunProgressEvent { opKey: string; runId: string; done: number; total: number; note?: string }
-export interface RunProgress { runId: string; done: number; total: number }
+export interface RunProgress { runId: string; done: number; total: number; note?: string }
 
 /** Fold one engine event into what the page shows. Only this page's own run counts, and the count never goes
  *  backwards, because events can arrive late. Null means there is nothing to show yet. */
@@ -642,7 +644,7 @@ export function foldRunProgress(
   if (!(event.total > 0)) return current;
   const done = Math.min(Math.max(0, Math.floor(event.done)), event.total);
   if (current && current.runId === event.runId && done < current.done) return current;
-  return { runId: event.runId, done, total: event.total };
+  return { runId: event.runId, done, total: event.total, ...(event.note ? { note: event.note } : {}) };
 }
 
 /** The words for the count. Once every check has run the engine is still grading them, and the page says so. */

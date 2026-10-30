@@ -2,7 +2,7 @@
 // a next step shows is the Plan header's live slot (plan-head.tsx). This file keeps what the slot reads: the one store (steady, see
 // next-store.ts), its load and push wiring, and the two presses of a step.
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { onReconnect, onStudioNextStep, rpc, saveModelFromPage } from '../bridge';
+import { navigateInStudio, onReconnect, onStudioNextStep, rpc, saveModelFromPage } from '../bridge';
 import { askAssistant } from './ask-assistant';
 import { createNextStore } from './next-store';
 import { askRequest, buttonsOf, doItCall, FAILED_TEXT } from './next-model';
@@ -50,7 +50,8 @@ export function useNextActions(view: NextStepView | null) {
     try {
       if (call.kind === 'save') {
         if (!(await saveModelFromPage())) { setBusy(false); return; }   // the person closed the save dialog: nothing changed
-      } else await rpc(call.method, ...call.params);
+      } else if (call.kind === 'page') navigateInStudio(call.tab);
+      else await rpc(call.method, ...call.params);
       nextStore.press(view.id, step.doIt.done);
     } catch (e) { nextStore.press(view.id, errorText(e), true); }
     finally { setBusy(false); }

@@ -803,7 +803,9 @@ namespace Semanticus.Tests
                 var equivalenceQueries = 0;
                 engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-r6", "R6Purity", query =>
                 {
-                    equivalenceQueries++;
+                    // Automatic edit comparisons are separate from the workflow's witness proof.
+                    if (query.Contains("\"__A\"", StringComparison.Ordinal) && query.Contains("\"__B\"", StringComparison.Ordinal))
+                        equivalenceQueries++;
                     return query.Contains("'Fact'[Category]", StringComparison.Ordinal)
                         ? Comparison(new[] { "Fact[Category]" }, new object[] { "A", 1.0, 1.0 })
                         : Comparison(Array.Empty<string>(), new object[] { 1.0, 1.0 });
@@ -1070,7 +1072,9 @@ verify:
                 engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "endpoint-r3", "RenameStable", query =>
                 {
                     if (query.Contains("ROW (\n    \"v\"", StringComparison.Ordinal)) return Scalar(1.0);
-                    equivalenceQueries++;
+                    // Automatic edit comparisons are separate from the workflow's witness proof.
+                    if (query.Contains("\"__A\"", StringComparison.Ordinal) && query.Contains("\"__B\"", StringComparison.Ordinal))
+                        equivalenceQueries++;
                     var candidate = mismatch ? 2.0 : 1.0;
                     return query.Contains("'Fact'[Category]", StringComparison.Ordinal)
                         ? Comparison(new[] { "Fact[Category]" }, new object[] { "A", 1.0, candidate })

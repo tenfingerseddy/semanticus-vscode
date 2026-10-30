@@ -88,8 +88,15 @@ assert.match(tests, /Every cell is blank in the model and NULL in the source\. T
 assert.match(tests, /action\('Choose what a blank means'/, 'the blank standoff must link its own setting');
 // Validation C (1.6): the button is the action, so the old trailing "to check it." is gone with the row it sat in.
 assert.match(tests, /comparisonSummary\(differCount, matchCount, rowsKept\.length/, 'the comparisons must carry a count, not colour alone');
-// Minimalism pass (8 Oct): the one Run button reads "Run N ticked" while boxes are ticked, so the header needs no hint line about ticking.
-assert.match(tests, /Choose checks…/, 'choosing checks is one item of the Run menu, so the header needs no hint line about ticking');
+// The marks run plan now owns selection. The header does not repeat its picker.
+const runPlan = read('webview/src/run-plan.tsx');
+assert.match(tests, /<ChecksPage page=\{page\}/, 'Validation uses the current Checks page');
+assert.match(read('webview/src/checks-page.tsx'), /<RunPlan measures=/, 'the page mounts the run plan');
+// d1 4.3: "Choose instead" and "Show the reasons" merged into Choose; the picker opens from "Pick your own" inside it.
+assert.match(runPlan, /onPick=\{\(\) => setPicking\(true\)\}/, 'one action opens the measure picker');
+assert.match(runPlan, /onClick=\{onPick\}>Pick your own</, 'and it is named Pick your own');
+assert.match(runPlan, /disabled=\{!ticked\.length \|\| running\}[^\n]*>Check selected \(\{ticked\.length\}\)/,
+  'the picker names its selection and cannot run an empty set');
 
 // Tolerance boxes name their own unit, and the blank requirement stays neutral until Save is attempted.
 assert.match(authoring, /Relative %/, 'the relative tolerance box must name its unit');

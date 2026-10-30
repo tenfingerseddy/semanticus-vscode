@@ -10,7 +10,7 @@ export type ToolId =
   | 'plan' | 'optimize' | 'spec'
   | 'data' | 'query' | 'diagram' | 'lineage' | 'stats'
   | 'knowledge' | 'instructions' | 'advmodels' | 'mcode'
-  | 'bpa' | 'readiness' | 'copilottest' | 'tests' | 'docs' | 'evidence'
+  | 'bpa' | 'readiness' | 'copilottest' | 'tests' | 'docs' | 'evidence' | 'standard'
   | 'deploy' | 'compare' | 'dataagent' | 'permissions' | 'workflows' | 'pro';
 
 export type ObjectRef =
@@ -23,7 +23,7 @@ export type ObjectRef =
 // A seed records an explicit hand-off, not ambient selection. Views acknowledge one-use seeds after adopting them so
 // returning through area memory or Back cannot replay an old request over work the person has since changed.
 export type Seed = {
-  kind: 'query' | 'test' | 'publish' | 'rescan' | 'addTables' | 'approval' | 'workflow' | 'workflowRuns' | 'advanced'
+  kind: 'query' | 'tryCalculation' | 'test' | 'publish' | 'rescan' | 'addTables' | 'approval' | 'workflow' | 'workflowRuns' | 'advanced'
     // A composer draft handed to Author (Edit in Workflows, Make it reusable; lanes U5 and W2): the value is its dr- id.
     | 'draft'
     // Open the Query page on a DAX text (an old Open in Queries jump, a plan row): the value is the DAX, adopted once.
@@ -59,7 +59,7 @@ export const DESTINATION_OF_TOOL: Record<ToolId, Destination> = {
   knowledge: 'edit', instructions: 'edit', advmodels: 'edit', mcode: 'edit',
   // `evidence` keeps its id so old links and saved state still resolve, but it is no longer a place of its
   // own: it opens Validation on its Reports tab. Its area is therefore Validation's area.
-  bpa: 'review', readiness: 'review', copilottest: 'review', tests: 'review', docs: 'review', evidence: 'review',
+  bpa: 'review', readiness: 'review', copilottest: 'review', tests: 'review', docs: 'review', evidence: 'review', standard: 'review',
   deploy: 'publish', compare: 'publish', dataagent: 'publish',
   // The Semanticus Pro page is a detour like Assistant permissions: no area of its own, and Done returns you.
   permissions: 'utility', pro: 'utility', workflows: 'workflows',

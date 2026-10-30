@@ -469,17 +469,19 @@ test('chosen reports: the person\'s change is applied to the list as it stands n
 //   reviewed  the write waits behind a preview or dry run the person approves, or a fence/hash the engine checks
 //   action    a command with no stored copy to be stale against (create, delete, run, open, import)
 const CLASS = {
-  guarded: ['editInsight', 'setPrimer', 'setAiInstructions', 'setTableSourceMapping', 'saveTest', 'setDax', 'setTablePermission', 'setDocSection', 'setSpec',
+  // setDescription (marks): Save reads the Description again and keeps the person's words when it changed meanwhile.
+  guarded: ['setDescription', 'editInsight', 'setPrimer', 'setAiInstructions', 'setTableSourceMapping', 'saveTest', 'setDax', 'setTablePermission', 'setDocSection', 'setSpec',
     'saveSqlSource', 'setIncrementalRefreshPolicy', 'loadBpaRules', 'loadReadinessRules', 'setPartitionM', 'updateNamedExpression', 'editWorkflowDocument', 'saveWorkflow', 'addInterviewQuestion',
     'writeStartWords'],   // writeStartWords (join 7): the person's edit of words on a start plan line carries the words it started from (StartWord.Expected), and the engine refuses it, inside the write, when they are not the line's words any more
-  delta: ['setWorkflowBinding', 'setReportScope'],
-  field: ['setColumnMetadata', 'setRolePermission', 'setCalcGroupPrecedence', 'setCalcItemFormatString', 'setRelationship', 'setRelationshipCardinality',
+  delta: ['setWorkflowBinding', 'setReportScope', 'setStandard'],   // setStandard (m17): a patch of ONE part of the standard, merged by the engine into the live standard
+  // Marks: Include performance and This is expected change one boolean for one measure, with no older object copy.
+  field: ['setMeasurePerformance', 'setMeasureTotals', 'setMeasureFiltersOnPurpose', 'setColumnMetadata', 'setRolePermission', 'setCalcGroupPrecedence', 'setCalcItemFormatString', 'setRelationship', 'setRelationshipCardinality',
     'setPerspectiveMember', 'setRoleMember', 'setTableObjectPermission', 'setColumnObjectPermission', 'setCompatibilityLevel', 'setDecisionPointEnabled',
     'setWorkflowEnabled', 'setWorkflowActivation', 'setWorkflowEnforcement', 'setAgentPolicyCell', 'setAgentPolicyEnabled', 'setAgentPolicyPreset', 'setPublishDestination',
     'setModelSqlEndpoint', 'setDefaultAccountProfile', 'setConsent', 'setPlanItem', 'setPlanRepeat', 'setCalcGroupPrecedence', 'editStartPlan'],   // editStartPlan (join 6): one edit op on one named line, table or question; the engine applies it to the live plan
-  reviewed: ['updateDataAgent', 'createDataAgent', 'applyDiff', 'applyPlan', 'replaceInObject', 'applySchemaUpdate', 'saveLayout'],
+  reviewed: ['updateDataAgent', 'createDataAgent', 'applyDiff', 'applyPlan', 'replaceInObject', 'applySchemaUpdate', 'saveLayout', 'applyStandard'],   // applyStandard (m17): the page shows the counts first, then one Apply, one Undo
   action: ['createCalculationGroup', 'createCalculationItem', 'createFieldParameter', 'createNamedExpression', 'createPerspective', 'createRelationship', 'createRole',
-    'createModel', 'createHistoryCheckpoint', 'addPlanItem', 'addPlanRepeat', 'addPlanTask', 'defineCalendarFromTemplate', 'loadSpec', 'saveSpec', 'saveEvidence', 'applySafeFixes', 'editDraft'],
+    'createModel', 'createHistoryCheckpoint', 'addPlanItem', 'addPlanRepeat', 'addPlanTask', 'setupCalendars', 'loadSpec', 'saveSpec', 'saveEvidence', 'applySafeFixes', 'editDraft', 'save'],   // save (D11): the Connections card's Save and open writes the open model as it is now, the same command as Ctrl+S
 };
 test('every webview write is classified, so a new whole-object save cannot arrive unreviewed', () => {
   const known = new Map();

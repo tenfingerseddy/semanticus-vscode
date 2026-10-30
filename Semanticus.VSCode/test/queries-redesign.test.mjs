@@ -95,14 +95,19 @@ assert.equal((lab.match(/'runDax'/g) || []).length, 1, 'M2: runDax is sent from 
 assert.doesNotMatch(ask, /'runDax'|runQuery/, 'M2: the question hook never runs a query of its own');
 const runSites = [...lab.matchAll(/^.*\brunQuery\(.*$/gm)].map((m) => m[0].trim());
 const expected = [
-  /^async function runQuery\(q: string, record = true\) \{$/,
+  /^async function runQuery\(q: string, record = true, calculation = false\) \{$/,
   /^function run\(\) \{ setTab\('result'\); void runQuery\(assistantShown && assistantDax \? assistantDax : personQuery\(\)\); \}$/,
+  /^await runQuery\(dax, true, true\);$/, // Try calculation is an explicit navigation action, using the same run path.
   /^const t = setTimeout\(\(\) => \{ void runQuery\(q, !quiet\); \}, 220\);$/,
   /^if \(runSentence && conn\?\.connected && config\.values\.length\) void runQuery\(buildQuery\(config\)\);$/,
   /^if \(conn\?\.connected && personQuery\(\)\.trim\(\) && \(mode === 'query' \|\| chipsHere \|\| wellsReady\)\) void runQuery\(personQuery\(\)\);$/,
   /^const signIn = .*void q\.runQuery\(q\.currentQuery\(\)\)/,
   /^void q\.runQuery\(text\);/,   // DAX typed in the question box runs as DAX, as its own row (v-batch1)
 ];
+assert.match(hook, /!navTarget\?\.run \|\| !navTarget\.ref\.startsWith\('measure:'\) \|\| takenCalculation\.current === navTarget\.nonce/,
+  'M2: Try calculation runs only for an explicit measure action, once per navigation nonce');
+assert.match(hook, /takenCalculation\.current = navTarget\.nonce;[\s\S]*onSeeded\.current\?\.\(true\);[\s\S]*await runQuery\(dax, true, true\);/,
+  'M2: the explicit calculation detaches the old notebook row before the shared run');
 // Opening a folded query row runs it, once, and only with a connection (the notebook, 16 Oct): a press, never an answer's landing.
 { const nb = read('webview/src/query-notebook.tsx');
   assert.match(nb, /function open\(r: Rec\)[\s\S]*?runRow\(r\);/, 'M2: opening a row runs it from the press (open calls runRow)');
@@ -116,7 +121,13 @@ const onDax = /onDax: \(dax\) => \{([\s\S]*?)\r?\n    \},\r?\n/.exec(hook)?.[1] 
 assert.ok(onDax && !/\brun\(|runQuery|rpc\(|debug\(|measureSpeed|setTimeout/.test(onDax), 'M2: the answer\'s DAX lands in the editor without a run');
 // run() itself is started only by the person: the Run buttons and the run key.
 assert.equal((hook.match(/\brun\(\)(?! \{)/g) || []).length, 0, 'M2: the hook never calls run()');
-assert.equal((page.match(/\bq\.run\(\)/g) || []).length, 2, 'M2: run() is called from the run key and the DAX view\'s Run button only: a person\'s press');
+// DEC-0115 removed meaning and the old Checked card. Its Check again action is gone.
+assert.equal((page.match(/\bq\.run\(\)/g) || []).length, 2,
+  'M2: only the run key and the DAX Run button call run(); both are a person\'s press');
+assert.match(page, /e\.key === 'Enter' && conn\?\.connected && !q\.idle\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); q\.run\(\); \}/,
+  'M2: the run key requires a connected, runnable query and consumes the event once');
+assert.match(page, /onClick=\{\(\) => \{ nb\.setTab\('answer'\); q\.run\(\); \}\} data-testid="dax-run"/,
+  'M2: the DAX Run button selects its answer and runs once');
 assert.match(page, /data-testid="dax-run"/, 'M2: the one Run button is in the DAX view, beside the query it runs');
 // The auto-run of the wells steps aside while a question holds the query.
 assert.match(hook, /if \(mode !== 'visual' \|\| chipsHere \|\| wordsOnly \|\| !conn\?\.connected \|\| !wellsTouched\.current\) return;/, 'M2: the wells do not re-run under a question');

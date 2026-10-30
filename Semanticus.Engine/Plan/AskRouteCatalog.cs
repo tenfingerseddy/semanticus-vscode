@@ -13,11 +13,11 @@
 // They replace the five this catalogue used to carry (model, calc, checks, changes, workflows). Analyse was
 // renamed Review in the same decision, so nothing here is called Analyse.
 //
-// TWENTY-TWO PLACES, EIGHTEEN OF THEM ON THE STRIP. help.tsx carries the same entries plus three that are
+// TWENTY-TWO PLACES, SEVENTEEN OF THEM ON THE STRIP. help.tsx carries the same entries plus three that are
 // in no area strip at all (compare, dataagent, permissions): a router that answered with a place the strip
 // cannot show would be sending a person nowhere. The catalogue used to be exactly the strip, and now it is
-// the strip PLUS the places that live as a TAB INSIDE another page. Today that is four: Reports on
-// Validation, Pending changes and Model Spec on Plan, and Model notes on AI instructions. A tab is a real
+// the strip PLUS the places that live as a TAB INSIDE another page. Today that is five: Reports on
+// Validation, History, Pending changes and Model Spec on Plan, and Model notes on AI instructions. A tab is a real
 // destination, so it is routable; it is just not a button on the strip. AskRouteTests reads the strip out of
 // App.tsx and holds it to this catalogue minus the entries flagged IsTab, so the next tool added fails a
 // test instead of quietly never being routed to.
@@ -298,14 +298,14 @@ namespace Semanticus.Engine
                     // "copilot" on its own belongs to AI readiness, so this place claims the phrase and the words of the loop.
                     nouns: "copilot test, question bank, student model, held back, round of questions, will copilot answer",
                     verbs: "rehearse, try questions")),
-            new AskRouteTool("tests", "review", "Validation",
+            new AskRouteTool("tests", "review", "Checks",
                 "Check that calculations return the answers you trust, and that tables connect and count correctly.",
                 new AskRouteWords(
                     nouns: "check, test, validation, assertion, expected value, regression",
                     verbs: "verify, validate, prove")),
             // Reports is a TAB on Validation and not a button on the strip. Still a destination, still routable.
             new AskRouteTool("evidence", "review", "Reports",
-                "The reports kept with this model, on the second tab of Validation. See what was checked, when it ran and which model it describes.",
+                "The reports kept with this model, on the second tab of Checks. See what was checked, when it ran and which model it describes.",
                 new AskRouteWords(
                     nouns: "report, evidence, saved report, run history, what was checked",
                     verbs: "keep a record"),
@@ -315,6 +315,11 @@ namespace Semanticus.Engine
                 new AskRouteWords(
                     nouns: "documentation, docs, guide, handbook, data dictionary",
                     verbs: "document, write up")),
+            new AskRouteTool("standard", "review", "Your standard",
+                "Choose how every model of yours should look: names, formats, folders, descriptions and which checks count.",
+                new AskRouteWords(
+                    nouns: "your standard, model standard, shared standard, standard preset",
+                    verbs: "")),
             new AskRouteTool("deploy", "publish", "Published",
                 "Review changes for a live destination, publish them, restore an earlier version or move a model between release stages.",
                 new AskRouteWords(

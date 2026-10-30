@@ -124,8 +124,8 @@ MIT text is reproduced there in full.
 
 What that record covers, said exactly. On the .NET side it covers the package
 and project references written literally in the project files of
-the three projects that ship in this package: Semanticus.Core,
-Semanticus.Analysis and Semanticus.Engine. It reads project text, not a build.
+the four projects that ship in this package: Semanticus.Core,
+Semanticus.Analysis, Semanticus.Dax and Semanticus.Engine. It reads project text, not a build.
 Nothing is evaluated: no MSBuild import is read as a source of references, no
 property is expanded beyond a single unconditioned definition in the same file,
 no condition is evaluated, and no claim is made about which of those references

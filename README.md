@@ -2,7 +2,7 @@
 
 **Build, test and ship Power BI and Fabric semantic models in VS Code. Work alongside your own assistant on one live model.**
 
-[Download 1.6.0](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest) ·
+[Download 1.7.0](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest) ·
 [Website](https://semanticus.com.au) · [User guide](https://semanticus.com.au/docs) ·
 [Release notes](CHANGELOG.md)
 
@@ -73,7 +73,7 @@ Fabric or Azure Analysis Services. On Windows x64, you can also discover a runni
 
 ![The model diagram in the bus matrix layout](https://semanticus.com.au/assets/shots/diagram-matrix.png)
 
-## Install 1.6.0
+## Install 1.7.0
 
 Install Semanticus from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=semanticus-vscode.semanticus-vscode): in VS Code, open **Extensions**,
 search for Semanticus and choose **Install**. VS Code picks the right build for your computer, and every build
@@ -94,16 +94,19 @@ for the computer where VS Code runs. In VS Code, open **Extensions**, choose **V
 
 The [getting started guide](https://semanticus.com.au/docs/getting-started) covers connections and your first edits.
 
-## What changed in 1.6.0
+## What changed in 1.7.0
 
-Ask your model a question in plain words and keep the answer. Explore > Query is a notebook: one row for each question,
-with its number first and how it was read in one line. Open its DAX, Table, Speed, Compare, Save and Explain when you
-want them. Validation checks your numbers against SQL or a number you trust, shows the true number on both sides, and
-lets you Waive a difference with a note that stays visible. The Copilot test shows how Copilot answers your model and
-what to fix. Explain this number splits a number by the column that explains it. Publish sends a rename with the
-measures, relationships and roles that use it in one press, and the page tells the truth before and after. Your
-assistant saves to the model's own file, and closing VS Code no longer waits for work you already saved. Read
-[the changelog](CHANGELOG.md) for the full list.
+Review > Checks keeps saved numbers, relationship checks, and table counts together.
+The former measure meaning recipe and verdicts are removed. Description remains the measure's intent.
+
+Saving removes the two old meaning annotations in one undoable edit. Remove old annotations does this immediately.
+Undo restores the annotations. Description stays the same.
+
+Calendars are a Power BI preview, and the Calendars page now opens on a plan that you
+set up in one press and undo in one step. Review > Your standard holds your model to the rules you pick, as one
+undo step. Four new readiness checks look for a wrong number before it reaches a report: an average of a ratio, keys
+that do not match, a balance summed over time and a fixed date in a measure. Read [the changelog](CHANGELOG.md) for
+the full list.
 
 ## Free and Pro
 
@@ -115,7 +118,15 @@ Pending changes, Queries, Record verified edits, every fix, the assistant permis
 Publish, and the advanced publishing tools including source control, Fabric Git, automated delivery and
 the Data Agent.
 
-Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, the plain-words box on Query, bulk edits that change many objects in one step, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off. Nothing is sent to Jev until you agree for that model. Then what goes is table, column and measure names, their types, formats, folders and descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula itself), and the words you type: questions in the ask box and in the plain-words box on Query, and the words that describe a task. Words you type go as you typed them. A row or a value from your tables never goes, and neither do your connection or anything from another model. Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
+Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, the plain-words box on Query, bulk edits that change many objects in one step, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off.
+
+Nothing is sent to Jev until you agree for that model. Jev receives table, column and measure names, types, formats, folders and descriptions. It also receives counts, relationships and facts about formulas. When your question uses a synonym, Jev receives the synonym and its measure name. It receives the questions and task words you type.
+
+Your version 7 permission also covers the Description score and Totals. The Description score sends the name, Description and formula to Jev. Totals sends the name, Description and formula to read the total type. For the Fit question, Totals also sends the expected total rule, grouping column, calculated facts, probe rows and total. Each probe row contains a member name and a measure value.
+
+Words you type go as you typed them. Table rows outside the chosen Totals probes stay on your machine. Your connection and credentials stay on your machine. Jev receives nothing from other models.
+
+Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
 order, with a jump on each one to the page where you can do it by hand.
 You can try Pro free for 30 days.
 [Compare the current plans](https://semanticus.com.au/pro).
@@ -127,8 +138,10 @@ depend on your tenant, capacity, permissions and sign-in. Modern calendars requi
 Role security analysis does not impersonate a user to prove dynamic RLS behaviour.
 
 Model work runs locally. Pro sends the model's shape (names, types, formats, counts, relationships and some
-descriptions) and the words you type to its advice service, only after you allow it for that model, and never rows,
-values or credentials. Connections and confirmed publishing use the sources and targets you choose. Semanticus sends
+descriptions) and the words you type to its advice service, only after you allow it for that model.
+The Description score and Totals also send the name, Description and formula to Jev. Totals Fit sends chosen probe rows and totals.
+Each probe row contains a member name and a measure value. Source table rows themselves and credentials stay on your machine.
+Connections and confirmed publishing use the sources and targets you choose. Semanticus sends
 no product telemetry. Your assistant's data handling is governed by the assistant and account you use.
 Read the [support details](https://semanticus.com.au/docs/supported-platforms) and
 [privacy policy](https://semanticus.com.au/privacy).

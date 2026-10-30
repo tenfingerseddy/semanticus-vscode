@@ -559,9 +559,13 @@
    "how": "draft-store",
    "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
   },
-  "tests.tsx::ValidationBoard::input::passFilter": {
-   "class": "search",
-   "why": "a search or filter box: a typed query is not work to keep"
+  "marks-panel.tsx::DescriptionBlock::textarea::draft": {
+   "class": "outage-deferred",
+   "why": "plain useState: closing the mark detail loses these words. This is an NT1 product bug, held red by the Description remount test in solui-r3-inventory.test.mjs, not an approved new deferral"
+  },
+  "marks-panel.tsx::AddCheck::input::value": {
+   "class": "transient",
+   "why": "a number entered for one Save and run gesture creates a new trusted check; this control does not edit a stored number"
   },
   "ui.tsx::Mono::DaxEditor::value": {
    "class": "parent",
@@ -666,6 +670,10 @@
   "tests.tsx::CheckDetail::input::waiveNote": {
    "class": "transient",
    "why": "the optional one-line note for one Waive press: typed for that gesture and cleared when the press is made"
+  },
+  "standard.tsx::Head::input::path": {
+   "class": "transient",
+   "why": "a file address typed for one source-selection command; a failed command keeps it, and success clears only the accepted address"
   }
  },
  "scopes": {

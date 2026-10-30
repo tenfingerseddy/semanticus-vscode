@@ -4,7 +4,7 @@
     A1 exit-gate 9 (spec §11.3): this package MUST have no runtime package dependency and no
     reference to Microsoft, TOM, ANTLR, Tabular Editor, or Semanticus.Core. There are deliberately
     ZERO <PackageReference> and ZERO <ProjectReference> elements here. It uses only the net8.0 BCL.
-    It is intentionally NOT added to Semanticus.sln (kernel work is isolated from the shipping build).
+    Semanticus.Engine consumes its parser for measure contexts. Solution configurations also build this project.
   -->
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>

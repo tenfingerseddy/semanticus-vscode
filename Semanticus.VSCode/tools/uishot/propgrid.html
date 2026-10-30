@@ -15,7 +15,7 @@
       --vscode-editor-font-family: Consolas, "Courier New", monospace;
       --vscode-editorWidget-background: #252526;
       --vscode-editorWidget-border: #454545;
-      --vscode-sideBar-background: #252526;
+      --vscode-sideBar-background: var(--vscode-editor-background);
       --vscode-panel-border: #3c3c3c;
       --vscode-input-background: #3c3c3c;
       --vscode-input-foreground: #cccccc;
@@ -222,6 +222,14 @@
       return {
         postMessage: function (msg) {
           if (!msg) return;
+          (window.__gridMessages = window.__gridMessages || []).push(msg);
+          // The marks under the header ask the engine through the provider. A driver that defines a mock engine answers them.
+          if (msg.type === 'marksRpc' && window.marksEngine) {
+            Promise.resolve().then(function () { return window.marksEngine.call(msg.method, msg.args || []); }).then(
+              function (result) { window.dispatchEvent(new MessageEvent('message', { data: { type: 'marksRpcResult', id: msg.id, result: result } })); },
+              function (e) { window.dispatchEvent(new MessageEvent('message', { data: { type: 'marksRpcResult', id: msg.id, error: String(e && e.message || e) } })); });
+            return;
+          }
           if (msg.type === 'ready') {
             setTimeout(function () {
               window.dispatchEvent(new MessageEvent('message', { data: loadMsg }));
@@ -273,9 +281,11 @@
   </script>
   <link rel="stylesheet" href="../../media/studio/tokens.css" />
   <link rel="stylesheet" href="../../media/propgrid/propgrid.css" />
+  <link rel="stylesheet" href="../../media/propgrid/checked-ui.css" />
 </head>
 <body>
   <div id="root"></div>
   <script src="../../media/propgrid/propgrid.js"></script>
+  <script src="../../media/propgrid/checked-ui.js"></script>
 </body>
 </html>

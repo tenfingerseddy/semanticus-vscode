@@ -11,7 +11,7 @@ namespace Semanticus.Engine
     /// each operation — no divergent code paths. <c>origin</c> tags who initiated a mutation
     /// (human | agent) for the shared undo timeline and change notifications.
     /// </summary>
-    public interface IEngine
+    public partial interface IEngine
     {
         Task<OpenResult> OpenAsync(string path, bool discardUnsaved = false);
         Task<OpenResult> CreateModelAsync(string name, int compatibilityLevel, bool discardUnsaved = false);
@@ -36,6 +36,11 @@ namespace Semanticus.Engine
         // fence (both doors' other callers, and every MCP tool, are unaffected).
         // expectedRevision (round 7): an optional finer fence than expectedSession — refuse if ANY mutation landed since the
         // caller captured the revision it verified against (the rename→body pair + recovery writes; see GuardExpectedRevision).
+        Task<MeaningAnnotationCleanup> CleanupMeaningAnnotationsAsync(string origin);
+        Task<MeasureDescription> GetMeasureDescriptionAsync(string measureRef);
+        Task<DescriptionProposal> DraftMeasureDescriptionAsync(string measureRef, int timeoutSeconds = 60);
+        Task<DescriptionProposal> ProposeMeasureDescriptionAsync(string measureRef, int timeoutSeconds = 60);
+        Task<SetResult> KeepMeasureDescriptionAsync(string proposalId, string origin);
         Task<SetResult> SetDaxAsync(string objRef, string expression, string origin, string expectedSession = null, long? expectedRevision = null, string expectedExpression = null);
         Task<SaveResult> SaveAsync(string path, string format, bool overwrite, string origin, bool pickedInDialog = false);
         Task<SessionInfo> SessionInfoAsync();
@@ -131,7 +136,7 @@ namespace Semanticus.Engine
         Task<DaxValidation> ValidateDaxAsync(string expression, bool strict = false);
         // Deterministic DAX best-practice lint (token-path; read-only, ungated) — the DAX-quality ruleset.
         Task<Semanticus.Analysis.DaxLintResult> LintDaxAsync(string expression);
-        Task<SetResult> SetDescriptionAsync(string objRef, string text, string origin);
+        Task<SetResult> SetDescriptionAsync(string objRef, string text, string origin, string expectedText = null);
         Task<string> CreateMeasureAsync(string tableRef, string name, string expression, string origin, string displayFolder = null);   // displayFolder: born filed, one undo step
         Task<TreeNode[]> ListFunctionsAsync();
         Task<string> CreateFunctionAsync(string name, string expression, string origin);
@@ -258,6 +263,19 @@ namespace Semanticus.Engine
         Task<SetResult> DeleteCalendarAsync(string tableRef, string name, string origin);
         Task<CalendarResult> TagCalendarColumnAsync(string tableRef, string calendarName, string column, string timeUnit, bool associated, bool remove, string origin);
         Task<CalendarResult> DefineCalendarFromTemplateAsync(string template, string tableName, string dateColumn, int fiscalStartMonth, string startExpr, string endExpr, string calendarName, string origin);
+        Task<CalendarProposal> ProposeCalendarAsync(string dateTable, string[] calendars, int fiscalStartMonth, CalendarLevelChoice[] levels);
+        Task<CalendarSetupResult> SetupCalendarsAsync(string dateTable, string[] calendars, int fiscalStartMonth, CalendarLevelChoice[] levels, bool moveMeasures, string origin);
+        Task<AddTimeMeasuresResult> AddTimeMeasuresAsync(string[] measures, string origin);
+
+        // --- your standard (1.7): one YAML file that says how a model is held ---
+        Task<GetStandardResult> GetStandardAsync();
+        Task<SetStandardResult> SetStandardAsync(string patch, string target, string origin);
+        Task<PreviewStandardResult> PreviewStandardAsync(string patch = null);
+        Task<ApplyStandardResult> ApplyStandardAsync(string origin);
+
+        // --- the calendar data check and the number check (1.7): live reads, never a pass when they cannot run ---
+        Task<CalendarDataCheckResult> CheckCalendarDataAsync(string tableRef);
+        Task<MeasureNumbersResult> CheckSameNumbersAsync(string[] oldMeasures, string[] newMeasures, string[] by);
 
         // --- live connectivity (attached-readonly DAX/DMV) ---
         Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken, string tenantId = null, bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human");
@@ -315,6 +333,7 @@ namespace Semanticus.Engine
         /// <summary>Run the suite. <paramref name="runId"/> names the run in its progress events (<c>progress/didChange</c>, OpKey "run_tests"),
         /// so the page that started it can show "312 of 691 checks" for its own run and no other. Omitted, the run names itself.</summary>
         Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist, string origin, string[] only = null, string[] sections = null, string runId = null);
+        Task<ChecksPageView> GetChecksPageAsync();
         Task<ReconcileOutcome> TryTestAsync(TestDefinition def, string origin);
         Task<TestSuiteInfo> ListTestDefinitionsAsync();
         Task<TestDefinition> SaveTestDefinitionAsync(TestDefinition def, string origin, string expectedJson = null);
@@ -544,8 +563,10 @@ namespace Semanticus.Engine
             bool confirm = false, string confirmToken = null, string origin = "human");
 
         // --- Fabric REST (the cloud ALM lane — read-only discovery) ---
-        Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
-        Task<FabricSemanticModel[]> ListWorkspaceModelsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
+        // anotherAccount: a new browser sign-in that pins no saved account, saved as a profile without moving the default.
+        // accountProfileId: list as that saved account. Both are the person's only (si2).
+        Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default, bool anotherAccount = false, string accountProfileId = null);
+        Task<FabricSemanticModel[]> ListWorkspaceModelsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default, string accountProfileId = null);
         Task<WorkspaceSqlEndpointList> ListWorkspaceSqlEndpointsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
         Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
         Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);

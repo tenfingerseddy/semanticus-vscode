@@ -275,7 +275,8 @@ for (const [id, t] of Object.entries(THEMES)) {
 // 27 September 2026 in all 19 themes, the list is empty.
 // The three field kind colours (Kane, 8 Oct) are glyphs in the Queries wells and the Fields drawer: a glyph is text.
 const KINDS = ['--sem-kind-measure', '--sem-kind-column', '--sem-kind-table'];
-const TEXT = [...HUES, ...KINDS, '--sem-fg', '--sem-muted', '--sem-accent', '--sem-link', '--sem-diff-add', '--sem-diff-del'];
+// --sem-nv is the word Unknown and its glyph on every Checks surface (fx29b D: it read at 2.2:1 on Light Modern).
+const TEXT = [...HUES, ...KINDS, '--sem-fg', '--sem-muted', '--sem-nv', '--sem-accent', '--sem-link', '--sem-diff-add', '--sem-diff-del'];
 const PAGE_GROUNDS = ['--sem-bg', '--sem-surface', '--sem-surface-2', '--sem-hover'];
 const CARD_GROUNDS = ['--sem-surface', '--sem-surface-2', '--sem-hover'];
 const KNOWN_PAGE_FAILS = [];
@@ -293,7 +294,7 @@ for (const [id, t] of Object.entries(CHECKED)) {
       continue;
     }
     const pairs = [
-      ...(HUES.includes(textName) || textName === '--sem-fg' || textName === '--sem-muted' ? GROUNDS : PAGE_GROUNDS).map((g) => ['page', val, g]),
+      ...(HUES.includes(textName) || textName === '--sem-fg' || textName === '--sem-muted' || textName === '--sem-nv' ? GROUNDS : PAGE_GROUNDS).map((g) => ['page', val, g]),
       ...(isHC(t) ? [] : CARD_GROUNDS.map((g) => ['card', card, g])),
     ];
     for (const [where, v, groundName] of pairs) {

@@ -86,7 +86,10 @@ function makePage(box, clipboard = []) {
     addEventListener: (type, fn) => { (listeners.document[type] ??= []).push(fn); },
     createElement: () => makeEl(page, 'textarea', {}, ''),
   };
-  const window = { addEventListener: (type, fn) => { (listeners.window[type] ??= []).push(fn); } };
+  const window = {
+    addEventListener: (type, fn) => { (listeners.window[type] ??= []).push(fn); },
+    dispatchEvent: event => { (listeners.window[event.type] ?? []).forEach(fn => fn(event)); return true; },
+  };
   const api = {
     postMessage: (m) => posted.push(m),
     // VS Code hands the state back as a copy of what was set: it is serialized, never the same object.
@@ -141,7 +144,7 @@ function unaccounted(page, box, shown, inflightKeys = []) {
 }
 
 
-test('V-R3-G1. newer words typed while the person\'s own write is in flight survive selecting another object, and the engine\'s OK for the older words does not end them', { todo: 'Deferred by Kane 6 Oct 2026: after the M11 release' }, () => {
+test('V-R3-G1. newer words typed while the person\'s own write is in flight survive selecting another object, and the engine\'s OK for the older words does not end them', () => {
   const box = {};
   const page = makePage(box);
   page.send(load(A, 'Total Sales'));

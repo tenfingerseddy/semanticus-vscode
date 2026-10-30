@@ -53,6 +53,27 @@ namespace Semanticus.Tests
                 + string.Join(" | ", shifted.Select(o => o.Instead + " => " + string.Join(", ", o.Parts.Measures))) + " / " + Seen(a));
         }
 
+        // Verifier v4 (live, Contoso "returns last year"): the offer now runs the base measures, but its button still reads
+        // "Show Total return amount PY and Total return quantity instead". The words name a measure the press does not show.
+        [Fact]
+        public async Task V4UatQuery_an_offer_under_a_period_the_words_set_never_names_a_measure_that_moves_the_date()
+        {
+            (string, double)? Script(DecisionRequest r, DecisionQuestion q) =>
+                q.Name == JevQueryReader.MeasureQ(2) ? ("m:Units PY", 0.63) : Gate("nothing", 0.97, measure: "Net Sales PY")(r, q);
+            using var rig = await BuildAsync(script: Script, calendar: true, shape: async (e, data) =>
+            {
+                await e.CreateMeasureAsync("table:Sales", "Net Sales PY", "CALCULATE ( [Net Sales], DATEADD ( 'Date'[Date], -1, YEAR ) )", "human");
+                await e.CreateMeasureAsync("table:Sales", "Units PY", "CALCULATE ( [Units], DATEADD ( 'Date'[Date], -1, YEAR ) )", "human");
+            });
+            rig.Data.Latest = new DateTime(2025, 10, 11);
+            var a = await rig.Engine.AskDataAsync(new DataAsk { Question = "net sales last year" });
+            Assert.NotEmpty(a.Others ?? Array.Empty<DataOther>());
+            var named = (a.Others ?? Array.Empty<DataOther>())
+                .Where(o => (o.Instead ?? "").Contains(" PY", StringComparison.Ordinal) || (o.Line ?? "").Contains(" PY", StringComparison.Ordinal)).ToList();
+            Assert.True(named.Count == 0, "an offer's words name a PY measure its press does not run: "
+                + string.Join(" | ", named.Select(o => o.Line + " / " + o.Instead + " => " + string.Join(", ", o.Parts?.Measures ?? Array.Empty<string>()))) + " / " + Seen(a));
+        }
+
         [Fact]
         public async Task V2UatQuery_last_year_read_with_a_previous_year_measure_that_wraps_nothing_is_flagged_with_no_figure()
         {

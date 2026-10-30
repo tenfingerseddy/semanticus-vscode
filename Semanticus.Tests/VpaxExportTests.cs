@@ -32,7 +32,7 @@ namespace Semanticus.Tests
 
                 // Read it back with the official Dax.Vpax importer — the round-trip proves it is a valid .vpax that
                 // carries our model metadata (not just that a file was written).
-                var content = Dax.Vpax.Tools.VpaxTools.ImportVpax(path, importDatabase: false);
+                var content = global::Dax.Vpax.Tools.VpaxTools.ImportVpax(path, importDatabase: false);
                 Assert.NotNull(content.DaxModel);
                 Assert.NotEmpty(content.DaxModel.Tables);
             }

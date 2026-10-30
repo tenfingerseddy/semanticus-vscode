@@ -247,6 +247,17 @@ namespace Semanticus.Engine
             }
         }
 
+        /// <summary>A primary column already carries its sort-by column in the calendar, and the Power BI service refuses a column that a calendar
+        /// uses twice. So an associated mapping for a primary's sort-by column (Month Number beside Month, by Month Number) is dropped: the
+        /// sort-by column keeps the calendar's meaning on its own. Call it after the sort-by columns are set.</summary>
+        private static IEnumerable<CalendarMappingSpec> WithoutSortByAssociations(TOM.Table tom, IEnumerable<CalendarMappingSpec> mappings)
+        {
+            var list = mappings.ToList();
+            var sortBys = new HashSet<string>(list.Where(m => !m.Associated && ParseTimeUnit(m.TimeUnit) != null)
+                .Select(m => tom.Columns.Find((m.Column ?? string.Empty).Trim())?.SortByColumn?.Name).Where(n => n != null), StringComparer.Ordinal);
+            return list.Where(m => !(m.Associated && sortBys.Contains((m.Column ?? string.Empty).Trim())));
+        }
+
         private static void RemoveMapping(TOM.Calendar cal, TOM.Column col, List<string> mapped)
         {
             var hit = false;

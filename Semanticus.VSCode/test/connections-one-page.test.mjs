@@ -268,7 +268,7 @@ assert.equal((hub.match(/makeDefaultFor\(/g) || []).length, 1, 'makeDefaultFor i
 has(/<DefaultConfirm [\s\S]{0,600}?onConfirm=\{\(\) => void makeDefaultFor\(pendingDefault\)\}/);
 has(/defaultMoveSentence\(defaultMoveCount\(records, /, 'the confirmation carries the count');
 // (4) The unsaved-changes check before opening another model, from a row AND from the Change panel.
-has(/if \(s\?\.hasUnsavedChanges && !openConfirm\) \{ setPendingOpen\(r\); setOpenConfirm\(true\);/);
+has(/if \(s\?\.hasUnsavedChanges && !openConfirm\) \{ setPendingOpen\(r\); setOpenSaveFormat\(.*?\); setOpenConfirm\(true\);/);
 has(/data-testid="hub-open-unsaved"/);
 has(/job: 'edit'[\s\S]{0,400}?openModel\(/, 'choosing Editing in the Change panel goes through openModel, so it asks first');
 // (5) Work on a local copy keeps its own short form.

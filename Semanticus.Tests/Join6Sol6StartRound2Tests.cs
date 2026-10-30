@@ -179,7 +179,7 @@ namespace Semanticus.Tests
                 var head = "model Model\n\tculture: en-US\n\n\tannotation Keep = yes\n\n";
                 var multi = "\tannotation Semanticus_Waivers = ```\n\t\t\t[\n\t\t\t  { \"a\": 1 }\n\t\t\t]\n\t\t\t```\n\n";
                 var tail = "\tannotation SourceKeep = after\n\n";
-                File.WriteAllText(Path.Combine(a, "model.tmdl"), head + "\tannotation Semanticus_ConsentId = abc\n\n" + multi + "\tannotation Semanticus_ReadinessRules = x\n\n\tannotation Semanticus_DaxLibInstalled = y\n\n" + tail);
+                File.WriteAllText(Path.Combine(a, "model.tmdl"), head + "\tannotation Semanticus_ConsentId = abc\n\n" + multi + "\tannotation Semanticus_ReadinessRules = x\n\n\tannotation Semanticus_DaxLibInstalled = y\n\n" + "\tannotation " + StandardStore.Annotation + " = applied-v1\n\n" + tail);
                 File.WriteAllText(Path.Combine(b, "model.tmdl"), head + tail);
                 Assert.Equal(StartPlanProjection.OfFolder(a), StartPlanProjection.OfFolder(b));
                 Assert.DoesNotContain("Semanticus_", StartPlanProjection.OfFolder(a));

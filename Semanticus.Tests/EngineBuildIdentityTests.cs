@@ -131,6 +131,9 @@ namespace Semanticus.Tests
                 var answer = await new HumanGovernanceRpcTarget(engine, null, cleanStop).stopIfClean();
                 Assert.True(answer.Stopping);
                 Assert.Equal(Environment.ProcessId, answer.Pid);
+                // The answer is settled first and the stop runs right after it on the dispatcher thread (a stop may end
+                // the process, so the answer must go out first), so wait briefly for it (W1, Windows CI, 20 Oct).
+                SpinWait.SpinUntil(() => Volatile.Read(ref stops) == 1, 2000);
                 Assert.Equal(1, stops);
 
                 // An edit that arrives after the clean answer (another door, another window) waits behind the stop
@@ -156,7 +159,8 @@ namespace Semanticus.Tests
         {
             Assert.NotNull(typeof(HumanGovernanceRpcTarget).GetMethod("stopIfClean"));
             Assert.Null(typeof(EngineRpcTarget).GetMethod("stopIfClean"));
-            Assert.DoesNotContain(typeof(IEngine).GetMethods(), m => m.Name.Contains("Stop", StringComparison.Ordinal));
+            // The engine's own stop is not on IEngine. StopMeasureRunAsync is: it stops a check run, a button both doors have (1.7 E1).
+            Assert.DoesNotContain(typeof(IEngine).GetMethods(), m => m.Name.Contains("Stop", StringComparison.Ordinal) && m.Name != nameof(IEngine.StopMeasureRunAsync));
 
             using var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());

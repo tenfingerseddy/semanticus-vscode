@@ -125,7 +125,7 @@ const EXPECTED_CHECK_NAMES = [
   'the NuGet exact-version pattern accepts every exact spelling and refuses ranges and wildcards',
   'the packaged project population is derived from the project file package.mjs publishes',
   'both notices state the packaged population that the walk derives',
-  'RED: a fourth referenced project fails the gate and both notices until it is declared',
+  'RED: a fifth referenced project fails the gate and both notices until it is declared',
   'no MSBuild file the packaged projects import declares a reference this gate cannot read',
   'RED: a rooted, expanded or listed ProjectReference Include is refused by name',
   'a conditioned or repeated $(Property) version is refused, not resolved to the first one',
@@ -1834,27 +1834,29 @@ check('both notices state the packaged population that the walk derives', () => 
   }
 });
 
-check('RED: a fourth referenced project fails the gate and both notices until it is declared', () => {
-  // A fixture tree, not the real one: E references A and B, and A references C. Four projects ship.
+check('RED: a fifth referenced project fails the gate and both notices until it is declared', () => {
+  // A fixture tree, not the real one: E references A, B and D, and A references C. Five projects ship.
   const FIXTURE = new Map([
     ['E/E.csproj', '<Project><ItemGroup>'
       + '<ProjectReference Include="..\\A\\A.csproj" />'
       + '<ProjectReference Include="..\\B\\B.csproj" />'
+      + '<ProjectReference Include="..\\D\\D.csproj" />'
       + '</ItemGroup></Project>'],
     ['A/A.csproj', '<Project><ItemGroup><ProjectReference Include="..\\C\\C.csproj" /></ItemGroup></Project>'],
     ['B/B.csproj', '<Project><ItemGroup><ProjectReference Include="..\\C\\C.csproj" /></ItemGroup></Project>'],
     ['C/C.csproj', '<Project />'],
+    ['D/D.csproj', '<Project />'],
   ]);
   const closure = projectReferenceClosure('E/E.csproj', (p) => FIXTURE.get(p));
-  assert.deepEqual(closure, ['E/E.csproj', 'A/A.csproj', 'B/B.csproj', 'C/C.csproj'],
+  assert.deepEqual([...closure].sort(), ['A/A.csproj', 'B/B.csproj', 'C/C.csproj', 'D/D.csproj', 'E/E.csproj'],
     'the walk must be recursive and must visit a diamond-shared project once');
 
-  // The hand list this replaced was three names, so a fourth arriving is exactly the drift that was
-  // invisible. Against the notices as they stand today, a four-project population must FAIL.
+  // The notices name four projects (Semanticus.Dax joined in 1.7), so a fifth arriving is exactly the drift that
+  // would be invisible. Against the notices as they stand today, a five-project population must FAIL.
   for (const n of POPULATION_NOTICES) {
     const problems = populationProblems(read(n.path), n.path, closure, n.phrases);
     assert.ok(problems.length > 0,
-      `${n.path} accepted a four-project population unchanged, so this gate would not have caught a fourth `
+      `${n.path} accepted a five-project population unchanged, so this gate would not have caught a fifth `
       + 'referenced project shipping with no notice.');
   }
 
@@ -3107,7 +3109,7 @@ check('the procedure for borrowing code is written down, including what the gate
     [ws('borrowed \\*\\*fragment\\*\\*[^.]*is not detected'), 'a pasted borrowed fragment is not detected'],
     [ws('borrowed \\*\\*generator\\*\\*[^.]*is not detected'), "a borrowed generator's output is not detected"],
     [ws('attribution \\*\\*removed\\*\\*[^.]*(?:no signal|nothing detects it)'), 'a stripped-attribution copy is undetectable'],
-    [ws('NuGet is gated only for the references written LITERALLY in the project files of the three packaged projects'),
+    [ws('NuGet is gated only for the references written LITERALLY in the project files of the four packaged projects'),
       'NuGet is only gated for the references written literally in the packaged project files'],
     [ws('reference the gate cannot see fails it, rather than being missed'),
       'an imported reference is refused rather than read, which is what keeps the population claim true'],

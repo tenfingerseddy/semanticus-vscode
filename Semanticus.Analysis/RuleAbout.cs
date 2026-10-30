@@ -141,6 +141,11 @@ namespace Semanticus.Analysis
             ["DATE-MARK"] = RuleAbout.KeepFromModel(Tab, "dataCategory"),   // the finding is on the model; the write is the marked table's data category and key
             ["CAL-TI-NO-CALENDAR"] = Advisory,
             ["CAL-MAPPING"] = RuleAbout.Nothing("the change is a calendar column mapping, which is not a property of the object the finding sits on"),
+            // Wrong-number hints (1.7): they point at a formula and ask the author to compare numbers; none writes a property.
+            ["AVG-OF-RATIO"] = EitherOr,
+            ["SEMI-ADDITIVE-SUM"] = RuleAbout.Nothing("advice about a sum of a balance across dates; the author decides whether to keep it, so no single property is written"),
+            ["DAX-DATE-LITERAL"] = RuleAbout.Nothing("advice about a fixed date or year in a filter; the author decides whether to anchor it or state it, so no single property is written"),
+            ["KEY-INTEGRITY"] = RuleAbout.Nothing("the fix is in the data (unmatched or repeated keys), not in a model property"),
             // Copilot limits
             ["LIMIT-SCALE"] = Advisory,
             ["LIMIT-QNA-INDEX"] = Advisory,

@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { makeReact } from './helpers/drafts-mount.mjs';
+import { makeLoader } from './helpers/webview-load.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...p) => readFileSync(resolve(root, ...p), 'utf8');
@@ -421,7 +423,60 @@ assert.match(hub, /res\.message \|\| 'That model could not be connected for test
 // (B2) the account menu is never a dead end: Sign in another account routes to where a sign-in happens (the live
 // model's account choice, else the workspace picker), and Other ways to sign in opens the address form.
 assert.match(hub, /const signedInAccount = currentAccount/, 'the hub draws one signed-in identity from the live session or the saved profiles, never a second guess');
-assert.match(hub, /data-testid="hub-sign-in-another-top"[\s\S]{0,140}if \(switchable\) signInAnother\(switchable\); else openPicker\(\)/, 'Sign in another account always leads to a sign-in');
+// si2: the route alone kept this green while the sign-in it led to was always the saved account. So the press is checked
+// by its result: the picker it opens asks the engine for a NEW sign-in, says the account it then lists as, and lists the
+// models and connects as that same account, never as the saved default. With or without a published model in play.
+assert.match(hub, /data-testid="hub-sign-in-another-top"[^\n]{0,80}onClick=\{\(\) => openPicker\(true\)\}/, 'Sign in another account opens the picker in another-account mode');
+assert.match(hub, /<WorkspacePicker key=\{pickerAsk\.key\} anotherAccount=\{pickerAsk\.another\}/, 'the hub hands the picker that mode');
+assert.match(hub, /openModel\(\{ id: 'new:' \+ c\.endpoint[^\n]*\n\s*c\.accountProfileId \? \{ accountProfileId: c\.accountProfileId \} : undefined\)/, 'Connect opens the picked model as the account the list was read as');
+{
+  const { React, mount } = makeReact();
+  const calls = [];
+  const answer = (m, args) => {
+    calls.push([m, ...args]);
+    if (m === 'listWorkspaces') return args[3] === true
+      ? [{ id: 'ws-c', displayName: 'Fabrikam Finance', accountProfileId: 'pf-sam', account: 'sam@fabrikam.com' }]
+      : [{ id: 'ws-o', displayName: 'Contoso Sales' }];
+    if (m === 'listWorkspaceModels') return [{ id: 'm1', displayName: 'Fabrikam Budget' }];
+    return null;
+  };
+  const bridge = { rpc: async (m, ...a) => answer(m, a), rpcPressed: async (m, ...a) => answer(m, a), onEngineState: () => () => undefined, runHostCommand: () => undefined };
+  const { WorkspacePicker } = makeLoader({ './bridge': bridge }, React)('connectpickers.tsx');
+  const connected = [];
+  const props = { account: 'alex@contoso.com', anotherAccount: true, pressedFirst: true, initialAuthMode: 'azcli', onBack() {}, onPasteAddress() {},
+    onConnect: async (c) => { connected.push(c); return null; } };
+  const page = mount(() => WorkspacePicker(props));
+  const view = () => page.result.props;
+  const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); };
+  assert.equal(view().askingAccount, true, 'while the new sign-in runs, the header asks for the account instead of naming the saved one');
+  assert.equal(view().account, null);
+  await settle();
+  const lists = calls.filter((c) => c[0] === 'listWorkspaces');
+  assert.equal(lists.length, 1);
+  assert.equal(lists[0][1], 'interactive', 'another account is a browser sign-in, even when the last model was opened another way');
+  assert.equal(lists[0][4], true, 'the press asks the engine for another account');
+  assert.equal(view().account, 'sam@fabrikam.com', 'the header names the account the list was read as');
+  assert.equal(view().askingAccount, false);
+  view().onPickWorkspace('ws-c'); await settle();
+  assert.deepEqual(calls.find((c) => c[0] === 'listWorkspaceModels').slice(1), ['ws-c', 'interactive', null, 'human', 'pf-sam'], 'the models are read as the new account');
+  view().onPickModel('m1'); view().onConnect(); await settle();
+  assert.equal(connected.length, 1);
+  assert.equal(connected[0].accountProfileId, 'pf-sam', 'Connect carries the new account to the open');
+  // A re-read keeps that account, with no second sign-in.
+  view().onRetry(); await settle();
+  const again = calls.filter((c) => c[0] === 'listWorkspaces').at(-1);
+  assert.deepEqual(again.slice(4), [false, 'pf-sam'], 'a re-read lists as the chosen account, with no new sign-in');
+  // The plain picker reads as the saved account, and offers "Use another account" beside it.
+  calls.length = 0;
+  const plain = mount(() => WorkspacePicker({ ...props, anotherAccount: false, initialAuthMode: 'interactive' }));
+  await settle();
+  assert.equal(plain.result.props.account, 'alex@contoso.com');
+  assert.deepEqual(calls.filter((c) => c[0] === 'listWorkspaces').at(-1).slice(4), [false, null], 'the plain picker lists as the saved account');
+  assert.equal(typeof plain.result.props.onAnotherAccount, 'function', 'the plain picker offers "Use another account"');
+  plain.result.props.onAnotherAccount(); await settle();
+  assert.equal(calls.filter((c) => c[0] === 'listWorkspaces').at(-1)[4], true, '"Use another account" starts a new sign-in');
+  assert.equal(plain.result.props.account, 'sam@fabrikam.com');
+}
 assert.match(hub, /data-testid="hub-other-sign-in" onClick=\{\(\) => openAddView\(\)\}/, 'Other ways to sign in opens the address form with its setup check');
 // openAddView resets the method + clears any stale tenant, so a browser Sign in never lands on a prior advanced method (MED, sol).
 assert.match(hub, /const openAddView = \(mode: string = 'interactive'\) => \{ setAuthMode\(mode\); setNewTenant\(''\);[\s\S]{0,40}setView\('add'\); \}/, 'openAddView resets the sign-in method and clears the tenant');

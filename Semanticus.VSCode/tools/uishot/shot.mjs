@@ -128,7 +128,8 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
       const vh = Math.max(400, Math.min(6000, parseInt(process.env.UISHOT_H || '', 10) || 1000));
       // UISHOT_W overrides the viewport width (wide-monitor layout checks — a tab that caps its content column
       // leaves a right-hand dead zone only a wide viewport reveals). Default 1680 keeps existing baselines stable.
-      const vw = Math.max(768, Math.min(6000, parseInt(process.env.UISHOT_W || '', 10) || 1680));
+      // It goes down to 280, a narrow side panel (the Checks shot at 290); no default changes.
+      const vw = Math.max(280, Math.min(6000, parseInt(process.env.UISHOT_W || '', 10) || 1680));
       await page.setViewport({ width: vw, height: vh, deviceScaleFactor: 2 });
       const params = new URLSearchParams();
       if (process.env.UISHOT_GRAPH) params.set('g', process.env.UISHOT_GRAPH);

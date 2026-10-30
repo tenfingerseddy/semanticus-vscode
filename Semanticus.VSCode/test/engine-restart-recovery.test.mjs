@@ -157,8 +157,8 @@ assert.ok(manifest.contributes.commands.some((c) => c.command === 'semanticus.sh
   'semanticus.showOutput is a real contributed command, not a webview-only id');
 assert.match(source, /registerPersonCommand\('semanticus\.showOutput'/, 'and it is registered');
 
-assert.match(source, /postToPanels\(\{ type: 'engineState', connected: false \}\)/,
-  'the host tells both panels when the engine is gone, so Studio does not have to guess from a failed request');
+assert.match(source, /postToPanels\(\{ type: 'engineState', connected: false, starting: true \}\)/,
+  'the host tells both panels when the engine is starting, so Studio does not infer failure from a rejected request');
 assert.match(source, /postToPanels\(\{ type: 'engineState', connected: true \}\)/,
   'and tells them when it is back');
 assert.match(bridge, /export function onEngineState\(/,
@@ -180,17 +180,14 @@ assert.doesNotMatch(panel, /rpc\(/, 'the panel cannot reach the engine, so it mu
 // The panel replaces the page content; the Shell (and its header) stays around it.
 // The Semanticus Pro page is the one route ahead of it (23 September 2026): it needs no engine of its own, so a
 // person can still reach buying or a key while the engine is down.
-assert.match(app, /\{tab === 'pro' \? \([\s\S]{0,400}?<ProPage \/>\s*\) : engineDown && !keepPlan \? \(\s*<EngineDown \/>\s*\) : !session\?\.sessionId \?/,
+assert.match(app, /\{tab === 'pro' \? \([\s\S]{0,400}?<ProPage \/>\s*\) : engineDown && !keepPlan \? \(\s*<EngineDown \/>\s*\) : engineStarting && !keepPlan \? \(\s*<EngineStarting \/>\s*\) : !session\?\.sessionId \?/,
   'the recovery panel replaces the page body inside the Shell, so the header stays');
 // ...except for one thing: words typed into the start plan and not saved (join 8 fix round 2, D1c). The Plan then stays on screen, read-only and saying so, because the panel would unmount the editor.
 assert.match(app, /const keepPlan = keepPlanThroughOutage\(\{ hasSession: !!session\?\.sessionId, hasDraft: anyWordsDraft, tab \}\);/,
   'the one exception to the recovery panel: the OPEN model\'s typed, unsaved words on the Plan, with a plan to keep (join 11, A1)');
 
-// The webview must also be able to work it out on its own: a Studio that mounts while the engine is already
-// down never receives the transition message, only a rejected request.
-assert.match(app, /ENGINE_NOT_CONNECTED/, 'a Studio that mounts cold recognises the host\'s not-connected answer');
-assert.match(app, /const ENGINE_NOT_CONNECTED = 'Engine not connected\.';/,
-  'and it matches the host\'s literal exactly');
+// A rejected request can arrive during startup. Only the host lifecycle can prove a failed start.
+assert.match(app, /setEngineDown\(!connected && !starting\)/, 'a pending start cannot show the recovery error');
 assert.match(source, /error: 'Engine not connected\.'/, 'which is the literal the host actually sends');
 
 // ---- (h) the review harness can show the state --------------------------------------------------------
@@ -215,7 +212,7 @@ assert.match(source, /function describeSession\(/, 'the descriptor is derived fr
 {
   const bench = makeBench();
   bench.sandbox.currentSession = liveSession();
-  await bench.sandbox.bindGridAndTree('SM_NFM', { refresh: () => {}, clearAssistantFlash: () => {} });
+  await bench.sandbox.bindGridAndTree('SM_NFM', { refresh: () => {}, clearAssistantFlash: () => {}, resetChecks: () => {} });
   const got = bench.remembered();
   assert.equal(got?.kind, 'live', 'a native open of a live model must stay live, not become its temp snapshot path');
   assert.equal(got?.endpoint, LIVE_TARGET.endpoint, 'and must keep the endpoint');

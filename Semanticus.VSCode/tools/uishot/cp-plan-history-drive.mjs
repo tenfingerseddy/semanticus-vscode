@@ -201,8 +201,8 @@ async function shoot(page, name, { beforeCheck = null } = {}) {
   await click(page, '[data-hid="plan_item:describe/customer"] .ph-caret');
   await click(page, '[data-hid="ed-00000006"]');
   const m = await shoot(page, 'detail');
-  expect(m.who.map((w) => w.label).join('|') === 'Everyone|You|Your assistant|Semanticus|Workflows', 'detail: the who filter is the five choices');
-  expect(/Customer\[Tier\] · description/.test(m.detail ?? ''), 'detail: the edit title');
+  expect(m.who.map((w) => w.label).join('|') === 'Everyone|You|Your assistant|Semanticus', 'detail: the who filter is the four choices (Workflows retired for everyone, 17 Oct)');
+  expect(/Tier in Customer · description/.test(m.detail ?? ''), 'detail: the edit title');
   expect(/Object \| Change \| Before \| After/.test(m.detail ?? '') || /Object\s+Change\s+Before\s+After/.test(m.detail ?? ''), 'detail: the before and after table');
   expect(/Verified\./.test(m.detail ?? ''), 'detail: Verified as a word');
   expect(/Takes back this and 5 later changes\./.test(m.detail ?? ''), 'detail: the undo count sentence');

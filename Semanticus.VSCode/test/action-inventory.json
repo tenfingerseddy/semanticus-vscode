@@ -187,17 +187,6 @@
    "never": []
   },
   {
-   "id": "U4-6",
-   "file": "advmodels.tsx",
-   "trigger": "the calendar column tag is refused and the pick was closed in the same run",
-   "guards": [
-    "void tag\\(c, category, assoc, false\\)\\.then\\(\\(ok\\)"
-   ],
-   "never": [
-    "tag\\(c, category, assoc, false\\);\\s*\\n\\s*setCol"
-   ]
-  },
-  {
    "id": "J-I2-1",
    "file": "advmodels.tsx",
    "trigger": "the role name is typed again after Add is pressed and before the engine's OK arrives",
@@ -239,6 +228,17 @@
    ],
    "never": [
     "describeWorkflowSteps', words\\);\\s*setNewOpen\\(false\\)"
+   ]
+  },
+  {
+   "id": "M17-L1-standard-path",
+   "file": "standard.tsx",
+   "trigger": "a shared standard cannot load, or its address changes while the request runs",
+   "guards": [
+    "await\\ onUse\\(p\\)\\ \\&\\&\\ pathNow\\.current\\ ===\\ sent"
+   ],
+   "never": [
+    "onUse\\(p\\);\\ setPath\\(''\\)"
    ]
   }
  ],

@@ -59,6 +59,19 @@ const d = mirror((src) => appendFileSync(join(src, 'features.ts'),
   "\nexport function selfNamed(set: (fn: () => void) => number): number { let id: number = set(() => { id = 0; }); return id; }\n"));
 if (d.status !== 0) failures.push(`D. a value that names itself in its own initializer breaks the guard: ${(d.out.split('\n').find((l) => /Error/.test(l)) ?? '').slice(0, 200)}`);
 
+// Shared initializer paths must stay cheap without hiding a reachable method.
+function sharedInitializers(seed) {
+  const lines = ['export function sharedInitializers(value: unknown) {', 'const v0 = ' + seed + ';'];
+  for (let i = 1; i <= 18; i++) lines.push('const v' + i + ' = [v' + (i - 1) + ', v' + (i - 1) + '];');
+  return lines.concat('return v18;', '}').join('\n') + '\n';
+}
+const e = mirror(src => appendFileSync(join(src, 'features.ts'), '\n' + sharedInitializers('value')));
+if (e.status !== 0) failures.push('E. harmless shared initializers fail the guard: ' + firstError(e.out));
+const f = mirror(src => appendFileSync(join(src, 'lineage.tsx'),
+  "\nimport { ASK_METHOD } from './askdata-model';\n" + sharedInitializers('ASK_METHOD') + '\nvoid rpc(sharedInitializers(null), {});\n'));
+if (f.status === 0 || !/lineage\.tsx/.test(f.out))
+  failures.push('F. a method reached through shared initializers is not caught: ' + firstError(f.out));
+
 for (const f of failures) console.log('FREE GUARD: ' + f);
 assert.equal(failures.length, 0, `${failures.length} way(s) the Free guard misreads real code (listed above)`);
 console.log('completeness-free-guard: the guard ignores a feature id and a pure helper, and catches a new caller');

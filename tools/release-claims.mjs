@@ -266,8 +266,12 @@ export function check({ strict }) {
       failures.push(`${surface.name} says only names, types and counts go to Jev, but the words a person types go too`);
     if (typed && !/words you type/i.test(text))
       failures.push(`${surface.name} does not say the words a person types go to Jev (compose.draft sends draft_words, ask.route sends ask_text)`);
-    if (!/(?:row|value)[^.]*never goes|never goes[^.]*value/i.test(text))
-      failures.push(`${surface.name} does not say a row or a value from the data never goes`);
+    // 27 Oct (fx5, fx7): Totals sends probe rows (a member name and a measure value), so "no value ever goes" is untrue.
+    // The copy must say that source table rows themselves stay, and name the probe rows that do go.
+    if (!/rows[^.]*stay on your (?:machine|computer)/i.test(text))
+      failures.push(`${surface.name} does not say the table rows themselves stay on the machine`);
+    if (!/probe row[^.]*member name[^.]*measure value/i.test(text))
+      failures.push(`${surface.name} does not say a Totals probe row (a member name and a measure value) goes`);
     if (strict && plan && !/describe a task/i.test(text))
       failures.push(`${surface.name} does not say a task's words go to Jev, though JevDraftsOnPlan is true`);
     if (strict && synonymsSent() && !/other names/i.test(text))

@@ -209,6 +209,9 @@ namespace Semanticus.Engine.Decisions
         /// <summary>The reason an ask gives when the session's budget is spent and the answer is not already known.</summary>
         public const string BudgetSpentReason = "this session has used its suggestion budget";
 
+        /// <summary>The reason an ask gives when no client was built: the session has no licence to present (or dev key).</summary>
+        public const string NoServiceReason = "no suggestion service is set up, so nothing was sent and nothing changed";
+
         /// <summary>The reason an ask made with cachedOnly gives when nothing is kept for it: it was not sent.</summary>
         public const string NotCachedReason = "not asked yet";
 
@@ -415,7 +418,7 @@ namespace Semanticus.Engine.Decisions
 
         private const string SwitchedOff = "this suggestion is switched off for this model";
         private const string ProOnly = "suggestions like this one are part of Semanticus Pro";
-        private const string NoService = "no suggestion service is set up, so nothing was sent and nothing changed";
+        private const string NoService = NoServiceReason;
         private const string NoScope = "this model has not been saved or opened live, so there is no permission that belongs to it";
         private const string BudgetSpent = "this session has used its suggestion budget";
 

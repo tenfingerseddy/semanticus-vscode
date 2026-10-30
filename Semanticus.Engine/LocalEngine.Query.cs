@@ -824,6 +824,12 @@ namespace Semanticus.Engine
                 reading.Notes.Add(MeasureTime.Swapped(m, baseMeasure, words));
                 // "Using <m>." was said of the figure before the swap; it would sit above a different number.
                 reading.Assumptions.RemoveAll(x => x.Key == "measure" && x.Line == $"Using {m.Name}.");
+                // An add-measure offer also names the current selection, outside its From/To measure slots.
+                foreach (var offer in reading.Others)
+                {
+                    offer.Line = offer.Line?.Replace(m.Name, baseMeasure.Name);
+                    offer.Instead = offer.Instead?.Replace(m.Name, baseMeasure.Name);
+                }
             }
             // The offers were built from Jev's other picks. One that moves the date would run the period a second time one press
             // away: it is swapped for its base, or dropped when it has none or the base is already shown.

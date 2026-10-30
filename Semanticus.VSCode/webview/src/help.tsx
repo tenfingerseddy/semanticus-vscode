@@ -106,8 +106,10 @@ const HELP: Record<string, TabHelp> = {
           "It picks a column's format, chooses a base measure for a number column, chooses what Copilot sees, and puts the plan in order.",
           "It drafts from your words too: a task you type with Ctrl J becomes a draft at once, and a task you type on the Plan becomes one when you press Draft the steps.",
           "What Pro decides, on the Pro page, lists every choice, says which are on, and switches each one off for this model.",
-          "Nothing goes to Jev until you agree on the card. Then it gets names, types, formats, folders, descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula), and the words you type: questions, and the words that describe a task.",
-          "Words you type go as you typed them. A row or a value from your tables never goes.",
+          "Nothing goes to Jev until you agree on the card. Then it gets names, types, formats, folders and descriptions. It also gets counts, relationships and facts about formulas. When your question uses a synonym, Jev gets the synonym and its measure name. It gets the questions and task words you type.",
+          "Your version 7 permission also covers the Description score and Totals. The Description score sends the name, Description and formula to Jev. Totals sends the name, Description and formula to read the total type.",
+          "For the Fit question, Totals also sends the expected total rule, grouping column, calculated facts, probe rows and total. Each probe row contains a member name and a measure value.",
+          "Words you type go as you typed them. Table rows outside the chosen Totals probes stay on your machine.",
           "Your agreement is kept outside the model files. A small marker is written into the model so the agreement stays with it, and you will see it in a commit."
         ]
       }
@@ -201,7 +203,7 @@ const HELP: Record<string, TabHelp> = {
         "bullets": [
           "Every question becomes one checked query that only reads. Nothing in the model changes. Each question and each query you run here is kept with the model under Asked before.",
           "Read as always shows how the question was taken: the number, the splits and the filters. Change any part and the question runs again. A part with no data in the model is said in words, and no total is shown in its place.",
-          "On Pro you can type the question. Jev reads it into the parts and may pick the visual. Your words and the shape of the answer are sent. The model's values and rows never are. Reading typed questions can be switched off for a model under What Pro decides, on the Pro page. Build and DAX work without it."
+          "On Pro you can type the question. Jev reads it into the parts and may pick the visual. Your words and the shape of the answer are sent. This question reading sends no result rows or values. Totals Fit can send probe rows under the same model permission. Reading typed questions can be switched off for a model under What Pro decides, on the Pro page. Build and DAX work without it."
         ]
       },
       {
@@ -223,8 +225,8 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "Compare answers and keep a good one",
         "bullets": [
-          "In Compare a rewrite, enter the original and the rewritten formula. Choose fields from tables that matter to the calculation, and include totals and edge cases. A match supports the contexts actually checked. An intended change to the business rule needs a known answer saved as a check on Review > Validation.",
-          "Save as a check keeps one number from an answer, or checks a measure against SQL or a trusted answer. It runs with your other checks in Validation.",
+          "In Compare a rewrite, enter the original and the rewritten formula. Choose fields from tables that matter to the calculation, and include totals and edge cases. A match supports the contexts actually checked. An intended change to the business rule needs a known answer saved as a check on Review > Checks.",
+          "Save as a check keeps one number from an answer, or checks a measure against SQL or a trusted answer. It runs with your other checks in Checks.",
           "To keep a formula, edit the measure in the Model list or collect it under Plan > Pending changes. A local edit does not update the live test model until you publish it."
         ]
       }
@@ -320,7 +322,7 @@ const HELP: Record<string, TabHelp> = {
         "h": "Build and continue",
         "bullets": [
           "Build into model adds the reviewed objects as one undoable model change. It does not publish or load source data.",
-          "Review the build result, then use Explore > Diagram and Review > Validation to check the model. Publishing is a separate action under Publish > Published."
+          "Review the build result, then use Explore > Diagram and Review > Checks to check the model. Publishing is a separate action under Publish > Published."
         ]
       }
     ]
@@ -446,7 +448,7 @@ const HELP: Record<string, TabHelp> = {
         "h": "Choose an action",
         "bullets": [
           "Apply makes the offered model change. Review it first. Give to your assistant puts a task on your Plan with the relevant model context, and Copy copies the same words.",
-          "Descriptions should explain business meaning, not just repeat a field name. Validation can check that key numbers match answers you trust.",
+          "Descriptions should explain business meaning, not just repeat a field name. Checks can check that key numbers match answers you trust.",
           "Accept means you accept it without fixing it, so the check counts as overridden. The reason is recorded and the finding stays visible. Reopen it when it should count again."
         ]
       },
@@ -540,13 +542,38 @@ const HELP: Record<string, TabHelp> = {
       }
     ]
   },
+  "standard": {
+    "title": "Your standard",
+    "lead": "Choose how every model of yours should look: names, formats, folders, descriptions and which checks count.",
+    "start": [
+      "Pick Light, Balanced or Strict. Each one shows how many changes it makes on this model and how many tasks it adds to the Plan.",
+      "To change one thing, press Change one thing and choose a part. Only the lines that differ from the preset are listed.",
+      "Press Apply to this model. Sure changes are made now as one undo. Renames and words go to the Plan."
+    ],
+    "sections": [
+      {
+        "h": "Counts",
+        "bullets": [
+          "Press a count to see the changes before and after. Nothing is written until you press Apply.",
+          "Grades stay the same for every standard. A lighter standard only changes which findings become tasks."
+        ]
+      },
+      {
+        "h": "The file",
+        "bullets": [
+          "File shows the standard as one readable file. Copy as a page writes it as short sentences for someone who does not use Semanticus.",
+          "Your assistant can read and change the standard in words, so you can also ask it."
+        ]
+      }
+    ]
+  },
   "tests": {
-    "title": "Validation",
+    "title": "Checks",
     "lead": "Check that calculations return the answers you trust, and that tables connect and count correctly.",
     "start": [
-      "Choose a live test model. Select New check to save an answer you already trust. Relationships and table row counts are checked on every run.",
-      "Select Run checks, or open the arrow beside it to run one group. Tick checks first and the button runs only those.",
-      "Read the one status line, then open any row that differs. Record it keeps the run with the model. Report opens the report for this run, and the Reports tab lists the ones you kept."
+      "Open Review > Checks. Open a measure row to read its Description or add a number you trust.",
+      "Press Run checks to run saved numbers, relationship checks, and table counts. Open a row for details.",
+      "Read the count and every red problem. Open Run history and grade to record the run. Kept reports lists your saved reports."
     ],
     "sections": [
       {
@@ -587,9 +614,9 @@ const HELP: Record<string, TabHelp> = {
   },
   "evidence": {
     "title": "Reports",
-    "lead": "The reports kept with this model, on the second tab of Validation. See what was checked, when it ran and which model it describes.",
+    "lead": "The reports kept with this model, on the second tab of Checks. See what was checked, when it ran and which model it describes.",
     "start": [
-      "Open Review > Validation and press Reports.",
+      "Open Review > Checks and press Reports.",
       "Select a report and read its outcome, model details and the checks that actually ran.",
       "For an up-to-date result after a model change, go back to the first tab and run the checks again."
     ],
@@ -604,7 +631,7 @@ const HELP: Record<string, TabHelp> = {
       {
         "h": "If the list is empty",
         "bullets": [
-          "Run checks on Validation and use their report-saving controls. Reports kept with the current model appear here.",
+          "Press Run checks and use the report-saving controls. Reports kept with the current model appear here.",
           "A report from another time or model is useful history, but it does not prove the current model is correct."
         ]
       }
@@ -909,9 +936,9 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
       { q: 'What is the difference between editing, testing and publishing?', a: 'Editing changes your working model. Testing asks a live model for answers. Publishing sends reviewed changes to a live destination. These can be different models; check the bottom bar and use Connections to change them.' },
       { q: 'Can I work without a live connection?', a: 'Yes. Open model files to inspect and edit their structure, formulas and descriptions. Running queries, measuring performance and testing real answers needs a live model with data.' },
       { q: 'Give my assistant the Semanticus guides', a: 'Run Semanticus: Install or Update Assistant Skills from the VS Code command palette. Choose your assistant, then refresh or restart it if needed. These guides use your existing Semanticus connection.' },
-      { q: 'Check a business answer against a number I trust', a: 'Review > Validation > New check. Choose a known answer and enter the calculation, expected value and the filters the answer applies to.', tab: 'tests' },
-      { q: 'Check model results against source data', a: 'Review > Validation > New check > Check against SQL. Review the SQL that supplies the expected answer and connect to its server and database. This needs a SQL connection as well as the live model.', tab: 'tests' },
-      { q: 'Read the saved check reports', a: 'Review > Validation > Reports lists the reports kept with this model. Open one to read its results, date and coverage.', tab: 'evidence' },
+      { q: 'Check a business answer against a number I trust', a: 'Review > Checks > Add a number you trust. Choose a known answer and enter the calculation, expected value and the filters the answer applies to.', tab: 'tests' },
+      { q: 'Check model results against source data', a: 'Review > Checks > Add a number you trust > Check against SQL. Review the SQL that supplies the expected answer and connect to its server and database. This needs a SQL connection as well as the live model.', tab: 'tests' },
+      { q: 'Read the saved check reports', a: 'Review > Checks > Reports lists the reports kept with this model. Open one to read its results, date and coverage.', tab: 'evidence' },
       { q: 'Change when the assistant asks for permission', a: 'Permissions shows the current settings and waiting requests.', tab: 'permissions' },
     ],
   },
@@ -922,7 +949,7 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
       { q: 'DAX and filter context', a: 'DAX is the formula language for model calculations. Filter context is the set of values used for an answer, such as sales for a particular product, region and year.', tab: 'query' },
       { q: 'Power Query, M and partition', a: 'Power Query prepares data for loading. M is its formula language. A partition is a section of a model table with its own loading query.', tab: 'mcode' },
       { q: 'XMLA endpoint, SQL endpoint and tenant', a: 'An endpoint is a connection address. XMLA connects to a semantic model; a SQL endpoint connects to source tables, such as a Fabric warehouse or lakehouse. A tenant identifies the Microsoft organisation your account signs into.' },
-      { q: 'Report, coverage and checking against SQL', a: 'A report is the recorded result of a check, kept under Review > Validation > Reports. Coverage says what was checked and what was left out. A check against SQL compares model results with an independent source answer.', tab: 'tests' },
+      { q: 'Report, coverage and checking against SQL', a: 'A report is the recorded result of a check, kept under Review > Checks > Reports. Coverage says what was checked and what was left out. A check against SQL compares model results with an independent source answer.', tab: 'tests' },
       { q: 'Model quality, finding and override', a: 'Model quality checks the model against a library of design, naming and performance rules. A finding is an issue raised by a check. An override records your decision to accept that issue without fixing it.', tab: 'bpa' },
       { q: 'MCP and assistant skills', a: 'MCP is the connection that lets your assistant use Semanticus tools. A skill is a guide that helps it choose and use those tools for a task.' },
     ],
@@ -960,6 +987,7 @@ const WHERE: { group: string; items: WhereEntry[] }[] = [
     items: [
       { q: 'See how well Copilot answers questions about the model', a: 'Review > Copilot test. Your assistant writes the questions, a small model answers them, and each answer is graded by number.', tab: 'copilottest' },
       { q: 'Score and fix how well AI understands the model', a: 'Review > AI readiness. Apply a safe fix, or copy a ready prompt for the rest.', tab: 'readiness' },
+      { q: 'Hold every model to the same names, formats and folders', a: 'Review > Your standard. Pick Light, Balanced or Strict, change one thing if you need to, then press Apply to this model.', tab: 'standard' },
       { q: 'Find design, naming and performance problems', a: 'Review > Model quality. Fix one finding, apply several fixes at once, or send them to Plan > Pending changes for review.', tab: 'bpa' },
       { q: 'Review a set of changes before applying', a: 'Plan > Pending changes. Keep or reject each item, then apply the rest as one undoable step.', tab: 'optimize' },
       { q: 'Publish the open model to a live workspace', a: 'Open Publish. Tick the changes to send, then press the button at the top right. It names the changes and the destination. Ctrl+S saves and never publishes.', tab: 'deploy' },

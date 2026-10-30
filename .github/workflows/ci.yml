@@ -494,6 +494,10 @@ jobs:
         run: node --test tools/jev-replay/query/test/*.test.mjs
       - name: Build the solution (hermetic — this run IS the proof of the cross-platform offline lane)
         run: dotnet build Semanticus.sln -c Release
+      - name: MCP connection survives an extension update
+        if: runner.os == 'Linux'
+        working-directory: Semanticus.VSCode
+        run: npm run test:mcp-update
       # THE FULFILLMENT WORKER SELF-TEST, INCLUDING ITS CROSS-LANGUAGE SECTION A. Section A round-trips
       # licence tokens against the REAL .NET verifier through the Semanticus.License CLI, so it needs a
       # checkout where that project BUILDS: this job checks out with submodules recursive (the vendored TE2

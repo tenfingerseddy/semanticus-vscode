@@ -173,6 +173,7 @@ function KeptBody({ nb, r, what }: { nb: Notebook; r: Rec; what: string }) {
   const count = isRowCount(kept);
   const failed = !r.headline && r.outcome && r.outcome !== 'answered' ? OUTCOME_WORD[r.outcome] ?? null : null;
   return <div className="qn-answer" data-testid="answer-kept" data-outcome={r.outcome ?? ''}>
+
     {kept && !count && what === 'answer' && <div className="qn-figure" data-testid="figure"><div className={`qn-figure-n qn-num ${blank ? 'qn-faint' : ''}`}>{kept}</div></div>}
     {r.dropped && what === 'answer' && <Notice tone="warn"><span data-testid="assumption-kept">{r.dropped}</span></Notice>}
     <div className="qv-tools" data-testid="row-not-run">
@@ -195,7 +196,7 @@ function RowBody({ q, nb, r, onOpenTests, explainIt }: { q: Q; nb: Notebook; r: 
       {tabs.map((t) => <button key={t} type="button" role="tab" className="qn-tab" aria-selected={nb.tab === t} onClick={() => nb.setTab(t)} data-testid={`view-${t}`}>{TAB_NAME[t]}</button>)}
     </div>
     <div className="qn-view" role="tabpanel">
-      {nb.tab === 'answer' && (notRun ? <KeptBody nb={nb} r={r} what="answer" /> : <AnswerBody q={q} r={r} explainOpen={() => nb.setTab('explain')} />)}
+      {nb.tab === 'answer' && (notRun ? <KeptBody nb={nb} r={r} what="answer" /> : <AnswerBody q={q} r={r} nb={nb} explainOpen={() => nb.setTab('explain')} />)}
       {nb.tab === 'dax' && <DaxBody q={q} nb={nb} />}
       {nb.tab === 'table' && (notRun ? <KeptBody nb={nb} r={r} what="table" /> : <TableBody q={q} explainIt={explainIt} />)}
       {nb.tab === 'speed' && <SpeedBody q={q} r={r} timingAll={!!nb.timing} />}
@@ -242,7 +243,7 @@ function VisualSwitch({ q }: { q: Q }) {
   </span>;
 }
 
-function AnswerBody({ q, r, explainOpen }: { q: Q; r: Rec; explainOpen: () => void }) {
+function AnswerBody({ q, r, nb, explainOpen }: { q: Q; r: Rec; nb: Notebook; explainOpen: () => void }) {
   const { conn, session, connectXmla, busy: connBusy } = useConnection();
   const askOn = useFeature('askData') === 'granted';
   // Chips describe the question's own query. Over a hand-written query they describe another question, so they are not shown (hero 25 H4); the DAX view offers the way back.
@@ -268,6 +269,7 @@ function AnswerBody({ q, r, explainOpen }: { q: Q; r: Rec; explainOpen: () => vo
   const fig0 = figureOf(q.shownRes ?? q.res, q.chartConfig, running);
   const fig = fig0.big && !fig0.blank && !q.assistantShown ? { ...fig0, big: keepSymbol(r.headline ?? saidFor(q.saidHeadline.current[r.id], r), fig0.big) } : fig0;
   return <div className="qn-answer" data-testid="answer" data-outcome={o ?? ''}>
+
     {(q.assistantShown || byAssistantRow) && <div className="qn-source" data-testid="answer-source">
       {q.assistantShown && <span className="sem-text-meta">The query your assistant ran</span>}
       {byAssistantRow && <span className="sem-doer sem-doer-agent" data-testid="query-by-assistant">Asked by your assistant</span>}</div>}
@@ -604,7 +606,7 @@ function StepsBody({ q }: { q: Q }) {
   return <div className="qn-sec" data-testid="steps-card">
     {q.emptyQuery && <div className="sem-text-meta" data-testid="steps-nothing">There is no query yet. Choose a number in Fields, or write a query in DAX.</div>}
     {(passed.length > 0 || hasRows) && <ul className="qv-checks" data-testid="checks">
-      {hasRows && q.res && <li>✓ {q.chipsHere && q.answerRows ? 'Checked' : 'Ran'} · {rowAnnouncement(q.res.rowCount, q.res.truncated)} · {timingAnnouncement(q.res.elapsedMs)}</li>}
+      {hasRows && q.res && <li>✓ Ran · {rowAnnouncement(q.res.rowCount, q.res.truncated)} · {timingAnnouncement(q.res.elapsedMs)}</li>}
       {passed.filter((c) => c.name !== 'rows').map((c) => <li key={c.name + c.line}>✓ {c.line}</li>)}
     </ul>}
     <div className="qv-check-part" data-testid="queries-server-steps"><div className="qv-panel-tools"><span className="sem-label">Query plan</span>
@@ -661,7 +663,7 @@ function SaveBody({ q, onOpenTests }: { q: Q; onOpenTests?: () => void }) {
         onContinue={() => { const d = checkDraftOf(q.askState.answer!, q.saving!.row, q.saving!.measure, q.model.measures); if (d) { q.setAnswerDraft(d); q.setSaving(null); } }}
         ready={!!checkDraftOf(q.askState.answer, q.saving.row, q.saving.measure, q.model.measures)} />
     )}
-    {q.checkSaved && <div className="qv-note" data-testid="saved">Check saved.{onOpenTests && <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" data-testid="open-validation" onClick={onOpenTests}>Open Validation</button>}</div>}
+    {q.checkSaved && <div className="qv-note" data-testid="saved">Check saved.{onOpenTests && <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" data-testid="open-validation" onClick={onOpenTests}>Open Checks</button>}</div>}
     <div className="qv-check-part"><div className="sem-label">Checks saved on this model</div>
       {saved === null ? <div className="sem-text-meta">Reading the checks…</div> : saved.length === 0 ? <div className="sem-text-meta">None yet.</div>
         : <table className="qv-table qv-saved"><tbody>{saved.slice(0, 8).map((s) => <tr key={s.id}><td>{readableTitle(s.title) || friendlyHeader(s.kind)}</td><td className="sem-text-meta">{KIND_WORD[s.kind] ?? friendlyHeader(s.kind)}</td><td className="sem-text-meta qv-r">{s.createdWhen ? when(s.createdWhen) : ''}</td></tr>)}</tbody></table>}

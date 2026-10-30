@@ -63,6 +63,7 @@ namespace Semanticus.Engine
             // ======================================= PASS: reads, probes, previews =====================================
             const string reads = "A read: it changes nothing in the model, its files or the engine's settings.";
             Pass(reads,
+                "PlanMeasureRunAsync", "GetMeasureCheckCacheAsync",
                 "ListRefreshTypesAsync", "ListTreeAsync", "GetObjectAsync", "GetDaxAsync", "SessionInfoAsync", "ConnectionContextAsync",
                 "GetEntitlementAsync", "GetTrialTallyAsync", "GetHostSettingsAsync", "GetVerifiedModeAsync", "GetModelGraphAsync", "GetOrientationAsync", "HarnessReportAsync",
                 "GetLayoutAsync", "SearchModelAsync", "ListMeasuresAsync", "ListColumnsAsync", "GetModelObjectsAsync",
@@ -72,7 +73,7 @@ namespace Semanticus.Engine
                 "ListNamedExpressionsAsync", "GetNamedExpressionAsync", "ListCalculationGroupsAsync", "GetPerspectivesAsync",
                 "ListFormatTemplatesAsync", "GetObjectPropertiesAsync", "GetDependentsAsync", "GetDependenciesAsync", "GetLineageAsync",
                 "ImpactOfAsync", "ImpactAssessmentAsync", "UnusedObjectsAsync", "ListReportScopeAsync", "ScriptObjectsAsync",
-                "GetIncrementalRefreshPolicyAsync", "GetAiInstructionsAsync", "ListRolesAsync", "ListCalendarsAsync",
+                "GetIncrementalRefreshPolicyAsync", "GetAiInstructionsAsync", "ListRolesAsync", "ListCalendarsAsync", "ProposeCalendarAsync", "GetStandardAsync",
                 "ListVerifiedEditsAsync", "ExportVerifiedEditsAsync", "ListTestDefinitionsAsync", "ListTestRunsAsync", "GetTestRunAsync",
                 "ExportTestReportAsync", "ListEvidenceAsync", "GetEvidenceAsync", "ListWorkflowsAsync", "GetWorkflowEnforcementAsync",
                 "GetWorkflowPolicyAsync", "ListWorkflowProfilesAsync", "GetWorkflowAsync", "GetWorkflowDocumentAsync",
@@ -99,9 +100,10 @@ namespace Semanticus.Engine
             Pass("A measurement or a trace on the model or a live copy of it: it computes and returns, and writes nothing.",
                 "VertiPaqScanAsync", "BenchmarkDaxAsync", "ProfileDaxAsync", "VerifyEquivalenceAsync", "BenchmarkColdWarmAsync",
                 "CaptureQueryPlanAsync", "ProbeMeasureAsync", "BlameValueAsync", "ListValueHistoryAsync",
-                "CompareBaselineAsync", "RunDmvAsync", "TryTestAsync");
+                "CompareBaselineAsync", "RunDmvAsync", "TryTestAsync", "GetMeasureMarksAsync", "RunMeasurePlanAsync", "SweepMeasureChecksAsync");
             NoPreview("Changes nothing in the model or its files, but it clears or stops something the engine keeps, which a rehearsal's rollback does not bring back.",
-                "CancelDaxAsync", "ClearCacheAsync", "ClearReferenceBindingAsync", "SetPlanItemAsync", "SetPlanItemsAsync");
+                "CancelDaxAsync", "ClearCacheAsync", "ClearReferenceBindingAsync", "SetPlanItemAsync", "SetPlanItemsAsync", "ConfigureMeasureSweepAsync",
+                "StopMeasureRunAsync");
             NoPreview("A check that runs rehearsals of its own, so it cannot run inside one.", "ReplayCheckWorkflowAsync");
             Pass("A read of the sanctioned assistant queue.", "ListAssistantRequestsAsync");
             NoPreview("The engine's own signal or the sanctioned assistant queue (the Plan contract, section 12): the person made the task, and claiming, answering or declining it is the assistant's part of it. It moves a cursor or a queue, which a rehearsal cannot undo.",
@@ -255,6 +257,10 @@ namespace Semanticus.Engine
                 ? "restore the kept unsaved changes to the file model as one undo step"
                 : "delete the recovery copy for the file model. Undo does not restore the deleted copy"));
             EditNoPreview("ApplySafeFixesAsync", "apply every fix the AI-readiness check calls safe", c => c.Engine.GateDescribeSafeFixes());
+            // The standard: the changes are one undo step in the model, and the renames and words are written to the Plan, which a rehearsal does not roll back.
+            // The standard file (and the extra rules file it names) decides what is written, and the model's revision knows nothing about either: the grant is bound to their state.
+            Add(EditWitnessed("ApplyStandardAsync", "hold the model to its standard: make the sure changes now as one undo step and put the renames and words on the Plan", c => c.Engine.GateBasisStandardAsync(), "the standard file and the extra rules file it reads"));
+            Add(Witnessed("SetStandardAsync", "change the standard file: {patch}", c => c.Engine.GateBasisStandardFileAsync(c), "the standard file it rewrites"));
             EditNoPreview("FixThemAsync", "fix everything Semanticus can fix on its own as one undo step, and give the writing to the assistant as plan tasks");
             Edit("BpaFixAllAsync", "apply every Best Practice fix that can be made safely", c => c.Engine.GateDescribeBpaFixAll());
             EditNoPreview("MakeAiReadyAsync", "make the model AI ready: write the safe fixes and queue the descriptions that need words");
@@ -291,6 +297,11 @@ namespace Semanticus.Engine
             Edit("CreateTableAsync", "add the table {name:raw}");
             Edit("CreateColumnAsync", "add the column {name:raw} ({dataType:raw}, from {sourceColumn:raw}) to {tableRef}");
             Edit("CreateMeasureAsync", "add the measure [{name:raw}] to {tableRef}: {expression}");
+            Edit("CleanupMeaningAnnotationsAsync", "remove old meaning annotations (Undo restores them; Description stays the same)");
+            Pass(reads, "GetMeasureDescriptionAsync", "GetChecksPageAsync");
+            EditNoPreview("DraftMeasureDescriptionAsync", "ask your assistant for a Description of {measureRef}");
+            EditNoPreview("ProposeMeasureDescriptionAsync", "ask your assistant for a better Description of {measureRef}");
+            Edit("KeepMeasureDescriptionAsync", "keep the proposed Description {proposalId}");
             Edit("CreateCalculatedColumnAsync", "add the calculated column {name:raw} to {tableRef}: {expression}");
             Edit("CreateCalculatedTableAsync", "add the calculated table {name:raw}: {expression}");
             Edit("CreateCalculationGroupAsync", "add the calculation group {name:raw}");
@@ -311,6 +322,8 @@ namespace Semanticus.Engine
             Edit("GenerateTimeIntelligenceAsync", "add the time-intelligence measures {variants:raw} for {baseMeasureRef}");
             Edit("DefineCalendarAsync", "define the calendar {name:raw} on {tableRef}");
             Edit("DefineCalendarFromTemplateAsync", "define a {template:raw} calendar on the table {tableName:raw}");
+            Edit("SetupCalendarsAsync", "set up calendars on the table {dateTable:raw}");
+            Edit("AddTimeMeasuresAsync", "add the time measures {measures:raw}");
             Edit("TagCalendarColumnAsync", "tag the column {column:raw} of the calendar {calendarName:raw} on {tableRef}");
             // --- changing and deleting
             Edit("SetDescriptionAsync", "set the description of {objRef} to: {text}");
@@ -343,6 +356,11 @@ namespace Semanticus.Engine
             Edit("SetAiInstructionsAsync", "set the AI instructions ({culture:raw}) to: {instructions}");
             Edit("SetAiDataSchemaAsync", "set whether {objRef} is part of the AI data schema to {included}");
             Edit("SetDocSectionAsync", "write the documentation section {sectionKey:raw} of {objRef}: {markdown}");
+            Pass("Preferences for measure checks: kept in the check store, with no model edit.", "SetMeasurePerformanceAsync");
+            Pass("Keeps an edit the person meant: kept in the check store, with no model edit. The shared Undo covers it: an Undo of the edit makes the Keep stop applying.",
+                "KeepMeasureEditAsync");
+            Edit("SetMeasureTotalsAsync", "set totals limits or mark the totals of {measureRef} as expected");
+            Edit("SetMeasureFiltersOnPurposeAsync", "{onPurpose?mark|unmark} the ignored filters of {measureRef} as on purpose");
             Edit("SetRolePermissionAsync", "set the permission of the role {name:raw} to {modelPermission:raw}");
             Edit("SetTablePermissionAsync", "set the row filter of the role {roleName:raw} on {tableRef} to: {filterDax}");
             Edit("SetRoleMemberAsync", "{add?add|remove} {memberName:raw} {add?to|from} the role {roleName:raw}");
@@ -365,6 +383,8 @@ namespace Semanticus.Engine
             // ======================================= the spec-first start (M11, join 6 J1) ==============================
             // Every verb of the start is the assistant writing: it makes a model and its files, edits the plan the person will approve, writes words into
             // it, or builds the model from it. Under Locked each is asked about like any other assistant write. Reads pass, approving is the person's.
+            NoPreview("A read: it asks the live model for dates and for two measures' numbers as single calculated values. Nothing is written, and a rehearsal does not need a live model.", "CheckCalendarDataAsync", "CheckSameNumbersAsync");
+            NoPreview("A read: it works out what the standard would do inside a rehearsal that is rolled back. Nothing is written and no revision moves.", "PreviewStandardAsync");
             NoPreview("A read of the start plan or its open words: it changes nothing in the model or its files (it may start the plan's own background work, which a rehearsal cannot undo).",
                 "GetStartPlanAsync", "GetStartWordsAsync");
             // Kane, 10 Oct 2026: the person's word in chat approves. The approval is still void the moment the plan changes (it is bound to the digest).

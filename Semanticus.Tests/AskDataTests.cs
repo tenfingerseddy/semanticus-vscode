@@ -163,10 +163,11 @@ namespace Semanticus.Tests
             /// Checks, so a test that counts the parts calls is not disturbed by the check that comes after them.</summary>
             public readonly List<DecisionRequest> Seen = new List<DecisionRequest>();
             private readonly List<DecisionRequest> _checks = new List<DecisionRequest>();
+            private readonly List<DecisionRequest> _other = new List<DecisionRequest>();
             /// <summary>The check calls only (the requests holding q:check:gap), in order.</summary>
             public IReadOnlyList<DecisionRequest> Checks { get { lock (Seen) return _checks.ToList(); } }
-            /// <summary>Every call, parts and checks, in the order they were made.</summary>
-            public IReadOnlyList<DecisionRequest> All { get { lock (Seen) return Seen.Concat(_checks).ToList(); } }
+            /// <summary>Every request, including other decision points, so the disclosure checks still inspect all of them.</summary>
+            public IReadOnlyList<DecisionRequest> All { get { lock (Seen) return Seen.Concat(_checks).Concat(_other).ToList(); } }
             /// <summary>Every check answered from the recorded live run (a digest the recording holds).</summary>
             public readonly List<string> Recorded = new List<string>();
             /// <summary>The check calls come back not decided, as when Jev was not reachable.</summary>
@@ -187,10 +188,14 @@ namespace Semanticus.Tests
 
             public async Task<DecisionAnswers> AskAsync(DecisionRequest request, CancellationToken ct)
             {
+                // Description scoring now follows edits. It does not pick a part of a data question.
+                if (request.PointName != DecisionRegistry.QuerySummarize)
+                {
+                    lock (Seen) _other.Add(request);
+                    return DecisionAnswers.NotDecided(request, "this test answers query.summarize only");
+                }
                 var isCheck = IsCheck(request);
                 lock (Seen) { if (isCheck) _checks.Add(request); else Seen.Add(request); }
-                if (request.PointName != DecisionRegistry.QuerySummarize)
-                    return DecisionAnswers.NotDecided(request, "this test answers query.summarize only");
                 if (request.Questions.Any(q => q.Name == JevQueryReader.CheckRealQ) && NotDecideSecondOpinions) return DecisionAnswers.NotDecided(request, "the test made the second opinion unavailable");
                 if (isCheck && NotDecideChecks) return DecisionAnswers.NotDecided(request, "the test made the check unavailable");
                 if (isCheck && CheckDelay > TimeSpan.Zero)
@@ -253,6 +258,8 @@ namespace Semanticus.Tests
             public LocalEngine Engine => F.Engine;
             public void Dispose() => F.Dispose();
         }
+
+
 
         private static void LabelProdForTest(string endpoint, string database)
         {
@@ -1043,64 +1050,48 @@ namespace Semanticus.Tests
 
         // ---- verifier findings, m11/query-split round 1 (left failing on purpose) ---------------------------------
 
-        /// <summary>V1. QueryCatalog.Read parses the whole linguistic schema again for EVERY object whose synonyms it
-        /// wants, and it is read fresh on EVERY ask_data call (LocalEngine.Query.cs:88). It already paid one full parse
-        /// per column; this lane added one per measure and one per table, so the same call costs about half again as
-        /// much on exactly the models this lane is for, the ones prepared for AI, because those are the ones with a real
-        /// language schema.
-        ///
-        /// Measured on the rig's small model (19 columns, 4 measures, 6 tables) with a 760 KB schema: QueryCatalog.Read
-        /// took 2754 ms, of which the columns were 1966 ms and the measures and tables this lane added were 1028 ms.
-        /// With an empty schema it took 0 ms. The cost is one parse per object, so on a real model, where the number of
-        /// objects grows with the schema, it grows with the square of the model.
-        ///
-        /// One parse per culture is enough: read the schema once and look every object up in it. The bar here is
-        /// relative, so it does not depend on how fast the machine is: a whole catalog read must cost less than ten
-        /// single lookups (five failed a correct read at 5.9 on the Windows hosted runner; the defect costs about 29).</summary>
+        /// <summary>Count actual schema parses on each catalog read, independent of CPU speed or scheduling.</summary>
         [Fact]
         [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_catalog_reads_the_language_schema_once_per_culture_not_once_for_every_object()
         {
             using var rig = await BuildAsync();
-            var sb = new StringBuilder("{\"Version\":\"1.0.0\",\"Language\":\"en-US\",\"Entities\":{");
-            for (var i = 0; i < 4000; i++)
+            var schema = """
+                {"Entities":{
+                  "Store":{"Binding":{"ConceptualEntity":"Store"},"Terms":[{"Contoso shops":{}}]},
+                  "Store.Region":{"Binding":{"ConceptualEntity":"Store","ConceptualProperty":"Region"},"Terms":[{"Contoso area":{}}]},
+                  "Sales.Net Sales":{"Binding":{"ConceptualEntity":"Sales","ConceptualProperty":"Net Sales"},"Terms":[{"Contoso revenue":{}}]}
+                }}
+                """;
+            var schemas = new[] { schema, schema.Replace("Contoso", "Contoso France", StringComparison.Ordinal) };
+            // What the culture holds is a stand-in with no Entities: only the parser handed to the catalog turns it into the schema above.
+            // A read made any other way (the donor SynonymHelper.GetSynonyms, once per object) parses the stand-in, finds no synonyms and fails the asserts below.
+            var stored = new[] { "{\"TestSchema\":\"en-US\"}", "{\"TestSchema\":\"fr-FR\"}" };
+            var realOf = new Dictionary<string, string> { [stored[0]] = schemas[0], [stored[1]] = schemas[1] };
+            await rig.F.Sessions.Require().MutateAsync("human", "Contoso language schemas", m =>
             {
-                if (i > 0) sb.Append(',');
-                var n = i.ToString(CultureInfo.InvariantCulture);
-                sb.Append("\"Filler").Append(n).Append(".Attribute").Append(n)
-                  .Append("\":{\"Definition\":{\"Binding\":{\"ConceptualEntity\":\"Filler").Append(n)
-                  .Append("\",\"ConceptualProperty\":\"Attribute").Append(n)
-                  .Append("\"}},\"State\":\"Generated\",\"Terms\":[{\"attribute ").Append(n).Append("\":{\"State\":\"Generated\"}}]}");
+                var names = new[] { "en-US", "fr-FR" };
+                for (var i = 0; i < names.Length; i++)
+                {
+                    var name = names[i];
+                    var culture = m.Cultures.Contains(name) ? m.Cultures[name] : m.AddTranslation(name);
+                    culture.Content = stored[i];
+                }
+            });
+            for (var read = 0; read < 2; read++)
+            {
+                var parses = new List<string>();
+                var cat = await rig.F.Sessions.Require().ReadAsync(m => QueryCatalog.Read(m, content =>
+                {
+                    parses.Add(content);
+                    return Newtonsoft.Json.Linq.JObject.Parse(realOf[content]);
+                }));
+                Assert.Equal(stored.OrderBy(s => s, StringComparer.Ordinal), parses.OrderBy(s => s, StringComparer.Ordinal));
+                Assert.Contains("Contoso shops", cat.TableSynonyms["Store"]);
+                Assert.Contains("Contoso France shops", cat.TableSynonyms["Store"]);
+                Assert.Contains("Contoso area", cat.Columns.Single(c => c.Table == "Store" && c.Name == "Region").Synonyms);
+                Assert.Contains("Contoso revenue", cat.Measures.Single(c => c.Table == "Sales" && c.Name == "Net Sales").Synonyms);
             }
-            sb.Append("}}");
-            var schema = sb.ToString();
-            await rig.F.Sessions.Require().MutateAsync("human", "a model prepared for AI has a real language schema", m =>
-            {
-                var c = m.Cultures.Contains("en-US") ? m.Cultures["en-US"] : m.AddTranslation("en-US");
-                c.Content = schema;
-            });
-
-            // What one lookup costs on this machine, averaged over three.
-            var one = await rig.F.Sessions.Require().ReadAsync(m =>
-            {
-                var cult = m.Cultures["en-US"];
-                var col = m.Tables["Store"].Columns["Region"];
-                TabularEditor.TOMWrapper.Linguistics.SynonymHelper.GetSynonyms(col, cult);
-                var w = System.Diagnostics.Stopwatch.StartNew();
-                for (var i = 0; i < 3; i++) TabularEditor.TOMWrapper.Linguistics.SynonymHelper.GetSynonyms(col, cult);
-                return w.Elapsed.TotalMilliseconds / 3;
-            });
-
-            await CatalogAsync(rig);
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            await CatalogAsync(rig);
-            var whole = sw.Elapsed.TotalMilliseconds;
-
-            // A parse per object costs one parse per column, measure and table (29 here), far above 10x; the Windows hosted runner measured 5.9 on the correct product.
-            Assert.True(whole < one * 10,
-                $"One ask_data call read the catalog in {whole:F0} ms, {(one <= 0 ? 0 : whole / one):F1} times the cost of a single " +
-                $"synonym lookup ({one:F1} ms) on a {schema.Length.ToString(CultureInfo.InvariantCulture)} byte language schema. " +
-                "The schema is parsed once per column, per measure and per table instead of once per culture.");
         }
 
         /// <summary>V2. The lane's own comment on SplitSnapshot says "Every column offered is listed". It made that true
@@ -1373,7 +1364,20 @@ namespace Semanticus.Tests
             var file = System.IO.Directory.GetFiles(rig.F.Workspace, DataQuestionStore.FileName, System.IO.SearchOption.AllDirectories).Single();
             var text = System.IO.File.ReadAllText(file);
             Assert.DoesNotContain("\"k0\"", text);
-            Assert.DoesNotContain("\"rows\"", text);
+            using var stored = JsonDocument.Parse(text);
+            NoDataRows(stored.RootElement);
+            static void NoDataRows(JsonElement node)
+            {
+                if (node.ValueKind == JsonValueKind.Object)
+                    foreach (var property in node.EnumerateObject())
+                    {
+                        // Checked stores a tally named rows, not the answer's data array.
+                        Assert.False(property.Name == "rows" && property.Value.ValueKind == JsonValueKind.Array);
+                        NoDataRows(property.Value);
+                    }
+                else if (node.ValueKind == JsonValueKind.Array)
+                    foreach (var item in node.EnumerateArray()) NoDataRows(item);
+            }
         }
         /// <summary>fix-askdata-final (verify-askdata-r6 L1). The engine half of r5-062 had no test: the page tests render
         /// mocked answers that already have the fixed shape, and reverting the engine (the passing "checks out" line kept,

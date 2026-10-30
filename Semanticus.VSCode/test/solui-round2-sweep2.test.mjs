@@ -2,7 +2,7 @@
 // writer's change with no press by the person. The boxes here are the ones the two sweeps found in advmodels.tsx, mcode.tsx and pqtransforms.tsx:
 //   1. the RLS row filter of a role and table whose role (or table) the assistant renamed: the held words are listed, never held where nobody can see them;
 //   2. the add member box: its words belong to the role they were typed for, never to the role the page falls back to when that role goes;
-//   3. the classic date table form across a compatibility level change: the same form, not a new one;
+//   3. (the classic date table form went with the old Calendars page, 1.7)
 //   4. the incremental refresh form of a table the assistant renamed: the held words are listed;
 //   5. the Power Query column menu: it stays open across a reconnect, follows its column by name, and never applies to another column;
 //   6. a calc group card keeps its key when its group is renamed and also gains or loses an item.
@@ -99,27 +99,6 @@ test('2. Members: the add member box belongs to its role; when the assistant ren
   assert.ok(ask, 'the words typed for the role that is not here now are listed');
   const shown = pg.mount(() => orphans.OrphanDrafts(ask.props)); await settleAll(); shown.rerender();
   assert.match(flat(find(shown.result, (el) => el.props?.['data-testid'] === 'orphan-rolemember|Readers')), /ana@contoso\.com/);
-});
-
-test('3. Calendars: the classic date table form is the same form across a compatibility level change (a stable key at the same place)', async () => {
-  const w = { supported: false };
-  w.answer = (m) => m === 'listCalendars' ? { calendarsSupported: w.supported, compatibilityLevel: w.supported ? 1701 : 1600, calendars: [] }
-    : m === 'listColumns' || m === 'listMeasures' ? [] : m === 'getModelObjects' ? { tables: [] } : {};
-  const { pg, adv } = advPage(w);
-  const view = pg.mount(() => adv.CalendarsPanel());
-  await settleAll(); view.rerender();
-  const classic = () => (view.result?.props?.children ?? []).flat().find((el) => el?.type?.name === 'ClassicDateTable');
-  const before = classic();
-  assert.ok(before, 'the form is a direct child of the page');
-  assert.ok(before.key != null, 'the form has a key');
-  const rootType = view.result.type;
-  w.supported = true;   // the assistant raises the level to 1701
-  await reloadAll(w, view);
-  const after = classic();
-  assert.ok(after, 'the form is still a direct child of the page');
-  assert.equal(view.result.type, rootType);
-  assert.equal(after.key, before.key, 'the same key: React keeps the form and what was typed in it');
-  // The Fixed vs Flexible help fold is a tooltip on the template picker now (minimal pass, A9), so it has no component to key.
 });
 
 test('6. a calc group card keeps its key when its group is renamed and also gains or loses an item, and when two groups are renamed at once', async () => {

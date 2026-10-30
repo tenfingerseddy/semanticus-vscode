@@ -95,6 +95,9 @@ namespace Semanticus.Decisions
         /// <summary>The proof point for M0a: a folder and a format family proposed for a new measure that was
         /// created without either. It proposes; it never writes.</summary>
         public const string MeasureFolderAndFormat = "measure.folder_and_format";
+        public const string DescriptionMatch = "measure.description_match";
+        public const string TotalsType = "measure.totals_type";
+        public const string TotalsFit = "measure.totals_fit";
 
         /// <summary>The six format families. Fixed, ordered for display, and deliberately coarse: this point
         /// proposes a FAMILY, and turning a family into a real format string stays deterministic.</summary>
@@ -298,6 +301,40 @@ namespace Semanticus.Decisions
 
         private static readonly List<DecisionPoint> All = new List<DecisionPoint>
         {
+            new DecisionPoint(
+                name: TotalsType,
+                caller: "get_measure_marks",
+                purpose: "Read the total type from the measure name, Description and formula. The formula can contain literal values. Shows the type and confidence without changing the model.",
+                schemaVersion: 1,
+                snapshotFields: new[] { "name", "description", "formula" },
+                questions: new[] { new DecisionQuestionShape("rule", DecisionQuestionKind.Choice, "the rule the total should follow",
+                    new[] { "sum_of_rows", "recomputed_at_total", "last_value_over_time", "first_value_over_time", "distinct_count", "average", "blank_at_total" }) },
+                confidenceBar: 0.5,
+                lowConfidenceBehaviour: "show Type unclear; never warn below the adjustable type confidence cut",
+                proOnly: true),
+            new DecisionPoint(
+                name: TotalsFit,
+                caller: "get_measure_marks",
+                purpose: "Compare chosen probe rows and a total with the type Jev read. Sends the measure name, Description, formula, grouped member names, calculated values and code-computed facts. Warns only at the measured per-type cuts.",
+                schemaVersion: 1,
+                snapshotFields: new[] { "name", "description", "formula", "probe", "expected_total_rule" },
+                questions: new[] { new DecisionQuestionShape("fits", DecisionQuestionKind.Noul, "whether the total follows the expected rule") },
+                confidenceBar: 0.5,
+                lowConfidenceBehaviour: "show the type only when the measured cuts do not support a warning; distinct count is always information",
+                proOnly: true),
+            new DecisionPoint(
+                name: DescriptionMatch,
+                caller: "get_measure_description",
+                purpose: "Score whether a Description matches its measure. Sends the Description, formula and measure name. "
+                    + "The formula can contain literal values. Provenance is not a scoring input. It never writes a Description.",
+                schemaVersion: 1,
+                snapshotFields: new[] { "description", "formula", "name" },
+                questions: new[] {
+                    new DecisionQuestionShape("match", DecisionQuestionKind.Noul, "whether every Description statement is true of the formula"),
+                    new DecisionQuestionShape("detail", DecisionQuestionKind.Noul, "whether the Description distinguishes this calculation") },
+                confidenceBar: 0,
+                lowConfidenceBehaviour: "show the measured score in adjustable bands; leave the mark at not scored yet when no answer is available",
+                proOnly: true),
             new DecisionPoint(
                 name: MeasureFolderAndFormat,
                 caller: "propose_measure_defaults",
@@ -909,7 +946,9 @@ namespace Semanticus.Decisions
         /// (<see cref="DecisionConsent.Covers"/> checks the point's own fields), so a person who agreed under version 6 is not shown
         /// the card again; the new point reads as not covered until they agree, and it is off in this build until its replay clears
         /// its bar. Its two fields are check names, measure names, a status word and counts: nothing the card does not already name.
-        public const int ConsentSchemaVersion = 6;
+        // Version 7 (1.7 Totals): chosen probe rows and totals can now leave for the measured fit question.
+        // The card names this new data. Existing permission must cover that card before Totals asks.
+        public const int ConsentSchemaVersion = 7;
 
         /// <summary>Every declared field across every point, as "point:field", sorted. This is the exact list a
         /// person consents to, and the thing the settings page shows.</summary>

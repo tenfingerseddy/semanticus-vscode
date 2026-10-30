@@ -436,7 +436,7 @@ namespace Semanticus.Tests
 
         /// <summary>Calls each writer straight on the engine as origin "agent" (or, for one with no origin, inside an assistant's call with
         /// no ticket), under Locked, and says which ones the engine itself stopped and asked about.</summary>
-        private async Task<(List<string> Asked, List<string> Landed, string[] FileChanges, int Writers, List<string> Silent)> TripwireAsync(string tag)
+        private async Task<(List<string> Asked, List<string> Landed, string[] FileChanges, int Writers, List<string> Silent)> TripwireAsync(string tag, Func<Task> afterSnapshot = null, Func<Task> beforeSnapshot = null)
         {
             var (engine, sessions, path) = await OpenAsync(tag);
             using (engine)
@@ -445,8 +445,10 @@ namespace Semanticus.Tests
                 var scratch = Path.Combine(dir, "scratch.out");
                 AgentPolicyStore.SetPreset(AssistantGateKit.Locked, "human");
                 var writers = await OutsideWritersAsync(engine, scratch);
+                if (beforeSnapshot != null) await beforeSnapshot();
                 var files0 = AssistantGateKit.Files(dir);
                 var home0 = AssistantGateKit.Files(Home);
+                if (afterSnapshot != null) await afterSnapshot();
                 var asked = new List<string>();
                 var landed = new List<string>();
                 var silent = new List<string>();
@@ -513,6 +515,44 @@ namespace Semanticus.Tests
             Assert.True(guarded.Length > 40, "only " + guarded.Length + " writers call the chokepoint");
             var silent = guarded.Where(g => !asked.Contains(g, StringComparer.Ordinal)).ToArray();
             Assert.True(silent.Length == 0, "these call the chokepoint but it did not ask: " + string.Join(", ", silent));
+        }
+
+        [Fact]
+        public async Task A_marks_read_queued_before_close_cannot_write_the_next_tripwires_home_index()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro, Path.Combine(Root, "closed-marks"));
+            await engine.OpenAsync(AssistantGateKit.WriteModel(Root, "closed-marks"));
+            sessions.Current.LiveOrigin = new LiveOrigin("contoso", "Closed Sales", null);
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task<int> held = null;
+            Task<MeasureMarksResult> pending = null;
+            try
+            {
+                var (_, _, changes, _, _) = await TripwireAsync("outside-after-close", async () => {
+                    release.TrySetResult();
+                    await held.WaitAsync(TimeSpan.FromSeconds(10));
+                    await pending.WaitAsync(TimeSpan.FromSeconds(10));
+                }, async () => {
+                    // Open the tripwire model first: a held model read also holds TOM's global wrapper gate.
+                    held = sessions.Current.ReadAsync(_ => {
+                        entered.TrySetResult();
+                        release.Task.GetAwaiter().GetResult();
+                        return 0;
+                    });
+                    await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    pending = engine.GetMeasureMarksAsync("measure:Sales/Total");
+                    engine.Dispose();
+                });
+                Assert.True(changes.Length == 0, "files changed although nothing was approved: " + string.Join(", ", changes));
+            }
+            finally
+            {
+                release.TrySetResult();
+                if (held != null) await held.WaitAsync(TimeSpan.FromSeconds(10));
+                if (pending != null) await pending.WaitAsync(TimeSpan.FromSeconds(10));
+            }
         }
 
         /// <summary>Item 7: with the chokepoint switched off, the writers that rely on it stop asking, so the case above depends on it.</summary>

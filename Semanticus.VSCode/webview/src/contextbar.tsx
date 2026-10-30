@@ -144,7 +144,7 @@ export function ContextBar({ onConnections }: { onConnections: (section?: HubVie
   const v = syncVerdict(s, conn);
   const warn = v.tone === 'warn';
   // Folded, the pill carries the Tests fact so nothing about the session becomes unreadable at a narrow width.
-  const pillTitle = testsFolded ? `${v.detail} Tests: ${queryMain} (${querySub}).` : v.detail;
+  const pillTitle = testsFolded ? `${v.detail} Queries run on: ${queryMain} (${querySub}).` : v.detail;
   // Kane kept this bar on 8 October 2026 and asked for it shorter: the model, then "Tests: x", then "Publish: y", and
   // the sync word with its dot. No "Editing" label (the header names the model), no per-slot hints and no
   // second review button (the Publish button opens the review). Only a warning gives the dot a colour.
@@ -158,7 +158,7 @@ export function ContextBar({ onConnections }: { onConnections: (section?: HubVie
       </button>
       <span className="connection-separator" aria-hidden="true">→</span>
       <button type="button" data-testid="connections-querying" onClick={() => onConnections('setup')} title={`Tests and queries use ${queryMain} (${querySub}). Choose the model.`} className={segment}>
-        <span className="connection-kicker">Tests:</span>
+        <span className="connection-kicker">Queries run on:</span>
         <span className={connected ? 'connection-value' : 'connection-value connection-value-none'}>{queryMain}</span>
       </button>
       <span className="connection-separator" aria-hidden="true">→</span>

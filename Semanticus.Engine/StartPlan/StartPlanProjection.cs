@@ -34,14 +34,14 @@ namespace Semanticus.Engine.StartPlan
         };
 
         /// <summary>The model-level annotations the ENGINE keeps for its own use and never because of what a start plan builds: the permission marker, the finding
-        /// waivers, the custom readiness rules and the installed-library list. Each is written by a person's or an assistant's own action at any moment while a
+        /// waivers, the custom readiness rules, the installed-library list and the last-applied standard stamp. Each is written by a person's or an assistant's own action at any moment while a
         /// plan is open, so a projection that held one would differ between the preview (made before) and the build (made after) for no reason the person was
         /// shown. They are left out of BOTH sides, once, here, so no order of permission, approval and Jev rounds can make the two disagree.
         /// The test Every_engine_annotation_is_classified_for_the_projection keeps this list honest: an annotation the engine starts to write must be put in this list or
         /// in <see cref="BuildWritten"/>, or that test fails.</summary>
         internal static readonly string[] Bookkeeping =
         {
-            LocalEngine.ConsentIdAnnotation, WaiverStore.Annotation, CustomReadinessRuleSet.AnnotationName, DaxLibStore.Annotation,
+            LocalEngine.ConsentIdAnnotation, WaiverStore.Annotation, CustomReadinessRuleSet.AnnotationName, DaxLibStore.Annotation, StandardStore.Annotation,
         };
 
         /// <summary>The engine annotations a build WRITES as part of the model it makes, so they stay in the projection: a difference in one is a real difference.</summary>

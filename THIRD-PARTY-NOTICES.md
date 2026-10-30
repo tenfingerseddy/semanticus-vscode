@@ -67,7 +67,7 @@ here can. These gaps are real and are not covered:
   tree they match 49 files, essentially all of them ordinary commentary about our own code, and a 49-entry
   waiver list is one nobody reads.
 - **NuGet is gated only for the references written LITERALLY in the project files of
-  the three packaged projects.** `Semanticus.Core`, `Semanticus.Analysis` and `Semanticus.Engine` are scanned as TEXT for
+  the four packaged projects.** `Semanticus.Core`, `Semanticus.Analysis`, `Semanticus.Dax` and `Semanticus.Engine` are scanned as TEXT for
   `PackageReference` and `ProjectReference` elements. Each package found must be a `nuget` entry in the
   manifest, with its notice in this file, or be classified in the gate with a written reason. The gate
   evaluates no MSBuild at all: it reads no reference out of an imported file, it expands no property

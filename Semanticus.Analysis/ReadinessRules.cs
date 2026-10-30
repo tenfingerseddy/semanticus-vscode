@@ -14,8 +14,7 @@ namespace Semanticus.Analysis
     {
         public int Applicable;
         public List<ReadinessFinding> Violations = new List<ReadinessFinding>();
-        // Rule problems (unsupported scope, an expression that failed to evaluate) surfaced on the scorecard's
-        // RuleErrors instead of a silent pass. Only custom (user-authored) rules populate this; built-ins never do.
+        // Rule problems and failed live reads surface on the scorecard's RuleErrors, never as a clean result.
         public List<string> Errors = new List<string>();
     }
 
@@ -2700,12 +2699,13 @@ namespace Semanticus.Analysis
                     return ev;
                 }));
 
+            rules.AddRange(WrongNumberReadiness.Rules());
             return rules;
         }
 
-        /// <summary>Dmv-kind rules that need live per-column cardinality (COLUMNSTATISTICS). Evaluated ONLY by the
+        /// <summary>Dmv-kind rules that need live key counts or per-column cardinality (COLUMNSTATISTICS). Evaluated ONLY by the
         /// analyzer's Analyze(model, liveStats) overload — so on an offline scan they don't run at all and the
-        /// scorecard is unchanged. They land in CopilotLimits (Copilot's 5M-unique-value index ceiling).</summary>
+        /// scorecard is unchanged. Key integrity scores Relationships; index limits score CopilotLimits.</summary>
         public static IReadOnlyList<ReadinessRule> LiveRules(ReadinessLiveStats stats)
         {
             // Copilot's value index covers only TEXT values (Microsoft, copilot-prepare-data-ai-faq: "Power BI only
@@ -2722,6 +2722,7 @@ namespace Semanticus.Analysis
 
             return new ReadinessRule[]
             {
+                WrongNumberReadiness.KeyRule(stats),
                 // Per-column: a single visible TEXT column whose cardinality dominates Copilot's value index.
                 new ObjectRule<Column>(
                     "SCALE-HICARD-COLUMN", "Visible high-cardinality text column bloats Copilot's value index",

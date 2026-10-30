@@ -47,8 +47,8 @@
   column-gap: var(--sem-gap); align-items: center; min-height: var(--sem-row-2); padding: var(--sem-space-1) var(--sem-space-3); box-sizing: border-box; box-shadow: inset 0 -1px 0 var(--sem-rule); cursor: pointer; }
 /* A narrow list (the split list, or a narrow Studio): time over who in one column, the title beside them with the
    Verified word, and the action on a line of its own under the title, so nothing crosses into the details. */
-@container ph-list (max-width: 600px) {
-  .ph-row { grid-template-columns: calc(var(--sem-space-8) * 4 + var(--sem-space-4)) minmax(0, 1fr) auto;
+@container ph-list (max-width: 800px) {
+  .ph-row { grid-template-columns: calc(var(--sem-space-8) * 4 + var(--sem-space-4)) minmax(0, 1fr) minmax(auto, 168px);
     grid-template-areas: "time what ver" "who what ver" ". act act"; }
   .ph-row > .ph-time { grid-area: time; }
   .ph-row > .ph-who { grid-area: who; }
@@ -56,6 +56,11 @@
   .ph-row > .ph-ver { grid-area: ver; }
   /* Indented past the caret column inside .ph-what, so the action starts where the title does. */
   .ph-row > .ph-act { grid-area: act; justify-content: flex-start; padding-left: calc(var(--sem-space-4) + var(--sem-space-1)); }
+}
+/* A small split list needs the title on its own line, below time and who. */
+@container ph-list (max-width: 560px) {
+  .ph-row { grid-template-columns: calc(var(--sem-space-8) * 4 + var(--sem-space-4)) minmax(0, 1fr);
+    grid-template-areas: "time ver" "who ver" "what what" "act act"; }
 }
 .ph-row:hover { background: var(--sem-hover); }
 .ph-row.ph-sel { background: var(--sem-tint-select); }
@@ -69,8 +74,8 @@ body.vscode-high-contrast .ph-row.ph-sel, body.vscode-high-contrast-light .ph-ro
 .ph-doer-earlier { color: var(--sem-muted); }
 .ph-doer-earlier::before { background: transparent; box-shadow: inset 0 0 0 1px currentColor; }
 .ph-what { min-width: 0; display: grid; grid-template-columns: var(--sem-space-4) minmax(0, 1fr); column-gap: var(--sem-space-1); align-items: center; }
-.ph-title { min-width: 0; font-weight: var(--sem-weight-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ph-meta { grid-column: 2; min-width: 0; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph-title { min-width: 0; font-weight: var(--sem-weight-strong); overflow-wrap: anywhere; }
+.ph-meta { grid-column: 2; min-width: 0; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); overflow-wrap: anywhere; }
 .ph-caret { display: flex; align-items: center; justify-content: center; width: var(--sem-space-4); height: var(--sem-space-4); padding: 0; border: 0; background: transparent; color: var(--sem-muted); cursor: pointer; }
 .ph-caret:hover { color: var(--sem-fg); }
 .ph-saved .ph-title { font-weight: var(--sem-weight-strong); }
@@ -82,7 +87,7 @@ body.vscode-high-contrast .ph-row.ph-sel, body.vscode-high-contrast-light .ph-ro
 /* An edit nested under its item or run: no time or who of its own, the object and the change in the number face. */
 .ph-kid { min-height: var(--sem-row); }
 .ph-kid .ph-what { grid-template-columns: minmax(0, 1fr); padding-left: var(--sem-space-6); }
-.ph-kidtitle { position: relative; min-width: 0; font-family: var(--sem-font-num); font-size: var(--sem-text-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph-kidtitle { position: relative; min-width: 0; font-family: var(--sem-font-num); font-size: var(--sem-text-meta); overflow-wrap: anywhere; }
 
 /* An undone row is struck through (mockup: it replaces the "undone" chip). */
 .ph-undone .ph-title, .ph-undone .ph-kidtitle { text-decoration: line-through; text-decoration-color: var(--sem-faint); color: var(--sem-muted); }

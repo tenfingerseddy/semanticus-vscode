@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
-const tests = read('webview/src/tests.tsx');
+const checks = read('webview/src/checks-page.tsx');
+const tests = read('webview/src/tests.tsx') + checks;
 const authoring = read('webview/src/tests-authoring.tsx');
 const app = read('webview/src/App.tsx');
 
@@ -28,12 +29,13 @@ assert.doesNotMatch(tests, /Run \+ record/, 'the separate Run + record button is
 // 1. One 40px tool row.
 // ---------------------------------------------------------------------------------------------------
 assert.match(tests, /className="va-tools" data-testid="v-head"/, 'the page must have one named tool group: the menu and Run checks');
-assert.match(tests, /Run checks/, 'Run is one button: Run checks');
-assert.match(tests, /Run \$\{ticked\.size\.toLocaleString\(\)\} chosen/, 'the chosen checks run from the chooser, so the run menu has no ticked item');
+assert.match(checks, /<RunPlan measures=/, 'the plan shows its estimate before Run');
+assert.doesNotMatch(checks, /data-testid="v-run"/, 'the header has no duplicate run button');
+assert.doesNotMatch(checks, /What to run|Run chosen/, 'the scope chooser has left this page');
 assert.doesNotMatch(tests, /Only what I ticked|Run everything and record this run|includes<\/Eyebrow>/, 'the run menu lists only the families');
 assert.match(tests, /New check/, 'the authoring entry is New check');
 assert.match(tests, /Report of this run/, 'the report of the latest run is one item of the "..." menu');
-assert.match(tests, /Run the checks first\./, 'and says why it is off before a run');
+assert.match(tests, /Item disabled=\{!run\}/, 'the current-run report stays off before a run');
 assert.doesNotMatch(tests, /function ReportMenu\(/, 'the kept reports are one item of the "..." menu, not a second door');
 assert.doesNotMatch(tests, /Runs on |SQL sources: /, 'the footer names the test model and Connections counts the sources, so the tool row says neither');
 assert.match(authoring, /Add a SQL source/, 'Add a SQL source is the last item of New check');
@@ -59,7 +61,9 @@ assert.doesNotMatch(tests, /sections=\{\[sub\]\}|sections: \[sub\]/, 'the open s
 // ---------------------------------------------------------------------------------------------------
 assert.match(tests, /data-testid="v-verdict"/, 'one verdict line, not a wall of tiles');
 assert.doesNotMatch(tests, /function Kpi\(|function OverviewBand\(/, 'the six-tile overview band is replaced by the status line');
-assert.match(tests, /boardHeadline\(tally\)/, 'the verdict reads N of M pass, then differ, then could not check, then not run yet, and the parts add up (validation-model.ts)');
+assert.match(checks, /page\.summary\.total/, 'the measure count comes from the engine summary');
+assert.match(checks, /page\.summary\.numbersDiffer[\s\S]*page\.summary\.keyProblems[\s\S]*page\.summary\.tableProblems/,
+  'the engine summary names every family that needs attention');
 assert.match(tests, /could not check/, 'unknowns stay distinct from failures on the status line');
 assert.match(tests, /coveragePct/, 'coverage comes from the engine and sits beside the grade');
 assert.match(tests, /This run is recorded\./, 'a recorded run says so, in run history and grade');
@@ -77,8 +81,11 @@ assert.doesNotMatch(tests, /function Measures\(/, 'there is no Measures section 
 assert.match(tests, /function ValidationBoard\(/, 'one board of checks: the verdict, then only what needs a look (Validation A, 1.6)');
 assert.match(tests, /function CheckDetail\(/, 'each saved check is one line that opens to its detail');
 assert.match(tests, /resultChip\(/, 'each row shows one of the five result chips');
-assert.match(tests, /Show the \$\{passed\.toLocaleString\(\)\} that pass/, 'the checks that pass sit behind one link');
-assert.match(tests, /NEEDS_A_LOOK/, 'the list holds only what needs a look');
+// DEC-0115 removed meaning. The marks view lists every measure, with the suspect measures first.
+// d1 7.1: worstFirst became a grouping by verdict, worst group first (Broken, Needs review, Unknown, Verified, Not checked yet).
+assert.match(checks, /const rows = page\.measures\.map\(m => \{[\s\S]*?groupByState\(rows\)/, 'all measure rows use the marks severity order');
+assert.match(checks, /<MeasureMarksPanel reference=\{m\.ref\} name=\{m\.name\} \/>/, 'each measure opens its current marks');
+assert.doesNotMatch(checks, /showChecked|isChecked\(/, 'passed measures are no longer hidden behind the retired disclosure');
 assert.match(tests, /Run this one/, 'a row can run just itself');
 assert.match(tests, /Turn off/, 'a row can be turned off');
 assert.match(tests, /Open in Query/, 'an opened row offers the hand-off to Query');
@@ -165,7 +172,7 @@ assert.doesNotMatch(tests, />Results</, 'Results was the name Astra found mislea
 // ---------------------------------------------------------------------------------------------------
 // CHANGED 17 Oct 2026 (UAT 1.5.104): a first visit is one line that starts the first check. It does not explain automatic checks (a fresh model had
 // "1 check, not run yet" the person never made), and a person never sees a count of things hidden from them.
-assert.match(tests, /Start with a check: compare a number with your database, or save one you trust\./, 'the first visit is one line that starts the first check');
+assert.match(checks, /No numbers saved yet/, 'the first visit can start a number from a measure card');
 assert.doesNotMatch(tests, /checked automatically on every run|Checked on every run/, 'nothing promises they always run');
 assert.match(tests, /Connect a test model/, 'a result that needs a live model offers to connect one');
 assert.match(tests, /Loading/, 'there is a loading state');

@@ -400,7 +400,7 @@ test('save decides from the URI identity, rejects before any RPC, sequences rena
     assert.match(wf, /const uriModelKey = headerUriModelKey\(uri\)/, 'the owning model key comes from the uri query');
     assert.match(wf, /uriModelKey,/, 'the uri-borne owning model key is folded into the verdict');
     // CRITICAL 1: the live model identity is fetched AUTHORITATIVELY (one sessionInfo RPC) as token + session id.
-    assert.match(wf, /const id = await this\.liveModelIdentity\(conn\); liveModelKey = id\.token; liveSession = id\.sessionId;/, 'the live model identity (durable token + live session id) is fetched from the engine at Save time');
+    assert.match(wf, /const id = await this\.liveModelIdentity\(conn\); liveModelKey = id\.token; earlierModelKey = id\.earlierToken; liveSession = id\.sessionId;/, 'the live model identity (durable token + live session id) is fetched from the engine at Save time');
     assert.match(wf, /modelKey: liveModelKey/, 'compared against the AUTHORITATIVE live model key, not the cached global');
     // CRITICAL 1: the swap race is closed ENGINE-side — every header-save mutation RPC carries expectedSession (liveSession),
     // so the engine refuses the write atomically inside its single-writer dispatch. The extension-only per-RPC re-check is gone.
@@ -584,7 +584,8 @@ test('the help WHERE index folds the zero-dialog creates but keeps hierarchy + d
     // 58 from 15 October 2026: Find and replace left the Studio, so "Replace a word across the model" says where the replace went.
     // 59 from 15 October 2026: the Copilot test joined Review, and the index gained one entry for finding it.
     // 53 from 18 October 2026: Workflows retired for everyone (Kane, 17 Oct), so the six index rows about workflows left.
-    assert.equal(count, 53, '40 existing task entries, 8 getting-started tasks, 8 term explanations and AI instructions');
+    // 54 in 1.7: Your standard joined Review.
+    assert.equal(count, 54, '53 existing index entries and Your standard');
     assert.doesNotMatch(block, /q: 'Create a measure',/, 'the standalone "Create a measure" entry is gone (one gesture, self-evident)');
     assert.match(block, /Create a measure, calculated column, calculated table, calculation item, or function/, 'a single create entry covers the five zero-dialog kinds');
     // MEDIUM 6: hierarchy creation (NOT zero-dialog) keeps its own honest entry rather than being folded into the

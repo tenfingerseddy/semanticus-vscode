@@ -113,14 +113,14 @@ namespace Semanticus.Engine
                 case CheckThenPublish:
                 {
                     var free = checksLead("the measures the plan changed.") ?? "Your checks have not run since the plan finished.";
-                    return Step(kind, "Your plan is done.", "Check the numbers, then publish to test", pro ? free + " Then test is the next stop." : free,
-                        "Plan done", "Run the checks, then publish the model to test.", RunChecksDoIt());
+                    return Step(kind, "Your plan is done.", "Run checks", pro ? free + " Then test is the next stop." : free,
+                        "Plan done", "Run checks, then publish the model to test.", RunChecksDoIt());
                 }
                 case RunChecks:
                 {
                     var free = checks > 0 ? checksLead("the measures you changed.") + " They have not run since your save." : "Your checks have not run since your save.";
-                    var proWhy = checks > 0 ? checksLead("the measures you changed.") + " Run them before you publish." : "Run your checks before you publish.";
-                    return Step(kind, null, "Run your checks", pro ? proWhy : free, "Saved, checks not run", "Run the checks.", RunChecksDoIt());
+                    var proWhy = checks > 0 ? checksLead("the measures you changed.") + " Run them before you publish." : "Run checks before you publish.";
+                    return Step(kind, null, "Run checks", pro ? proWhy : free, "Saved, checks not run", "Run checks.", RunChecksDoIt());
                 }
                 case PublishTest:
                     return Step(kind, null, "Publish to test", pro ? "Your checks passed. Test is the next stop before production." : "Your checks passed. Test is the next stop.",
@@ -129,14 +129,14 @@ namespace Semanticus.Engine
                     return Step(kind, null, "Publish to production", pro ? "Test looks good. Production is the last stop, so people can use it." : "Test looks good. Production is the last stop.",
                         "Live in test", "Publish the model to production.", null);
                 case KeepHealthy:
-                    return Step(kind, null, "Check the model's health", pro ? "The model is live. A check now and then keeps the numbers right." : "The model is live. A check now and then keeps it right.",
-                        "Live", "Run the checks on the live model.", RunChecksDoIt());
+                    return Step(kind, null, "Run checks", pro ? "The model is live. A check now and then keeps the numbers right." : "The model is live. A check now and then keeps it right.",
+                        "Live", "Run checks in the live model.", RunChecksDoIt());
                 default:
                     return null;
             }
         }
 
-        private static NextStepDoIt RunChecksDoIt() => new NextStepDoIt { Op = "run_checks", Label = "Do it", Done = "Checks running." };
+        private static NextStepDoIt RunChecksDoIt() => new NextStepDoIt { Op = "run_checks", Label = "Do it", Done = "Checks opened." };
 
         private static NextStepStep Step(string kind, string lead, string ask, string why, string source, string prompt, NextStepDoIt doIt) =>
             new NextStepStep { Kind = kind, Lead = lead, Ask = ask, Why = why, Source = source, ChosenBy = ByRules, Prompt = prompt, DoIt = doIt };

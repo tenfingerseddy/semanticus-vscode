@@ -44,6 +44,53 @@ namespace Semanticus.Tests
         private static string[] Changed(TOM.Database mine, TOM.Database theirs)
             => ModelCompare.Diff(mine.Model, theirs.Model, "src", "live").Items.Where(i => i.Action != "Equal").Select(i => i.Ref).ToArray();
 
+        [Fact]
+        public void K22_a_column_rename_names_the_measure_update_that_must_go_with_it()
+        {
+            var mine = Shape(); var live = Shape();
+            live.Model.Tables["Customer"].Measures["Customers"].Expression = "DISTINCTCOUNT(Customer[City])";
+            mine.Model.Tables["Customer"].Columns["City"].Name = "Town";
+            mine.Model.Tables["Customer"].Measures["Customers"].Expression = "DISTINCTCOUNT(Customer[Town])";
+            var diff = ModelCompare.Diff(mine.Model, live.Model, "src", "live");
+            var measure = diff.Items.Single(i => i.Ref == "measure:Customer/Customers");
+            var json = Newtonsoft.Json.Linq.JObject.FromObject(measure);
+            var dependencies = json["RenameDependencies"]?.ToObject<string[]>() ?? Array.Empty<string>();
+            Assert.Contains("column:Customer/Town", dependencies);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task K22_publish_carries_the_measure_or_names_the_service_harm_without_a_block(bool includeMeasure)
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            var mine = Shape(); var live = Shape();
+            live.Model.Tables["Customer"].Measures["Customers"].Expression = "DISTINCTCOUNT(Customer[City])";
+            mine.Model.Tables["Customer"].Columns["City"].Name = "Town";
+            mine.Model.Tables["Customer"].Measures["Customers"].Expression = "DISTINCTCOUNT(Customer[Town])";
+            var src = Path.Combine(Path.GetTempPath(), "sem-k22-" + Guid.NewGuid().ToString("N") + ".bim");
+            File.WriteAllText(src, TOM.JsonSerializer.SerializeDatabase(mine));
+            try
+            {
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(TOM.JsonSerializer.DeserializeDatabase(TOM.JsonSerializer.SerializeDatabase(live), null, AS.CompatibilityMode.PowerBI));
+                engine.WorkspacePushHook = (bim, dels) =>
+                {
+                    var merged = TOM.JsonSerializer.DeserializeDatabase(File.ReadAllText(bim), null, AS.CompatibilityMode.PowerBI);
+                    return LiveDeploy.SyncAndApply(merged.Model, live.Model, commit: true, "ep", "DS", dels, () => { }, _ => { }, identityStrict: true);
+                };
+                var target = new ModelRef { Kind = "workspace", Endpoint = "powerbi://api.powerbi.com/v1.0/myorg/WS", Database = "DS" };
+                var refs = includeMeasure ? new[] { "column:Customer/Town", "measure:Customer/Customers" } : new[] { "column:Customer/Town" };
+                var preview = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, target, refs, false, "human");
+                if (!includeMeasure) Assert.Contains("breaks Customers", preview.Note);
+                var pushed = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, target, refs, true, "human");
+                Assert.True(pushed.Applied, pushed.Error + " " + pushed.Note);
+                Assert.NotNull(live.Model.Tables["Customer"].Columns.Find("Town"));
+                Assert.Equal(includeMeasure ? "DISTINCTCOUNT(Customer[Town])" : "DISTINCTCOUNT(Customer[City])", live.Model.Tables["Customer"].Measures["Customers"].Expression);
+                if (!includeMeasure) Assert.Contains("breaks Customers", pushed.Note);
+            }
+            finally { File.Delete(src); }
+        }
+
         private static async Task<(ApplyDiffResult preview, ApplyDiffResult pushed, string[] listed, TOM.Database src, TOM.Database live)> Press(Action<TOM.Table, TOM.Table> edit)
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
@@ -179,18 +226,20 @@ namespace Semanticus.Tests
         // Verifier (fix-followups): Undo publish after V10's press. The service must be back to ONE hierarchy, Geography, with its old
         // words, and the new hierarchy gone. If the rollback says it is back while the service keeps "Customer Geography", the page shows a
         // wrong state as right.
-        [Fact]
-        public async Task V11_undo_publish_after_a_rename_plus_a_new_one_under_the_old_name_puts_the_service_back()
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task V11_undo_publish_after_a_rename_plus_a_new_one_under_the_old_name_puts_the_service_back(bool addUnderOldName)
         {
             // Its own restore folder, put back after: the press writes a restore point and the undo reads it, and a shared root swapped by another class between the two read "No restore point with that id".
             var savedRoot = RestorePointStore.RootOverride;
             var ownRoot = Path.Combine(Path.GetTempPath(), "sem-v11-rp-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             RestorePointStore.RootOverride = ownRoot;
-            try { await V11Body(); }
+            try { await V11Body(addUnderOldName); }
             finally { RestorePointStore.RootOverride = savedRoot; try { Directory.Delete(ownRoot, true); } catch { } }
         }
 
-        private static async Task V11Body()
+        private static async Task V11Body(bool addUnderOldName)
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
             var srcDb = Shape(); var live = Shape();
@@ -200,7 +249,7 @@ namespace Semanticus.Tests
             var n = new TOM.Hierarchy { Name = "Geography", LineageTag = "tag-geo-new", Description = "State to city" };
             n.Levels.Add(new TOM.Level { Name = "State", Ordinal = 0, Column = s.Columns["State"], LineageTag = "tag-geo-new-0" });
             n.Levels.Add(new TOM.Level { Name = "City", Ordinal = 1, Column = s.Columns["City"], LineageTag = "tag-geo-new-1" });
-            s.Hierarchies.Add(n);
+            if (addUnderOldName) s.Hierarchies.Add(n);
             var src = Path.Combine(Path.GetTempPath(), $"sem-vhier-{Guid.NewGuid():N}.bim");
             File.WriteAllText(src, TOM.JsonSerializer.SerializeDatabase(srcDb));
             try

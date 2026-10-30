@@ -143,6 +143,86 @@ namespace Semanticus.Tests
             public void Dispose() { try { Scratch?.Dispose(); } catch { } F.Dispose(); }
         }
 
+        private static StartPlanDoc RealSmallDoc()
+        {
+            var doc = SmallDoc();
+            foreach (var table in doc.Manifest.Tables)
+                foreach (var column in table.Columns)
+                {
+                    column.DataType = column.Name == "Amount" ? "Decimal" : column.Name == "City" ? "String" : "Int64";
+                    column.Identity = StartIdentity.Of(doc.IdentitySeed, "column", table.Name + "/" + column.Name);
+                }
+            doc.Manifest.BaseMeasures[0].Identity = StartIdentity.Of(doc.IdentitySeed, "measure", "Sales/Total Amount");
+            return doc;
+        }
+
+        [Theory]
+        [InlineData(StartDecidedBy.Assistant, "human", "ai")]
+        [InlineData(StartDecidedBy.Assistant, "agent", "ai")]
+        [InlineData(StartDecidedBy.Person, "human", "person")]
+        [InlineData(StartDecidedBy.Person, "agent", "person")]
+        public async Task Description_author_follows_the_plan_across_both_build_doors(string author, string origin, string source)
+        {
+            using var rig = new Rig(); await rig.InitAsync();
+            var doc = RealSmallDoc();
+            var description = Line("set_description", "measure:Sales/Total Amount", "Adds the Contoso sales amounts.", by: author);
+            description.DescriptionBy = author;
+            doc.Lines.Add(description);
+            await rig.PlanAsync(doc, real: true);
+            var before = await rig.UndoStepsAsync();
+
+            var result = await rig.BuildAsync(doc, origin: origin);
+
+            Assert.True(result.Built, result.Refused);
+            Assert.Equal(before + 1, await rig.UndoStepsAsync());
+            Assert.Equal(source, await rig.Person.ReadAsync(m => m.Tables["Sales"].Measures["Total Amount"]
+                .GetAnnotation(LocalEngine.DescriptionProvenanceAnnotation)));
+            await rig.Engine.UndoAsync("human");
+            Assert.Equal(0, await rig.TablesAsync());
+            await rig.Engine.RedoAsync("human");
+            Assert.Equal(source, await rig.Person.ReadAsync(m => m.Tables["Sales"].Measures["Total Amount"]
+                .GetAnnotation(LocalEngine.DescriptionProvenanceAnnotation)));
+        }
+
+        [Theory]
+        [InlineData("keep_line", "human", "ai", false)]
+        [InlineData("keep_line", "agent", "ai", false)]
+        [InlineData("keep_line", "human", "ai", true)]
+        [InlineData("keep_line", "agent", "ai", true)]
+        [InlineData("pin", "human", "person", false)]
+        [InlineData("pin", "agent", "person", false)]
+        public async Task Keeping_assistant_words_preserves_the_author_but_a_persons_edit_changes_it(string action, string origin, string source, bool legacy)
+        {
+            using var rig = new Rig(); await rig.InitAsync();
+            var doc = await rig.PlanAsync(RealSmallDoc(), real: true);
+            const string reference = "measure:Sales/Total Amount";
+            var facts = await rig.Scratch.ReadAsync(m => StartPlanWords.ReadFacts(m, doc,
+                new[] { new StartWord { Ref = reference, Kind = "description", Text = "Adds the Contoso sales amounts." } }, LocalEngine.FormulaTextIn));
+            var written = StartPlanWords.Apply(doc, facts, 0);
+            Assert.Empty(written.Refused);
+            Assert.Equal(1, written.Written);
+            Assert.False(StartPlanWords.Apply(doc, facts, 0).Changed);
+            doc = StartPlanStore.Copy(doc);
+            if (legacy)
+            {
+                var stored = System.Text.Json.JsonSerializer.SerializeToNode(doc);
+                stored["Lines"][0].AsObject().Remove("DescriptionBy");
+                doc = System.Text.Json.JsonSerializer.Deserialize<StartPlanDoc>(stored.ToJsonString());
+            }
+            var line = Assert.Single(doc.Lines);
+            var edit = StartPlanEditing.Apply(doc,
+                new StartPlanEdit { Op = action, Target = line.Item.Id, Value = "The Contoso total sales amount." }, "human");
+            Assert.True(edit.Ok);
+            Assert.Equal(StartDecidedBy.Person, line.DecidedBy);
+            await rig.PlanAsync(doc, real: true);
+
+            var result = await rig.BuildAsync(doc, origin: origin);
+
+            Assert.True(result.Built, result.Refused);
+            Assert.Equal(source, await rig.Person.ReadAsync(m => m.Tables["Sales"].Measures["Total Amount"]
+                .GetAnnotation(LocalEngine.DescriptionProvenanceAnnotation)));
+        }
+
         // ---------------------------------------------------------------- the build is one undo step
 
         [Trait(TestCost.Key, TestCost.Sweep)]
@@ -749,6 +829,9 @@ namespace Semanticus.Tests
             e.StartPlanSchemaReaderForTest = (req, origin) => Task.FromResult(Schema());
             await e.StartModelFromSqlAsync(new StartModelRequest { Server = "x.datawarehouse.fabric.microsoft.com", Database = "Wh", Folder = Path.Combine(_root, "dest"), Name = "Sales Model" }, "human");
             e.StartPlanBuildSeamsForTest = new StartPlanBuildSeams { Materialize = StartPlanBuildTests.Standin };
+            // The start schedules its own background preview and decide; let them land first, or their news reaches a test's listener late (cloud run 5, shard 10).
+            await e.StartPreviewSettledForTest();
+            await e.StartDecideSettledForTest();
             var doc = e.StartPlanDocForTest();
             var scratch = await e.OpenStartScratchAsync();
             var preview = await e.PreviewStartPlanAsync(scratch.Session, doc);

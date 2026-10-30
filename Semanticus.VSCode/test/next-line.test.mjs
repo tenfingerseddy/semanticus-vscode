@@ -16,6 +16,7 @@ const bridge = {
   saveModelFromPage: async () => { calls.push(['saveModelFromPage']); return true; },
   onStudioNextStep: (fn) => { pushed = fn; return () => {}; },
   onReconnect: () => () => {},
+  navigateInStudio: (tab) => { calls.push(['navigateInStudio', tab]); },
 };
 const load = makeLoader({ '../bridge': bridge, './studio-notes.css': {} });
 const M = load('studio/next-model.ts');
@@ -124,7 +125,7 @@ await check('steady: the same step coming again changes nothing and keeps a pres
 
 await check('Do it maps each op to the existing engine call', () => {
   assert.deepEqual(M.doItCall('save', {}), { kind: 'save' });
-  assert.deepEqual(M.doItCall('run_checks', {}), { kind: 'rpc', method: 'runTests', params: [false, 'human', null, null] });
+  assert.deepEqual(M.doItCall('run_checks', {}), { kind: 'page', tab: 'tests' });
   assert.equal(M.doItCall('draft_workflow', { prompt: 'p' }).method, 'composeTask');
   assert.equal(M.doItCall('launch', {}), null);
 });

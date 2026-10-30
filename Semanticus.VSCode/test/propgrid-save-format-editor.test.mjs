@@ -47,7 +47,8 @@ function makePage() {
       addEventListener: (type, fn) => { (listeners.document[type] ??= []).push(fn); },
     },
   };
-  const window = { addEventListener: (type, fn) => { (listeners.window[type] ??= []).push(fn); } };
+  const window = { addEventListener: (type, fn) => { (listeners.window[type] ??= []).push(fn); },
+    dispatchEvent: (event) => { (listeners.window[event.type] ?? []).forEach((fn) => fn(event)); return true; } };
   const Element = class {};
   new Function('acquireVsCodeApi', 'document', 'window', 'navigator', 'getComputedStyle', 'Element', gridSource)(
     () => ({ postMessage: (m) => posted.push(m) }), page.document, window, { platform: 'Linux' }, () => ({}), Element);

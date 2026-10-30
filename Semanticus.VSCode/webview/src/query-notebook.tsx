@@ -126,7 +126,7 @@ export function useNotebook(q: Q): Notebook {
   const land = (id: string) => { if (!q.activeRow.current) q.moveCompareTo(id, true); void reload().then(() => { setActive(id); setLiveRow(id); }); };
   q.onRecorded.current = land;
   // A measure the assistant points the Studio at seeds a query of its own: it opens as the draft, and the open row keeps its DAX.
-  q.onSeeded.current = () => { setTabRaw('dax'); setActive(DRAFT); setLiveRow(null); q.activeRow.current = null; };
+  q.onSeeded.current = (run) => { setTabRaw(run ? 'answer' : 'dax'); setActive(DRAFT); setLiveRow(null); q.activeRow.current = null; };
   const setTab = (t: Tab) => setTabRaw(t);
   // A question that landed is the open row; its id is the engine's. A model that keeps no history gives none, so the draft row holds it.
   useEffect(() => {

@@ -1,7 +1,18 @@
-/* Semanticus speaks in the app accent. The assistant keeps its own note colour. */
+/* Semanticus speaks in the app accent. The assistant keeps its own note colour.
+   The line floats over the page, as the zoom toast does, and takes no room in it: a line in the flow pushed the page down by its own
+   height and back again, so the press that followed an Undo hit the place the control had just left (m17 P1). It lets presses through. */
 .personality-message {
-  background: var(--sem-accent-soft);
+  position: fixed; left: 50%; bottom: 52px; transform: translateX(-50%); z-index: 60; pointer-events: none;
+  width: max-content; max-width: calc(100vw - 2 * var(--sem-page-margin));
+  background-color: var(--sem-surface);
+  background-image: linear-gradient(var(--sem-accent-soft), var(--sem-accent-soft));
   border-left-color: var(--sem-accent);
-  grid-template-columns: repeat(12, minmax(0, 1fr));
+  border: var(--sem-hairline) solid var(--sem-border);
+  border-left: var(--sem-space-1) solid var(--sem-accent);
+  border-radius: var(--sem-radius-card);
+  box-shadow: var(--sem-shadow-pop);
+  grid-template-columns: minmax(0, 1fr);
 }
 .personality-message > p { grid-column: 1 / -1; }
+/* Keep the Fixed receipt and its Undo clear. The decorative line can wait until the card closes. */
+body:has([data-testid="ck-fixed-undo"]:not(.hidden *, [hidden] *)) .personality-message { visibility: hidden; }

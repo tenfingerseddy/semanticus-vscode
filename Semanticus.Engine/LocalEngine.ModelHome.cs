@@ -33,6 +33,8 @@ namespace Semanticus.Engine
         }
 
         private readonly ConditionalWeakTable<Session, HashSet<string>> _placeCarried = new ConditionalWeakTable<Session, HashSet<string>>();
+        private readonly object _modelPlaceGate = new object();
+        private bool _modelPlaceStopped;
 
         private ModelPlace PlaceFor(SessionContext context) => PlaceFor(context?.Session);
 
@@ -45,6 +47,22 @@ namespace Semanticus.Engine
         private string NoFileSidecar(Session s) => FolderDir != null ? Path.Combine(FolderDir, LayoutStore.DirName) : PlaceFor(s)?.Dir;
 
         internal ModelPlace PlaceFor(Session s)
+        {
+            lock (_modelPlaceGate)
+            {
+                if (_modelPlaceStopped) return null;
+                return PlaceForOpenSession(s);
+            }
+        }
+
+        // A queued read can resume after close. Finish any claim or carry before Dispose returns,
+        // then prevent later reads from starting another one.
+        private void StopModelPlace()
+        {
+            lock (_modelPlaceGate) _modelPlaceStopped = true;
+        }
+
+        private ModelPlace PlaceForOpenSession(Session s)
         {
             if (s == null) return null;
             var identity = PaneIdentity(s, null);

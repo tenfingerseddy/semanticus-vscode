@@ -230,6 +230,13 @@ namespace Semanticus.Tests
         public async Task The_switch_changes_only_the_offer_wording()
         {
             using var f = await GappyAsync("CtlSwitch.bim");
+            // The offer must use this fixture's assistant state, not the machine running the test.
+            f.Engine.AssistantHostForTest = () => new ConnectHost
+            {
+                Os = "linux", Home = Path.Combine(f.Home, "assistant-host"), Workspace = f.Workspace,
+                CodexHome = Path.Combine(f.Home, "assistant-host", "codex"),
+                Command = () => "/opt/semanticus/Semanticus.Engine",
+            };
             var id = await AskAsync(f, "Describe the Sales measures");
             var before = await f.Engine.GetModelPlanAsync();
 

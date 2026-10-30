@@ -182,7 +182,7 @@ export type DaxSaveDecision =
  * The two keys are optional at the type level (a uri can arrive without them), but decideDaxSave treats a MISSING key
  * on either side as corrupt and rejects -- a header uri must always carry identity (CRITICAL 1).
  */
-export interface DaxHeaderIdentity { isHeaderUri: boolean; uriModelKey?: string; modelKey?: string }
+export interface DaxHeaderIdentity { isHeaderUri: boolean; uriModelKey?: string; modelKey?: string; earlierModelKey?: string }
 
 export type ModelMatch = { ok: true } | { ok: false; reason: string };
 
@@ -193,11 +193,14 @@ export type ModelMatch = { ok: true } | { ok: false; reason: string };
  * tokens must be EQUAL for a mutation to target the intended model. One source of truth so the Save-time verdict and the
  * immediately-before-each-mutation re-check can never drift apart in wording or in logic.
  */
-export function guardModelMatch(uriModelKey: string | undefined, liveModelKey: string | undefined): ModelMatch {
+export function guardModelMatch(uriModelKey: string | undefined, liveModelKey: string | undefined, earlierModelKey?: string): ModelMatch {
     if (uriModelKey === undefined || liveModelKey === undefined) {
         return { ok: false, reason: "This editor's model identity is missing, so the object it belongs to can't be confirmed. Reopen it from the Model tree, then Save." };
     }
-    if (uriModelKey !== liveModelKey) {
+    // A model that had no file is keyed by its session id; the moment it is saved (Claude's save_model, or the person's) it is keyed by its file, so an
+    // editor opened before that carries the session key. It is the SAME open model, and the session id names it. The caller passes that earlier key
+    // only for the live model's own session, so it never lets an editor from another model in (UAT 1.7 Free, D7).
+    if (uriModelKey !== liveModelKey && uriModelKey !== earlierModelKey) {
         return { ok: false, reason: 'This editor belongs to a different model session. Reopen the object from the current model, then Save.' };
     }
     return { ok: true };
@@ -219,7 +222,7 @@ export function decideDaxSave(ref: string, header: string, body: string, id: Dax
     // left open from another model writes that tab's DAX into the same-named object on the model that is
     // open now. Header docs already refused this; body docs must refuse it too.
     if (!id.isHeaderUri) {
-        const bodyMatch = guardModelMatch(id.uriModelKey, id.modelKey);
+        const bodyMatch = guardModelMatch(id.uriModelKey, id.modelKey, id.earlierModelKey);
         if (!bodyMatch.ok) return { kind: 'reject', reason: bodyMatch.reason };
         return { kind: 'body' };
     }
@@ -228,7 +231,7 @@ export function decideDaxSave(ref: string, header: string, body: string, id: Dax
     // could touch the wrong model (e.g. the live key was compared against a cached global that never refreshed after an
     // MCP-door model swap). Only an exact uri-vs-live match may proceed. NB this verdict is sampled ONCE; the host
     // re-runs guardModelMatch immediately before EACH mutation RPC to narrow the swap window (see writeFile / CRITICAL 1).
-    const match = guardModelMatch(id.uriModelKey, id.modelKey);
+    const match = guardModelMatch(id.uriModelKey, id.modelKey, id.earlierModelKey);
     if (!match.ok) return { kind: 'reject', reason: match.reason };
     const v = checkDaxHeader(ref, header);
     if (!v.ok) return { kind: 'reject', reason: v.reason };

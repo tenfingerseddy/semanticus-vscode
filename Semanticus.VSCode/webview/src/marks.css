@@ -1,0 +1,133 @@
+/* Marks, the Description, mark cards and the run plan. Shared by Properties and the Checks page. */
+.mk-panel, .rp { display: flex; flex-direction: column; gap: var(--sem-space-2); min-width: 0; font-size: var(--sem-text-body); line-height: var(--sem-lh-body); color: var(--sem-fg); overflow-wrap: anywhere; }
+.mk-label { font-size: var(--sem-text-label); font-weight: var(--sem-weight-strong); color: var(--sem-muted); letter-spacing: .02em; }
+.mk-faint { color: var(--sem-muted); }
+.mk-sub { margin: 0; }
+.mk-say { margin: 0; }
+.mk-note { margin: 0; font-size: var(--sem-text-meta); color: var(--sem-fg); }
+.mk-bad { color: var(--sem-bad); }
+.mk-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); }
+.mk-link { color: var(--vscode-textLink-foreground, #3794ff); background: none; border: 0; padding: 0; font: inherit; font-size: var(--sem-text-meta); cursor: pointer; }
+.mk-link:hover { text-decoration: underline; }
+.mk-link:disabled { color: var(--sem-muted); cursor: default; text-decoration: none; }
+.mk-link:focus-visible, .mk-mark:focus-visible, .mk-verdict:focus-visible, .mk-desc-line:focus-visible { outline: 1px solid var(--sem-focus, var(--vscode-focusBorder)); outline-offset: 1px; }
+
+.mk-desc { display: flex; flex-direction: column; gap: var(--sem-space-2); }
+.mk-desc-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mk-desc-text.mk-one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mk-edit textarea { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; color: var(--vscode-input-foreground, var(--sem-fg));
+  background: var(--vscode-input-background, var(--sem-surface)); border: var(--sem-hairline) solid var(--vscode-focusBorder, var(--sem-border)); border-radius: var(--sem-radius-control); padding: var(--sem-space-1) var(--sem-space-2); }
+.mk-edit { display: flex; flex-direction: column; gap: var(--sem-space-2); }
+.mk-proposal { display: flex; flex-direction: column; gap: var(--sem-space-1); border-left: 2px solid var(--sem-border); padding-left: var(--sem-space-2); }
+.mk-card { margin: var(--sem-space-1) 0 var(--sem-space-2) var(--sem-space-4); padding: var(--sem-space-2) var(--sem-space-3); border-left: 2px solid var(--sem-border); background: var(--sem-surface); border-radius: 0 var(--sem-radius-control) var(--sem-radius-control) 0; }
+.mk-card-broken { border-left-color: var(--sem-bad); }
+.mk-card-review { border-left-color: var(--sem-warn); }
+.mk-card-verified { border-left-color: var(--sem-good, var(--sem-accent)); }
+.mk-card-unknown { border-left-style: dashed; }
+.mk-card-overridden { border-left-color: var(--sem-muted); }
+/* A number never wraps (rc27 tester gap 2, ra1 item 12): the number columns size to their numbers and only the place cell
+   wraps, between words. "anywhere" let the table shrink the place column to one letter beside two long numbers at 290 px
+   ("Whe / re", "Tota / l", rc28 tester gap 4); break-word keeps a word whole and breaks only one that cannot fit a line. */
+.mk-cells { table-layout: auto; width: 100%; }
+.mk-cells td:first-child, .mk-cells th:first-child { width: 100%; overflow-wrap: break-word; word-break: normal; hyphens: none; }
+/* A narrow card (Properties, a 290px Studio) puts the place on its own line over its numbers when a row has two or more of
+   them. Each number carries its own heading (Before, After) and the numbers share the line below while they fit; two that do
+   not fit (trillion-scale currency, fx29b H: "-$9,876,543,210,98" was cut at the card edge) take a line each. A number itself
+   never breaks. Equal columns used to hold them side by side whatever their width. */
+.mk-card { container-type: inline-size; }
+@container (max-width: 340px) {
+  .mk-cells.mk-stack, .mk-cells.mk-stack tbody { display: block; }
+  .mk-cells.mk-stack thead { display: none; }
+  .mk-cells.mk-stack tr { display: flex; flex-wrap: wrap; column-gap: var(--sem-space-4); border-bottom: var(--sem-hairline) solid var(--sem-rule); }
+  .mk-cells.mk-stack td { border-bottom: 0; }
+  .mk-cells.mk-stack td:first-child { flex: 1 1 100%; width: auto; padding-bottom: 0; }
+  .mk-cells.mk-stack td:not(:first-child) { flex: 1 0 auto; display: flex; justify-content: space-between; gap: var(--sem-space-2); padding-left: 0; }
+  .mk-cells.mk-stack td:not(:first-child)::before { content: attr(data-label); color: var(--sem-muted); font-variant-numeric: normal; }
+}
+.mk-cells td:not(:first-child), .mk-cells th:not(:first-child) { white-space: nowrap; overflow-wrap: normal; }
+.mk-contexts ul { margin: 0; padding-left: var(--sem-space-4); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); display: flex; flex-direction: column; gap: var(--sem-space-1); }
+.mk-trusted { display: flex; flex-direction: column; gap: var(--sem-space-2); }
+.mk-field { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: var(--sem-space-2); align-items: center; margin: 0; font-size: var(--sem-text-meta); }
+.mk-field > span:first-child { color: var(--sem-muted); }
+.mk-field input { min-width: 0; font: inherit; color: var(--vscode-input-foreground, var(--sem-fg)); background: var(--vscode-input-background, var(--sem-bg)); border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-control); padding: var(--sem-space-1) var(--sem-space-2); }
+
+.rp { border-block: var(--sem-hairline) solid var(--sem-rule); padding: var(--sem-space-3) 0; }
+.rp-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sem-space-2) var(--sem-space-3); }
+.rp-line .rp-sentence { flex: 1 1 14em; }
+.rp-line progress { flex: 1 1 100%; order: 3; width: 100%; height: var(--sem-space-1); appearance: none; border: 0; border-radius: var(--sem-radius-chip); overflow: hidden; background: var(--sem-border); accent-color: var(--sem-accent); }
+.rp-line progress::-webkit-progress-bar { background: var(--sem-border); }
+.rp-line progress::-webkit-progress-value { background: var(--sem-accent); }
+.rp-line progress::-moz-progress-bar { background: var(--sem-accent); }
+.rp-sentence { margin: 0; font-variant-numeric: tabular-nums; }
+.rp-choose { display: flex; flex-direction: column; gap: var(--sem-space-2); }
+.rp-switch { display: flex; gap: var(--sem-space-2); align-items: center; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); cursor: pointer; }
+.rp-groups { display: flex; flex-direction: column; gap: var(--sem-space-2); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.rp-group ul, .rp-tree, .rp-tree ul { list-style: none; margin: 0; padding: 0; }
+.rp-glabel { margin: 0; font-weight: var(--sem-weight-strong); color: var(--sem-muted); }
+.rp-tree { max-height: 320px; overflow: auto; border: var(--sem-hairline) solid var(--sem-rule); border-radius: var(--sem-radius-control); padding: var(--sem-space-1); font-size: var(--sem-text-meta); }
+.rp-tree ul { padding-left: var(--sem-space-4); }
+.rp-tree label { display: flex; align-items: center; gap: var(--sem-space-1); min-height: 22px; cursor: pointer; min-width: 0; }
+.rp-tree label span:not(.mk-faint) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-t { display: flex; align-items: center; gap: var(--sem-space-1); }
+.rp-twist { border: 0; background: none; color: var(--sem-muted); cursor: pointer; width: 16px; padding: 0; font: inherit; }
+.rp-f { padding-left: 0; }
+.rp-selected p { margin: 0; font-size: var(--sem-text-meta); }
+.rp-pick { display: flex; flex-direction: column; gap: var(--sem-space-2); }
+
+.cp-glyph { font-weight: var(--sem-weight-strong); color: var(--sem-muted); }
+
+/* Properties: the grid loads no Studio styles, so its buttons take the grid's own look here. */
+.mk-grid { padding: var(--sem-space-2) var(--sem-space-3) var(--sem-space-3); border-bottom: 1px solid var(--vscode-panel-border, var(--sem-rule)); }
+.mk-grid .sem-btn { font-family: inherit; font-size: var(--sem-text-meta); height: var(--sem-control-h-sm); padding: 0 var(--sem-space-2); border: none; border-radius: var(--sem-radius-control); cursor: pointer;
+  background: var(--vscode-button-secondaryBackground, var(--vscode-input-background)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+.mk-grid .sem-btn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-input-background)); }
+.mk-grid .sem-btn-primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.mk-grid .sem-btn-primary:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+.mk-grid .sem-btn:disabled { opacity: .5; cursor: default; }
+.mk-grid .rp { padding: var(--sem-space-2); }
+
+/* d1: the card at rest is a verdict line, the Description line, small mark buttons and a footer. */
+.mk-verdict { display: flex; align-items: baseline; gap: var(--sem-space-2); width: 100%; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; padding: 0; cursor: pointer; font-variant-numeric: tabular-nums; }
+.mk-verdict:disabled { cursor: default; opacity: 1; color: inherit; }
+.mk-vglyph { flex: none; font-weight: var(--sem-weight-strong); }
+.mk-vtext b { font-weight: var(--sem-weight-strong); }
+.mk-v-broken .mk-vglyph, .mk-v-broken b, .mk-s-broken .mk-glyph, .cp-s-broken { color: var(--sem-bad); }
+.mk-v-review .mk-vglyph, .mk-v-review b, .mk-s-review .mk-glyph, .cp-s-review { color: var(--sem-warn); }
+.mk-v-verified .mk-vglyph, .mk-v-verified b, .mk-s-verified .mk-glyph, .cp-s-verified { color: var(--sem-good, var(--sem-accent)); }
+.mk-v-unknown .mk-vglyph, .mk-v-unknown b, .mk-s-unknown .mk-glyph, .cp-s-unknown { color: var(--sem-nv, var(--sem-muted)); }
+.mk-v-overridden .mk-vglyph, .mk-v-overridden b, .mk-s-overridden .mk-glyph, .cp-s-overridden { color: var(--sem-muted); }
+.mk-actionable { margin: 0; font-size: var(--sem-text-meta); }
+.mk-desc-line { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sem-space-3); width: 100%; border: 0; background: transparent; color: var(--sem-muted); font: inherit; text-align: left; padding: 0; cursor: pointer; }
+.mk-desc-line .mk-desc-text { flex: 1 1 0; min-width: 0; }
+.mk-desc-line:hover .mk-desc-text { color: var(--sem-fg); }
+.mk-score { display: inline-flex; align-items: center; gap: var(--sem-space-1); flex: none; white-space: nowrap; color: var(--sem-fg); font-size: var(--sem-text-meta); font-variant-numeric: tabular-nums; }
+.mk-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--sem-muted); }
+.mk-dot-good { background: var(--sem-good, var(--sem-accent)); }
+.mk-dot-warn { background: var(--sem-warn); }
+.mk-source { margin: 0; }
+.mk-marks { display: flex; flex-wrap: wrap; gap: var(--sem-space-1) var(--sem-space-2); }
+.mk-mark { display: inline-flex; align-items: center; gap: var(--sem-space-1); border: var(--sem-hairline) solid var(--sem-border); background: transparent; color: inherit; font: inherit; font-size: var(--sem-text-meta);
+  line-height: var(--sem-lh-meta); padding: 1px var(--sem-space-2); border-radius: var(--sem-radius-control); cursor: pointer; }
+.mk-mark:hover { background: var(--sem-hover); }
+.mk-mark.mk-open { background: var(--sem-surface-2, var(--sem-hover)); border-color: var(--sem-muted); }
+/* A mark the run has not reached yet: its last known state, with a checking cue (v-fx23 D4). */
+.mk-mark.mk-checking { border-style: dashed; opacity: .7; }
+.mk-glyph { text-align: center; font-weight: var(--sem-weight-strong); }
+.mk-name { white-space: nowrap; }
+.mk-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sem-space-1) var(--sem-space-3); font-size: var(--sem-text-meta); }
+.mk-foot .mk-faint { font-variant-numeric: tabular-nums; }
+.mk-foot > .mk-link, .mk-add > .mk-link { font-size: var(--sem-text-meta); }
+.mk-add { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; gap: var(--sem-space-2); }
+.mk-add:has(.mk-trusted), .mk-add:has(.mk-note) { flex-basis: 100%; }
+.mk-menu { display: flex; flex-direction: column; min-width: 12em; border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-control); background: var(--sem-surface-2, var(--sem-surface)); padding: var(--sem-space-1) 0; }
+.mk-menu button { border: 0; background: transparent; color: inherit; font: inherit; font-size: var(--sem-text-meta); text-align: left; padding: var(--sem-space-1) var(--sem-space-3); cursor: pointer; }
+.mk-menu button:hover { background: var(--sem-hover); }
+.mk-menu button:disabled { color: var(--sem-muted); cursor: default; }
+.mk-cells th:not(:first-child), .mk-cells td:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; padding-left: var(--sem-space-3); }
+.mk-desc-full { display: flex; flex-direction: column; gap: var(--sem-space-2); }
+/* After an edit, the Equivalence detail shows the edit: the formula before and after (d1 tester gap 6). */
+.mk-edit-diff { display: grid; gap: var(--sem-space-1); margin: var(--sem-space-2) 0; font-family: var(--vscode-editor-font-family, monospace); font-size: var(--sem-text-meta); }
+.mk-edit-diff code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 var(--sem-space-2); border-radius: var(--sem-radius-chip); font: inherit; }
+.mk-edit-diff .mk-was { color: var(--sem-muted); }
+.mk-edit-diff .mk-now { background: color-mix(in srgb, var(--sem-warn) 12%, transparent); }
+.mk-desc-line { flex-wrap: wrap; }

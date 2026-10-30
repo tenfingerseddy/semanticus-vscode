@@ -340,7 +340,10 @@ function makeGridPage(box) {
     addEventListener: (type, fn) => { (listeners.document[type] ??= []).push(fn); },
     createElement: () => makeEl(page, 'textarea', {}, ''),
   };
-  const window = { addEventListener: (type, fn) => { (listeners.window[type] ??= []).push(fn); } };
+  const window = {
+    addEventListener: (type, fn) => { (listeners.window[type] ??= []).push(fn); },
+    dispatchEvent: event => { (listeners.window[event.type] ?? []).forEach(fn => fn(event)); return true; },
+  };
   const api = {
     postMessage: (m) => posted.push(m),
     // VS Code hands the state back as a copy of what was set: it is serialized, never the same object.

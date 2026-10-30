@@ -19,7 +19,9 @@ const root = resolve(here, '..');
 const repo = resolve(root, '..');
 
 // ---- the engine's side of the wire ----------------------------------------------------------------
-const TARGETS = ['Semanticus.Engine/EngineRpcTarget.cs', 'Semanticus.Engine/HumanGovernanceRpcTarget.cs'];
+const TARGETS = readdirSync(resolve(repo, 'Semanticus.Engine'))
+  .filter(file => /^(EngineRpcTarget|HumanGovernanceRpcTarget)(\..+)?\.cs$/.test(file))
+  .map(file => 'Semanticus.Engine/' + file);
 const CLASS = /\b(?:sealed\s+|partial\s+|static\s+)*class\s+(\w+)/g;
 // public [async] <return type> name(   — the return type may carry generics, arrays, nullables and dots.
 const METHOD = /^[ \t]*(?:public|internal)\s+(?:async\s+)?(?:override\s+)?[\w<>[\],.\s?]+?\s+(\w+)\s*\(/gm;

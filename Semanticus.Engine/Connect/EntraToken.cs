@@ -924,6 +924,11 @@ namespace Semanticus.Engine
             return tok.Token;
         }
 
+        /// <summary>A Fabric REST bearer from a credential the caller already built: a chosen account (a new sign-in, or a
+        /// saved profile) lists workspaces as itself, not as the saved default (si2).</summary>
+        internal static async Task<string> FabricTokenFromAsync(TokenCredential cred, CancellationToken ct)
+            => (await GetTokenAsync(cred, FabricScopes, ct).ConfigureAwait(false)).Token;
+
         // Service-principal (client-secret) auth — the reliable principal for Power BI / Fabric XMLA, which
         // routinely walls delegated *user* tokens ("MWC token NotAuthorized" / "failed for all authenticators")
         // even for the model owner. Reads standard AZURE_* env vars, falling back to FABRIC_*/POWERBI_* names.

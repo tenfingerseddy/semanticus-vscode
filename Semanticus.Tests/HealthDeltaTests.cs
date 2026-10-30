@@ -62,7 +62,7 @@ namespace Semanticus.Tests
         private static async Task<ChangeNotification> OnNextChangeAsync(SessionManager sm, Func<Task> act)
         {
             ChangeNotification last = null;
-            Action<ChangeNotification> handler = n => last = n;
+            Action<ChangeNotification> handler = n => { if (n.IsCommit) last = n; };   // a Checked notice is not the edit's broadcast
             sm.Bus.Changed += handler;
             try { await act(); } finally { sm.Bus.Changed -= handler; }
             return last;

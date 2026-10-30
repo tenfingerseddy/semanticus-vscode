@@ -78,6 +78,7 @@ export interface DataOther {
   anyway?: boolean;
 }
 export interface DataQuestionRecord {
+  formatString?: string | null;
   id: string; askedAt: string; question?: string | null; reading?: string | null; readBy?: string | null;
   outcome?: string; parts?: DataAsk | null; dax?: string | null; rowCount?: number; origin?: string;
   // The Query notebook (1.6): the same record is a row of the notebook and an item of the full history.

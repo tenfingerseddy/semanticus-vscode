@@ -111,7 +111,7 @@ assert.match(treeProvider, /setIdentity\(/,
   'the provider must be TOLD the identity from the session path, the same signal the dropped bar used');
 
 // What the row renders: name as the label, source and live state as the description, full path as tooltip,
-// a model icon, not collapsible, and a click that lands on Studio's start page, the Plan (the Overview retired in slice 11).
+// a model icon, not collapsible, and a click that opens the model's Checks page with its current marks.
 const item = treeProvider.slice(treeProvider.indexOf("if (n.kind === 'modelIdentity')"),
   treeProvider.indexOf("if (n.kind === 'modelIdentity')") + 2200);
 assert.ok(item.length > 200, 'no getTreeItem branch for the identity row');
@@ -119,8 +119,8 @@ assert.match(item, /TreeItemCollapsibleState\.None/, 'the identity row is not co
 assert.match(item, /ThemeIcon\('database'\)/, 'the identity row carries a model icon');
 assert.match(item, /\.description = /, 'the source and live state ride in the row description, beside the name');
 assert.match(item, /\.tooltip = /, 'the full path belongs in the tooltip, where a narrow tree cannot cut it');
-assert.match(item, /command: 'semanticus\.studioGoTab'[\s\S]{0,140}arguments: \['plan'\]/,
-  "clicking the model name must land on Studio's start page, the Plan");
+assert.match(item, /command: 'semanticus\.studioGoTab', title: 'Open Checks', arguments: \['tests'\]/,
+  'clicking the model name opens Checks, where the model marks are shown');
 
 // The unsaved marker is a leading dot in the DESCRIPTION, because the icon slot already holds the model icon
 // and a TreeItem has only one.

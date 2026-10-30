@@ -36,7 +36,10 @@ namespace Semanticus.Engine
         {
             // The session id and revision are in the key: an explain asked right after an edit describes the edited model, never the one from before it.
             var cur = _sessions.Current;
-            var key = string.Join("\u001f", _sessions.Generation, cur?.Id, cur?.Revision, System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_live), origin, measureRef, decompose, decomposeBy, topK,
+            // The data denial is in the key too: a person who denies data reads in the next seconds must not see the number from before the denial.
+            var live = _live;
+            var denied = live != null && AgentPolicyGuard.Decide(AgentCapability.QueryData, ResolveTargetLabel(live.DataSource, live.Database), origin, isCommit: true, AgentPolicyStore.Get()).Outcome == GateOutcome.Deny;
+            var key = string.Join("\u001f", _sessions.Generation, cur?.Id, cur?.Revision, System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_live), denied, origin, measureRef, decompose, decomposeBy, topK,
                 System.Text.Json.JsonSerializer.Serialize(context ?? new ExplainFilterContext()));
             return _explainRepeats.RunAsync(key, () => ExplainValueCoreAsync(measureRef, context, decompose, decomposeBy, topK, origin), d => d?.Status == "ok");
         }

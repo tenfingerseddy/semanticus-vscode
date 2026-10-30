@@ -88,16 +88,18 @@ namespace Semanticus.Tests
                 engine.TagCalendarColumnAsync("Dim Date", "Gregorian", "Year", "Month", associated: true, remove: false, "agent"));
             Assert.Contains("no primary", noPrimary.Message);
 
+            // The associated column is its own column: the service refuses one used twice in a calendar (IsHoliday is already time-related).
+            await engine.CreateColumnAsync("table:Dim Date", "Year Label", "String", "Year Label", "agent");
             // Tag an associated column onto an existing unit, then untag it.
-            await engine.TagCalendarColumnAsync("Dim Date", "Gregorian", "IsHoliday", "Year", associated: true, remove: false, "agent");
+            await engine.TagCalendarColumnAsync("Dim Date", "Gregorian", "Year Label", "Year", associated: true, remove: false, "agent");
             list = await engine.ListCalendarsAsync("Dim Date");
-            Assert.Contains(list.Calendars[0].Groups, g => g.TimeUnit == "Year" && g.AssociatedColumns.Contains("IsHoliday"));
-            await engine.TagCalendarColumnAsync("Dim Date", "Gregorian", "IsHoliday", null, associated: false, remove: true, "agent");
+            Assert.Contains(list.Calendars[0].Groups, g => g.TimeUnit == "Year" && g.AssociatedColumns.Contains("Year Label"));
+            await engine.TagCalendarColumnAsync("Dim Date", "Gregorian", "Year Label", null, associated: false, remove: true, "agent");
             list = await engine.ListCalendarsAsync("Dim Date");
-            Assert.DoesNotContain(list.Calendars[0].Groups, g => g.TimeUnit == "Year" && g.AssociatedColumns.Contains("IsHoliday"));
+            Assert.DoesNotContain(list.Calendars[0].Groups, g => g.TimeUnit == "Year" && g.AssociatedColumns.Contains("Year Label"));
 
             // Removing a primary that still has associates is refused (loud), then delete_calendar clears it all.
-            await engine.TagCalendarColumnAsync("Dim Date", "Gregorian", "IsHoliday", "Year", associated: true, remove: false, "agent");
+            await engine.TagCalendarColumnAsync("Dim Date", "Gregorian", "Year Label", "Year", associated: true, remove: false, "agent");
             var guarded = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 engine.TagCalendarColumnAsync("Dim Date", "Gregorian", "Year", null, associated: false, remove: true, "agent"));
             Assert.Contains("associated columns", guarded.Message);
@@ -169,10 +171,10 @@ namespace Semanticus.Tests
             Assert.Contains(r.CreatedColumns, c => c.Name == "Year" && c.Expression.Contains("YEAR("));
             Assert.Contains(r.CreatedColumns, c => c.Name == "Month of Year");
             Assert.Contains(r.Mappings, m => m.Contains("→ Date"));
-            Assert.Contains(r.Mappings, m => m.Contains("Month Number → MonthOfYear (associated)"));
+            Assert.DoesNotContain(r.Mappings, m => m.Contains("Month Number"));   // it is Month of Year's sort-by column, so the calendar already has it (the service refuses it twice)
 
             var cal = Assert.Single((await engine.ListCalendarsAsync(null)).Calendars);
-            Assert.Contains(cal.Groups, g => g.TimeUnit == "MonthOfYear" && g.PrimaryColumn == "Month of Year" && g.AssociatedColumns.Contains("Month Number"));
+            Assert.Contains(cal.Groups, g => g.TimeUnit == "MonthOfYear" && g.PrimaryColumn == "Month of Year" && g.AssociatedColumns.Length == 0);
             Assert.Contains(cal.Groups, g => g.TimeUnit == "DayOfWeek" && g.PrimaryColumn == "Day of Week");
 
             // The name-by-number visual sort pairing landed in the metadata (the TMDL is the ground truth).

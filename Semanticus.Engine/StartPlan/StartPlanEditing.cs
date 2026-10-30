@@ -417,6 +417,7 @@ namespace Semanticus.Engine.StartPlan
             doc.Pins[StartRefs.ShapeKey(doc.Manifest, line.Item)] = edit.Value;
             line.Item.After = edit.Value;
             line.Item.AuthoredAfter = null;
+            if (line.Item.Kind == "set_description") line.DescriptionBy = by;
             line.Kept = true; line.DecidedBy = by; line.Item.Status = "approved"; line.Item.DroppedBy = null;
             RecordKeep(line, by);
             line.Why = "Pinned: " + (by == StartDecidedBy.Assistant ? "your assistant" : "you") + " chose this value and it is kept.";

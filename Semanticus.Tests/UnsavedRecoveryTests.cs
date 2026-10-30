@@ -435,6 +435,37 @@ namespace Semanticus.Tests
             Assert.Null(RestorePointStore.ReadUnsaved(key));
         }
 
+        [Fact]
+        public async Task K27c_a_close_waits_for_an_admitted_edit_before_checking_for_live_work()
+        {
+            using var sessions = new SessionManager();
+            await sessions.OpenAsync(ModelPath());
+            var s = sessions.Require();
+            s.LiveOrigin = new LiveOrigin("powerbi://api.powerbi.com/v1.0/myorg/Test", "Closing edit", null, "interactive");
+            s.AttachLiveRecovery();
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            s.ModelStateLeaseReadyForTest = () =>
+            {
+                entered.SetResult(true);
+                return release.Task;
+            };
+            var edit = s.MutateAsync("human", "admitted edit", m => m.Description = "edit admitted before close");
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(s.HasLiveWorkToKeep);
+            var close = Task.Factory.StartNew(() => Program.KeepLiveWork(s), CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            try
+            {
+                Assert.NotSame(close, await Task.WhenAny(close, Task.Delay(150)));
+                release.TrySetResult(true);
+                await close;
+                var file = RestorePointStore.UnsavedPath(RestorePointStore.LiveSource(s.LiveOrigin.Endpoint, s.LiveOrigin.Database));
+                Assert.True(File.Exists(file));
+                Assert.Contains("edit admitted before close", File.ReadAllText(file));
+            }
+            finally { release.TrySetResult(true); await edit; await close; }
+        }
+
         // F-294 (Codex on pull request 402): the leaving engine waited five seconds for the kept copy, then gave up and exited two seconds later,
         // before a slow write (a large live model, a busy dispatcher) reached its move into place. The unpublished edits were lost.
         [Fact]
@@ -449,12 +480,34 @@ namespace Semanticus.Tests
             s.LiveOrigin = origin;
             s.AttachLiveRecovery();
             await Edit(sessions, "slow edit that must survive");
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var release = new ManualResetEventSlim(false);
             var calls = 0;
-            RestorePointStore.RecoveryIoHookForTest = f => { if (Interlocked.Increment(ref calls) == 1) Thread.Sleep(6500); };   // the write starts late: past the old five seconds
-
-            Program.KeepLiveWork(s);   // what the engine calls before it exits: it must not return while the write is still under way
-
-            RestorePointStore.RecoveryIoHookForTest = null;
+            RestorePointStore.RecoveryIoHookForTest = f =>
+            {
+                if (Interlocked.Increment(ref calls) != 1) return;
+                entered.TrySetResult(true);
+                release.Wait();
+            };
+            // The seam sees the cap KeepLiveWork really waits with. Asserting the constant alone passed when the wait was hard-coded to five seconds.
+            TimeSpan? waitedWith = null;
+            var oldWait = Program.LiveKeepWait;
+            Program.LiveKeepWait = (work, cap) => { waitedWith = cap; return oldWait(work, cap); };
+            var keep = Task.Factory.StartNew(() => Program.KeepLiveWork(s), CancellationToken.None,
+                TaskCreationOptions.LongRunning, TaskScheduler.Default);
+            try
+            {
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                Assert.False(keep.IsCompleted, "KeepLiveWork returned while the recovery write was blocked");
+                Assert.True(Program.LiveKeepCap > TimeSpan.FromSeconds(5), "the old five-second cutoff lost slow writes");
+                Assert.Equal(Program.LiveKeepCap, waitedWith);
+            }
+            finally
+            {
+                release.Set();
+                try { await keep.WaitAsync(TimeSpan.FromSeconds(30)); }
+                finally { RestorePointStore.RecoveryIoHookForTest = null; Program.LiveKeepWait = oldWait; }
+            }
             // Read the file itself, at once: the store's own reader waits on the write's gate, so it would pass even if KeepLiveWork had given up early.
             var file = RestorePointStore.UnsavedPath(key);
             Assert.True(File.Exists(file), "KeepLiveWork returned before the delayed write landed");
@@ -484,11 +537,15 @@ namespace Semanticus.Tests
             var calls = 0;
             RestorePointStore.RecoveryIoHookForTest = f => { if (Interlocked.Increment(ref calls) == 1) release.Wait(TimeSpan.FromSeconds(30)); };
             var oldCap = Program.LiveKeepCap;
+            var oldWait = Program.LiveKeepWait;
+            TimeSpan? waitedWith = null;
+            Program.LiveKeepWait = (work, cap) => { waitedWith = cap; return oldWait(work, cap); };
             Program.LiveKeepCap = TimeSpan.FromMilliseconds(400);
             try
             {
                 var started = DateTime.UtcNow;
                 Program.KeepLiveWork(s);
+                Assert.Equal(TimeSpan.FromMilliseconds(400), waitedWith);   // the wait used the cap in force, not a number of its own
                 Assert.True(DateTime.UtcNow - started < TimeSpan.FromSeconds(10), "a hung write must not hold the engine");
                 // The file the hung write would replace, read directly (the store's reader waits behind the stuck write): still the earlier copy, whole.
                 var kept = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(file));
@@ -499,6 +556,7 @@ namespace Semanticus.Tests
             finally
             {
                 Program.LiveKeepCap = oldCap;
+                Program.LiveKeepWait = oldWait;
                 release.Set();
                 await s.RunAsync(() => true);   // the released write finishes before the session goes
                 RestorePointStore.RecoveryIoHookForTest = null;

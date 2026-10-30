@@ -196,3 +196,22 @@ test('the real tree is at or under its checked-in baseline', () => {
     assert.fail(`style check:\n${detail.join('\n')}`);
   }
 });
+
+test('Checked styles use tokens without a baseline allowance', () => {
+  const tokens = loadTokenNames(root);
+  const violations = ['checked.css', 'checks-page.css'].flatMap(name => {
+    const file = `webview/src/${name}`;
+    return scanCss(readFileSync(resolve(root, file), 'utf8'), file, tokens);
+  });
+  assert.deepEqual(violations.map(formatViolation), []);
+});
+
+// V-G2 (m19, NT1-04): the Checked guard above reads only spacing, text size, corner and height. NT1-04 counted a raw colour
+// (the #3794ff link fallback in checked.css), and the next one would pass it. Left failing on purpose (never a product fix here).
+test('Verifier: the Checked style guard catches a new raw colour', () => {
+  const tokens = loadTokenNames(root);
+  const file = 'webview/src/checked.css';
+  const planted = `${readFileSync(resolve(root, file), 'utf8')}\n.ck-planted { color: #ff0000; background: rgb(10, 20, 30); }\n`;
+  const found = scanCss(planted, file, tokens).map(formatViolation).filter(v => v.includes('.ck-planted'));
+  assert.equal(found.length, 2, `a raw colour in ${file} passes the token guard: ${JSON.stringify(found)}`);
+});

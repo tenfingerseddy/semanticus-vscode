@@ -34,7 +34,7 @@ namespace Semanticus.Tests
                 var activities = new List<EngineActivityEvent>();
                 var modelChanges = 0;
                 sessions.Bus.Activity += activities.Add;
-                sessions.Bus.Changed += _ => modelChanges++;
+                sessions.Bus.Changed += n => { if (n.IsCommit) modelChanges++; };
 
                 var listed = await McpTools.GitBranch(engine);
                 Assert.True(listed.Ok, listed.Error);
@@ -143,7 +143,7 @@ namespace Semanticus.Tests
                 await engine.SetDaxAsync(measure.Ref, "1", "human");
                 var diskBefore = File.ReadAllBytes(repo.Model);
                 var headBefore = Git(repo.Dir, "rev-parse", "HEAD");
-                sessions.Bus.Changed += _ => modelChanges++;
+                sessions.Bus.Changed += n => { if (n.IsCommit) modelChanges++; };
 
                 var checkout = await McpTools.GitCheckout(engine, "model-change");
                 Assert.False(checkout.Ok);
@@ -200,7 +200,7 @@ namespace Semanticus.Tests
                 var activities = new List<EngineActivityEvent>();
                 var modelChanges = 0;
                 sessions.Bus.Activity += activities.Add;
-                sessions.Bus.Changed += _ => modelChanges++;
+                sessions.Bus.Changed += n => { if (n.IsCommit) modelChanges++; };
 
                 File.AppendAllText(remote.PeerModel, "\n ");
                 Git(remote.Peer, "add", "--", "model.bim");
@@ -282,7 +282,7 @@ namespace Semanticus.Tests
                 var activities = new List<EngineActivityEvent>();
                 var modelChanges = 0;
                 sessions.Bus.Activity += activities.Add;
-                sessions.Bus.Changed += _ => modelChanges++;
+                sessions.Bus.Changed += n => { if (n.IsCommit) modelChanges++; };
 
                 var cloned = await McpTools.GitClone(engine, source.Dir, "cloned");
                 var cloneDir = Path.Combine(workspace, "cloned");

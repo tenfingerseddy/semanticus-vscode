@@ -55,7 +55,7 @@ function registered(w, hostModelIdentity) {
   const warnings = [];
   const vscode = { window: { showInformationMessage: () => undefined, setStatusBarMessage: () => undefined, showWarningMessage: async (m) => { warnings.push(m); }, showErrorMessage: (m) => { errors.push(m); } } };
   const saveScope = { conn: w.conn, vscode, propGrid: { commitFocused: async () => undefined }, commitStudioFocused: async () => undefined,
-    pickFirstSaveDestination: async () => undefined, rememberLastModel: async () => undefined, watchModelDisk: () => undefined };
+    pickFirstSaveDestination: async () => undefined, rememberLastModel: async () => undefined, watchModelDisk: () => undefined, noteSavedCopyLeftAlone: () => undefined };
   const saveCommand = new Function(...Object.keys(saveScope), `${functionSource('saveCommand').js}\nreturn saveCommand;`)(...Object.values(saveScope));
   const relayScope = { saveCommand, conn: w.conn, withModelIdentity, withPress: (pressed, send) => send(), ParameterStructures: { byPosition: 1 }, studioRpcError: async (e) => String(e.message ?? e) };
   const studioRelayHandler = new Function(...Object.keys(relayScope), `${functionSource('studioRelayHandler').js}\nreturn studioRelayHandler;`)(...Object.values(relayScope));

@@ -53,6 +53,10 @@ namespace Semanticus.Tests
         // claim_request, complete_request, decline_request), 22 to 26 and 334 to 338 after E4.
         // Slice C added set_model_sql_endpoint, list_model_sql_endpoints and list_workspace_models to Connections
         // (contract 19), 24 to 27 and 338 to 341.
+        // 421 on 18 Oct 2026 (418 plus propose_calendar, setup_calendars and add_time_measures: the Calendars page, lane m17/calendar-ui, Dates and time, 8 to 11); 418 below is 412 plus six, lane m17/engine-groundwork:
+
+        // 418 on 18 Oct 2026 (412 plus six, lane m17/engine-groundwork): get_standard, set_standard, preview_standard and apply_standard (Your standard) joined Findings and fixes, 49 to 53;
+        // check_calendar_data and check_same_numbers (the calendar data check and the number check) joined Tests, numbers and evidence, 36 to 38.
         // 412 on 16 Oct 2026 (411 plus query_notebook: the Query notebook, lane m16/query-c, See what is in the model > Measures, DAX and queries, 11 to 12).
         // 400 on 12 Oct 2026 (399 plus connect_assistant): connect_assistant (lane m15/connect-any, Connect another assistant) joined Connections and targets, 31 to 32.
         private static readonly Dictionary<string, Dictionary<string, int>> Ratified = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal)
@@ -60,21 +64,23 @@ namespace Semanticus.Tests
             ["Open a model and connect"] = new Dictionary<string, int> { ["Connections and targets"] = 32 },
             ["See what is in the model"] = new Dictionary<string, int>
             {
-                ["Measures, DAX and queries"] = 12, ["Reports and what uses this model"] = 9, ["Speed and size"] = 7,
+                ["Measures, DAX and queries"] = 13, ["Reports and what uses this model"] = 9, ["Speed and size"] = 7,
                 ["Tables, columns and hierarchies"] = 5, ["The model as a whole"] = 6,
                 ["Relationships and the diagram"] = 3, ["Tests, numbers and evidence"] = 3,
             },
             ["Change the model"] = new Dictionary<string, int>
             {
-                ["Measures, DAX and queries"] = 20, ["Where the data comes from"] = 14, ["The model as a whole"] = 16,
-                ["Tables, columns and hierarchies"] = 15, ["How the model looks and reads"] = 15,
-                ["The model spec"] = 18, ["Dates and time"] = 8, ["Relationships and the diagram"] = 4,
+                ["Measures, DAX and queries"] = 20, ["Where the data comes from"] = 14, ["The model as a whole"] = 17,
+                ["Tables, columns and hierarchies"] = 15, ["How the model looks and reads"] = 18,
+                ["The model spec"] = 18, ["Dates and time"] = 11, ["Relationships and the diagram"] = 4,
             },
             // 23 = 21 plus add_plan_target and remove_plan_target, the target half of the living plan.
             // 47 = 45 plus get_next_step and set_next_step (the Next line, 1.5); 49 = 47 plus reading_card and fix_them (the reading card, 1.5).
-            ["Make it better"] = new Dictionary<string, int> { ["Findings and fixes"] = 49 },
+            ["Make it better"] = new Dictionary<string, int> { ["Findings and fixes"] = 53 },
             // 36 = 35 plus pick_check_visuals (Jev picks each check's visual on Validation, 1.6).
-            ["Prove it is right"] = new Dictionary<string, int> { ["Tests, numbers and evidence"] = 36 },
+            // Totals adds one control to the existing Tests shelf in rc23, 46 to 47.
+            // Description adds four tools; measure checks add seven. The seven placements need ratification.
+            ["Prove it is right"] = new Dictionary<string, int> { ["Tests, numbers and evidence"] = 50 }, // L2 (1.7): set_measure_filters_on_purpose; L1 (1.7): stop_measure_run, keep_measure_edit
             ["Track versions and compare"] = new Dictionary<string, int> { ["Versions and history"] = 14 },
             ["Ship it out"] = new Dictionary<string, int>
             {
@@ -141,8 +147,8 @@ namespace Semanticus.Tests
                 Assert.False(string.IsNullOrWhiteSpace(o.Question), o.Name);
                 Assert.False(string.IsNullOrWhiteSpace(o.Shelf), o.Name);
             });
-            Assert.Equal(412, catalog.Length);
-            Assert.Equal(412, OpTaxonomy.Count);
+            Assert.Equal(438, catalog.Length); // L2 (1.7) adds set_measure_filters_on_purpose, L1 (1.7) stop_measure_run and keep_measure_edit; exact membership remains checked above.
+            Assert.Equal(438, OpTaxonomy.Count);
         }
 
         [Fact]
@@ -244,6 +250,15 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public void Totals_is_a_new_Checks_control_outside_the_historical_27_refiled_ops()
+        {
+            Assert.DoesNotContain(Refiled, r => r.Op == "set_measure_totals");
+            Assert.True(OpTaxonomy.TryGet("set_measure_totals", out var question, out var shelf));
+            Assert.Equal("Prove it is right", question);
+            Assert.Equal("Tests, numbers and evidence", shelf);
+        }
+
+        [Fact]
         public void No_name_violates_the_copy_rules()
         {
             // docs/product-copy-style.md: no em dashes anywhere user-facing; these names are UI copy.
@@ -275,7 +290,7 @@ namespace Semanticus.Tests
             {
                 var e = new LocalEngine(new SessionManager(), new FreeTier(), ws);
                 var cat = await e.GetOpCatalogAsync();
-                Assert.Equal(412, cat.Length);
+                Assert.Equal(438, cat.Length); // L2 (1.7) adds set_measure_filters_on_purpose, L1 (1.7) stop_measure_run and keep_measure_edit.
                 Assert.All(cat, o => Assert.False(string.IsNullOrWhiteSpace(o.Question) || string.IsNullOrWhiteSpace(o.Shelf), o.Name));
                 var wf = cat.Single(o => o.Name == "start_workflow");
                 Assert.Equal("Set the rules of the work", wf.Question);

@@ -15,7 +15,7 @@ namespace Semanticus.Engine
     /// UI owns: the MCP tools call IEngine, which here forwards every operation to the owner. The
     /// owner's ChangeBus then broadcasts the agent's edit to the UI client → live cross-process dual-drive.
     /// </summary>
-    public sealed class RemoteEngine : IEngine, System.IDisposable
+    public sealed partial class RemoteEngine : IEngine, System.IDisposable
     {
         private readonly ResilientRpc _rpc;
 
@@ -266,6 +266,11 @@ namespace Semanticus.Engine
         public Task<TreeNode[]> ListTreeAsync(string parentRef) => _rpc.InvokeAsync<TreeNode[]>("listTree", parentRef);
         public Task<ObjectInfo> GetObjectAsync(string objRef) => _rpc.InvokeAsync<ObjectInfo>("getObject", objRef);
         public Task<string> GetDaxAsync(string objRef) => _rpc.InvokeAsync<string>("getDax", objRef);
+        public Task<MeaningAnnotationCleanup> CleanupMeaningAnnotationsAsync(string origin) => _rpc.InvokeAsync<MeaningAnnotationCleanup>("cleanupMeaningAnnotations");
+        public Task<MeasureDescription> GetMeasureDescriptionAsync(string measureRef) => _rpc.InvokeAsync<MeasureDescription>("getMeasureDescription", measureRef);
+        public Task<DescriptionProposal> DraftMeasureDescriptionAsync(string measureRef, int timeoutSeconds = 60) => _rpc.InvokeAsync<DescriptionProposal>("draftMeasureDescription", measureRef, timeoutSeconds);
+        public Task<DescriptionProposal> ProposeMeasureDescriptionAsync(string measureRef, int timeoutSeconds = 60) => _rpc.InvokeAsync<DescriptionProposal>("proposeMeasureDescription", measureRef, timeoutSeconds);
+        public Task<SetResult> KeepMeasureDescriptionAsync(string proposalId, string origin) => _rpc.InvokeAsync<SetResult>("keepMeasureDescription", proposalId);
         public Task<SetResult> SetDaxAsync(string objRef, string expression, string origin, string expectedSession = null, long? expectedRevision = null, string expectedExpression = null) => _rpc.InvokeAsync<SetResult>("setDax", objRef, expression, origin, expectedSession, expectedRevision, expectedExpression);
         public Task<SaveResult> SaveAsync(string path, string format, bool overwrite, string origin, bool pickedInDialog = false) => _rpc.InvokeAsync<SaveResult>("save", path, format, overwrite, pickedInDialog);
         public Task<SessionInfo> SessionInfoAsync() => _rpc.InvokeAsync<SessionInfo>("sessionInfo");
@@ -341,7 +346,7 @@ namespace Semanticus.Engine
         public Task<SetResult> UnwaiveFindingAsync(string system, string ruleId, string objRef, string origin) => _rpc.InvokeAsync<SetResult>("unwaiveFinding", system, ruleId, objRef, origin);
         public Task<Semanticus.Analysis.WaiverRecord[]> ListWaiversAsync() => _rpc.InvokeAsync<Semanticus.Analysis.WaiverRecord[]>("listWaivers");
         public Task<DaxValidation> ValidateDaxAsync(string expression, bool strict = false) => _rpc.InvokeAsync<DaxValidation>("validateDax", expression, strict);
-        public Task<SetResult> SetDescriptionAsync(string objRef, string text, string origin) => _rpc.InvokeAsync<SetResult>("setDescription", objRef, text, origin);
+        public Task<SetResult> SetDescriptionAsync(string objRef, string text, string origin, string expectedText = null) => _rpc.InvokeAsync<SetResult>("setDescription", objRef, text, origin, expectedText);
         public Task<string> CreateMeasureAsync(string tableRef, string name, string expression, string origin, string displayFolder = null) => _rpc.InvokeAsync<string>("createMeasure", tableRef, name, expression, origin, displayFolder);
         public Task<TreeNode[]> ListFunctionsAsync() => _rpc.InvokeAsync<TreeNode[]>("listFunctions");
         public Task<string> CreateFunctionAsync(string name, string expression, string origin) => _rpc.InvokeAsync<string>("createFunction", name, expression, origin);
@@ -433,10 +438,19 @@ namespace Semanticus.Engine
         public Task<GenerateResult> GenerateDateTableAsync(string tableName, string startExpr, string endExpr, bool markAsDate, string origin) => _rpc.InvokeAsync<GenerateResult>("generateDateTable", tableName, startExpr, endExpr, markAsDate, origin);
         public Task<GenerateResult> GenerateTimeIntelligenceAsync(string baseMeasureRef, string dateColumn, string[] variants, string displayFolder, string origin) => _rpc.InvokeAsync<GenerateResult>("generateTimeIntelligence", baseMeasureRef, dateColumn, variants, displayFolder, origin);
         public Task<CalendarListResult> ListCalendarsAsync(string tableRef) => _rpc.InvokeAsync<CalendarListResult>("listCalendars", tableRef);
+        public Task<GetStandardResult> GetStandardAsync() => _rpc.InvokeAsync<GetStandardResult>("getStandard");
+        public Task<SetStandardResult> SetStandardAsync(string patch, string target, string origin) => _rpc.InvokeAsync<SetStandardResult>("setStandard", patch, target, origin);
+        public Task<PreviewStandardResult> PreviewStandardAsync(string patch = null) => _rpc.InvokeAsync<PreviewStandardResult>("previewStandard", patch);
+        public Task<ApplyStandardResult> ApplyStandardAsync(string origin) => _rpc.InvokeAsync<ApplyStandardResult>("applyStandard", origin);
+        public Task<CalendarDataCheckResult> CheckCalendarDataAsync(string tableRef) => _rpc.InvokeAsync<CalendarDataCheckResult>("checkCalendarData", tableRef);
+        public Task<MeasureNumbersResult> CheckSameNumbersAsync(string[] oldMeasures, string[] newMeasures, string[] by) => _rpc.InvokeAsync<MeasureNumbersResult>("checkSameNumbers", oldMeasures, newMeasures, by);
         public Task<CalendarResult> DefineCalendarAsync(string tableRef, string name, CalendarMappingSpec[] mappings, string description, string origin) => _rpc.InvokeAsync<CalendarResult>("defineCalendar", tableRef, name, mappings, description, origin);
         public Task<SetResult> DeleteCalendarAsync(string tableRef, string name, string origin) => _rpc.InvokeAsync<SetResult>("deleteCalendar", tableRef, name, origin);
         public Task<CalendarResult> TagCalendarColumnAsync(string tableRef, string calendarName, string column, string timeUnit, bool associated, bool remove, string origin) => _rpc.InvokeAsync<CalendarResult>("tagCalendarColumn", tableRef, calendarName, column, timeUnit, associated, remove, origin);
         public Task<CalendarResult> DefineCalendarFromTemplateAsync(string template, string tableName, string dateColumn, int fiscalStartMonth, string startExpr, string endExpr, string calendarName, string origin) => _rpc.InvokeAsync<CalendarResult>("defineCalendarFromTemplate", template, tableName, dateColumn, fiscalStartMonth, startExpr, endExpr, calendarName, origin);
+        public Task<CalendarProposal> ProposeCalendarAsync(string dateTable, string[] calendars, int fiscalStartMonth, CalendarLevelChoice[] levels) => _rpc.InvokeAsync<CalendarProposal>("proposeCalendar", dateTable, calendars, fiscalStartMonth, levels);
+        public Task<CalendarSetupResult> SetupCalendarsAsync(string dateTable, string[] calendars, int fiscalStartMonth, CalendarLevelChoice[] levels, bool moveMeasures, string origin) => _rpc.InvokeAsync<CalendarSetupResult>("setupCalendars", dateTable, calendars, fiscalStartMonth, levels, moveMeasures, origin);
+        public Task<AddTimeMeasuresResult> AddTimeMeasuresAsync(string[] measures, string origin) => _rpc.InvokeAsync<AddTimeMeasuresResult>("addTimeMeasures", measures, origin);
         public Task<ConnectionStatus> ConnectXmlaAsync(string endpoint, string database, string authMode, string rawToken, string tenantId = null, bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human") => _rpc.InvokeAsync<ConnectionStatus>("connectXmla", endpoint, database, authMode, rawToken, tenantId, forceReauth, accountProfileId, makeDefault, loginHint, origin);
         public Task<ConnectionStatus> ConnectLocalAsync(string dataSource, string database) => _rpc.InvokeAsync<ConnectionStatus>("connectLocal", dataSource, database);
         public Task<LocalInstance[]> ListLocalInstancesAsync() => _rpc.InvokeAsync<LocalInstance[]>("listLocalInstances");
@@ -468,6 +482,7 @@ namespace Semanticus.Engine
         public Task<VerifiedEditsChain> ListVerifiedEditsAsync() => _rpc.InvokeAsync<VerifiedEditsChain>("listVerifiedEdits");
         public Task<string> ExportVerifiedEditsAsync(string format) => _rpc.InvokeAsync<string>("exportVerifiedEdits", format);
         public Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist, string origin, string[] only = null, string[] sections = null, string runId = null) => _rpc.InvokeAsync<TestSuiteRunResult>("runTests", persist, origin, only, sections, runId);
+        public Task<ChecksPageView> GetChecksPageAsync() => _rpc.InvokeAsync<ChecksPageView>("getChecksPage");
         public Task<ReconcileOutcome> TryTestAsync(TestDefinition def, string origin) => _rpc.InvokeAsync<ReconcileOutcome>("tryTest", def, origin);
         public Task<TestSuiteInfo> ListTestDefinitionsAsync() => _rpc.InvokeAsync<TestSuiteInfo>("listTests");
         public Task<TestDefinition> SaveTestDefinitionAsync(TestDefinition def, string origin, string expectedJson = null) => _rpc.InvokeAsync<TestDefinition>("saveTest", def, origin, expectedJson);
@@ -621,8 +636,8 @@ namespace Semanticus.Engine
         public Task<RestorePointPurgeResult> PurgeRestorePointsAsync(string id = null, int? olderThanDays = null,
             bool confirm = false, string confirmToken = null, string origin = "human") =>
             _rpc.InvokeAsync<RestorePointPurgeResult>("purgeRestorePoints", id, olderThanDays, confirm, confirmToken, origin);
-        public Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricWorkspace[]>("listWorkspaces", cancellationToken, authMode, tenantId, origin);
-        public Task<FabricSemanticModel[]> ListWorkspaceModelsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricSemanticModel[]>("listWorkspaceModels", cancellationToken, workspaceId, authMode, tenantId, origin);
+        public Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default, bool anotherAccount = false, string accountProfileId = null) => _rpc.InvokeWithCancellationAsync<FabricWorkspace[]>("listWorkspaces", cancellationToken, authMode, tenantId, origin, anotherAccount, accountProfileId);
+        public Task<FabricSemanticModel[]> ListWorkspaceModelsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default, string accountProfileId = null) => _rpc.InvokeWithCancellationAsync<FabricSemanticModel[]>("listWorkspaceModels", cancellationToken, workspaceId, authMode, tenantId, origin, accountProfileId);
         public Task<WorkspaceSqlEndpointList> ListWorkspaceSqlEndpointsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<WorkspaceSqlEndpointList>("listWorkspaceSqlEndpoints", cancellationToken, workspaceId, authMode, tenantId, origin);
         public Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DeploymentPipeline[]>("listDeploymentPipelines", cancellationToken, authMode, tenantId, origin);
         public Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<PipelineStage[]>("getPipelineStages", cancellationToken, pipelineId, authMode, tenantId, origin);

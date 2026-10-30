@@ -94,7 +94,7 @@ namespace Semanticus.Engine
                 var launcher = Path.Combine(home, ".semanticus", "bin", "semanticus-mcp");
                 if (File.Exists(launcher)) return (launcher, Array.Empty<string>());
             }
-            var exe = EngineBroker.CurrentExecutablePath();
+            var exe = EngineCache.InstallationExecutable ?? EngineBroker.CurrentExecutablePath();
             if (string.IsNullOrEmpty(exe)) return (null, Array.Empty<string>());
             if (string.Equals(Path.GetFileNameWithoutExtension(exe), "dotnet", StringComparison.OrdinalIgnoreCase))
             {

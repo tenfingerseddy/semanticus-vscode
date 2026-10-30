@@ -68,7 +68,7 @@ namespace Semanticus.Engine
         private const int NoteReserve = 1_500;
 
         // What the MCP door sends is the tool's return value serialized with the SDK's own options, so that is what is counted.
-        private static readonly JsonSerializerOptions Json = ModelContextProtocol.McpJsonUtilities.DefaultOptions;
+        private static readonly JsonSerializerOptions Json = Program.ToolJsonOptions;
 
         internal static int Chars(object o) => JsonSerializer.Serialize(o, Json).Length;
 

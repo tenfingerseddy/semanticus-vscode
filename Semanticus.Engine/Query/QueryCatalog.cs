@@ -95,12 +95,12 @@ namespace Semanticus.Engine.Query
 
         public IEnumerable<QueryMeasure> VisibleMeasures => Measures.Where(m => !m.Hidden);
 
-        public static QueryCatalog Read(Model m)
+        public static QueryCatalog Read(Model m, Func<string, JObject> parseLanguageSchema = null)
         {
             var cat = new QueryCatalog();
             // Once per culture, not once per object: the donor reader parses the whole schema again for every object
             // it is asked about, which cost this read one full parse per column, per measure and per table.
-            var schemas = m.Cultures.Select(LanguageSchema.Read).ToList();
+            var schemas = m.Cultures.Select(c => LanguageSchema.Read(c, parseLanguageSchema ?? JObject.Parse)).ToList();
             var keys = new HashSet<(string, string)>();
             foreach (var r in m.Relationships.OfType<SingleColumnRelationship>())
             {
@@ -180,12 +180,12 @@ namespace Semanticus.Engine.Query
             private readonly Dictionary<(string Table, string Member), JObject> _members = new Dictionary<(string, string), JObject>();
 
             /// <summary>Null when the culture holds no schema a reader can use, which reads as "no synonyms".</summary>
-            public static LanguageSchema Read(Culture culture)
+            public static LanguageSchema Read(Culture culture, Func<string, JObject> parse)
             {
                 if (culture.ContentType != ContentType.Json || string.IsNullOrEmpty(culture.Content)) return null;
                 try
                 {
-                    if (!(JObject.Parse(culture.Content)["Entities"] is JObject entities)) return null;
+                    if (!(parse(culture.Content)["Entities"] is JObject entities)) return null;
                     var s = new LanguageSchema();
                     foreach (var e in entities)
                     {

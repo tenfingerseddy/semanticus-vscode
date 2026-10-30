@@ -79,7 +79,7 @@ function rowKeys(items: FindingRow[]): string[] {
 
 // Collapsible Category → Rule → Items tree. Categories expand by default; rules collapse by default (so you
 // scan the rule list, then expand a rule to see its items). Right-click an item → reveal it in the Model tree.
-export function GroupedFindings({ rows, renderActions, renderRuleActions, categoryOrder, extraFilters, holdAs = 'findings' }: { rows: FindingRow[]; renderActions?: (r: FindingRow) => React.ReactNode; renderRuleActions?: (ruleId: string, category: string) => React.ReactNode; categoryOrder?: string[]; extraFilters?: React.ReactNode;
+export function GroupedFindings({ rows, renderActions, renderRuleActions, renderDetail, categoryOrder, extraFilters, holdAs = 'findings' }: { rows: FindingRow[]; renderActions?: (r: FindingRow) => React.ReactNode; renderRuleActions?: (ruleId: string, category: string) => React.ReactNode; renderDetail?: (r: FindingRow) => React.ReactNode; categoryOrder?: string[]; extraFilters?: React.ReactNode;
   /** Which list this is, so a reason typed on one page's finding is never offered on another page's finding with the same rule and object. */
   holdAs?: string }) {
   const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set());
@@ -196,6 +196,7 @@ export function GroupedFindings({ rows, renderActions, renderRuleActions, catego
                           {r.tag && <span className="sem-chip">{r.tag.label}</span>}
                         </div>
                         <div className="sem-text-meta">{r.message}</div>
+                        {renderDetail?.(r)}
                         {r.coveredBy && !r.waived && (
                           <div className="sem-text-meta">You accepted a related finding. Accept this one too, or fix it.
                             <span style={{ color: 'var(--sem-muted)' }}> Related: {r.coveredBy}{r.coveredReason ? <>, “{r.coveredReason}”</> : ''}.</span></div>

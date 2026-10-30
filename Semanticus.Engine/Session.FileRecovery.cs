@@ -44,6 +44,16 @@ namespace Semanticus.Engine
             get { try { return _liveKey != null && HasUnsavedEdits; } catch { return true; } }
         }
 
+        internal async Task<bool> KeepLiveWorkAfterEditsAsync()
+        {
+            if (_liveKey == null) return false;
+            using var lifetime = AcquireLifetimeLease();
+            await WaitForAdmittedEditsAsync().ConfigureAwait(false);
+            // A clean model still leaves immediately behind an unrelated read on the dispatcher.
+            if (!HasLiveWorkToKeep) return false;
+            return await OnDispatcher(FlushLiveRecovery).ConfigureAwait(false);
+        }
+
         /// <summary>The engine is leaving with unsaved edits on a live model: keep them first. True when a copy was written. Runs on the dispatcher.</summary>
         internal bool FlushLiveRecovery()
         {

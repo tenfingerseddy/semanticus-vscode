@@ -33,7 +33,7 @@ namespace Semanticus.Engine
     ///   refresh; if its shared expression is missing on both sides it is REFUSED (not half-created). A new DATA
     ///   COLUMN on an existing table IS added with its source binding. A new IMPORT/DirectQuery table (needs an M
     ///   binding we don't carry) and new cultures are still REPORTED (Unmatched), not added.
-    /// - STRUCTURAL classes deploy too (added 2026-07-09 after the ETS incident — an A/100-offline model read B/80.6
+    /// - STRUCTURAL classes deploy too (added 2026-07-09 after the Fabrikam incident — an A/100-offline model read B/80.6
     ///   in the service because these had silently never deployed and nothing said so): a table's DataCategory (the
     ///   date-table mark), SortByColumn (bound to the LIVE key column; a cleared session sort-by clears it live),
     ///   HIERARCHIES (created/re-levelled, levels bound to LIVE columns; a live-only one is reported, never deleted),
@@ -843,7 +843,7 @@ namespace Semanticus.Engine
             // and uses the escaped ref grammar (MINOR 5), mirroring liveOnlyChildren.
             var liveOnlyLevels = new List<(TOM.Table table, string hier, string level)>();
             int desc = 0, ren = 0, vis = 0, cat = 0, fmt = 0, fold = 0, expr = 0, sum = 0, cult = 0, part = 0, nexpr = 0, added = 0, calc = 0, metadata = 0, roleCount = 0;
-            // The STRUCTURAL classes (added 2026-07-09 after the ETS incident: an A/100-offline model scored B/80.6 in
+            // The STRUCTURAL classes (added 2026-07-09 after the Fabrikam incident: an A/100-offline model scored B/80.6 in
             // the service because its sort-by column, Calendar hierarchy, date-table mark and finding waivers had never
             // deployed and nothing said so). Each answer-affecting; each now carried and counted.
             int sortBy = 0, hier = 0, rel = 0, ann = 0;
@@ -903,7 +903,7 @@ namespace Semanticus.Engine
                 }
                 catch (Exception ex) { unmatched.Add("model (metadata was not applied: " + ex.Message + ")"); heldRefs.Add("model"); }
             }
-            // OWNED annotations (finding waivers + BPA ignore rules) deploy on their own accounted channel — the ETS
+            // OWNED annotations (finding waivers + BPA ignore rules) deploy on their own accounted channel — the Fabrikam
             // model's waivers had silently never reached the service. Excluded from the generic supplement above (so no
             // double-count); a FOREIGN annotation is never read or touched here.
             ann += DeployOwnedAnnotations(src.Annotations, live.Annotations, apply, "model", changes, syncedRefs);
@@ -1120,7 +1120,7 @@ namespace Semanticus.Engine
                         // NEW column: a CALCULATED column is just an expression; a DATA column carries a source-column
                         // binding (SourceColumn) — pure metadata a Direct Lake / import table can receive. Both are
                         // created; anything with authored metadata we can't carry is refused (residual guard), never
-                        // half-created. (Was report-only for data columns — the ETS gap: a new source column vanished.)
+                        // half-created. (Was report-only for data columns — the Fabrikam gap: a new source column vanished.)
                         var newColumnRef = AlmRef.Child("column", st.Name, sc.Name);
                         if (sc is TOM.CalculatedColumn scNew)
                         {
@@ -1437,7 +1437,7 @@ namespace Semanticus.Engine
                     heldRefs.Add(AlmRef.Top("table", st.Name));
                 }
 
-                // SORT-BY: SortByColumn re-orders a visual's axis, so a drift changes the answers — the ETS "Month Name"
+                // SORT-BY: SortByColumn re-orders a visual's axis, so a drift changes the answers — the Fabrikam "Month Name"
                 // column sorted alphabetically in the service because its sort-by (Month Number) never deployed. Resolve
                 // the target through the ONE shared IDENTITY resolver (lineage-first, name fallback) so it binds to the
                 // right LIVE column even when a rename hasn't applied yet and a same-named impostor exists; a cleared
@@ -1465,7 +1465,7 @@ namespace Semanticus.Engine
                     sortBy++; changes.Add("sortBy " + AlmRef.Child("column", lt.Name, lcol.Name)); syncedRefs.Add(AlmRef.Child("column", st.Name, scol.Name));
                 }
 
-                // HIERARCHIES: a user-facing drill path (the ETS Calendar hierarchy never deployed). Matched by NAME; a
+                // HIERARCHIES: a user-facing drill path (the Fabrikam Calendar hierarchy never deployed). Matched by NAME; a
                 // NEW hierarchy is created with its levels bound to LIVE columns (resolved by identity); a DRIFTED one is
                 // reconciled LEVEL-BY-LEVEL — matched levels keep their authored metadata, session-new levels are added,
                 // and a LIVE-ONLY level (e.g. an authored "Day" the session doesn't carry) is PRESERVED and reported
@@ -2162,7 +2162,7 @@ namespace Semanticus.Engine
         // The annotation families Semanticus itself authors and must carry across a deploy — the finding-waiver store
         // (Semanticus.Analysis.Waivers.Annotation) and TabularEditor's per-object BPA ignore list (+ its historical typo,
         // which TE still reads). Deployed on a dedicated accounted channel; a FOREIGN annotation is never read or touched
-        // by it. (The ETS model's waivers had silently never reached the service — an A/100 offline read as B/80.6 live.)
+        // by it. (The Fabrikam model's waivers had silently never reached the service — an A/100 offline read as B/80.6 live.)
         internal static bool IsOwnedAnnotation(string name)
             => name == "Semanticus_Waivers"
             || name == "BestPracticeAnalyzer_IgnoreRules"
@@ -2419,7 +2419,7 @@ namespace Semanticus.Engine
         }
 
         // NAME every authored child a NEW-table creation path does NOT carry, so a new table with measures / hierarchies /
-        // a sort-by / calc-group items REPORTS them instead of silently dropping them (the false-success family the ETS
+        // a sort-by / calc-group items REPORTS them instead of silently dropping them (the false-success family the Fabrikam
         // incident exposed). The table shell + the columns/partition it DID carry are already counted; these are the
         // residual, deployable via TMDL/XMLA.
         // Returns TRUE if it reported any uncarried child — the caller then WITHHOLDS the table ref from SyncedRefs so a

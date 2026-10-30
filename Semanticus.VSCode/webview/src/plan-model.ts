@@ -1453,7 +1453,7 @@ export const PAGE_AREA: Record<string, string> = {
   plan: 'Plan', history: 'Plan',
   data: 'Explore', query: 'Explore', askdata: 'Explore', diagram: 'Explore', lineage: 'Explore', stats: 'Explore',
   search: 'Edit', daxlab: 'Explore', instructions: 'Edit', advmodels: 'Edit', mcode: 'Edit', knowledge: 'Edit',
-  bpa: 'Review', readiness: 'Review', copilottest: 'Review', tests: 'Review', docs: 'Review', evidence: 'Review',
+  bpa: 'Review', readiness: 'Review', copilottest: 'Review', tests: 'Review', docs: 'Review', evidence: 'Review', standard: 'Review',
   deploy: 'Publish',
   workflows: 'Workflows',
 };

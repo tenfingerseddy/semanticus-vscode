@@ -114,7 +114,7 @@ namespace Semanticus.Engine.StartPlan
                     .Select(l => new
                     {
                         l.Item?.Kind, l.Item?.ObjectRef, l.Item?.Target, l.Item?.After, l.Item?.Source,
-                        l.DecidedBy, l.Word,
+                        l.DecidedBy, l.Word, l.DescriptionBy,
                         Args = (l.Item?.Args ?? new Dictionary<string, string>()).OrderBy(a => a.Key, StringComparer.Ordinal).Select(a => a.Key + "=" + a.Value).ToList(),
                     })
                     .OrderBy(x => x.Kind, StringComparer.Ordinal).ThenBy(x => x.ObjectRef, StringComparer.Ordinal)
@@ -173,7 +173,7 @@ namespace Semanticus.Engine.StartPlan
                 yield return new StartNeed
                 {
                     Id = "sample", Kind = "sample_reading",
-                    Text = "Reading a sample of the rows in " + (doc.Source?.Database ?? "the source") + ", so counts and patterns can guide the choices. Rows never leave your computer. "
+                    Text = "Reading a sample of the rows in " + (doc.Source?.Database ?? "the source") + ", so counts and patterns can guide the choices. Source sample rows never leave your computer. "
                            + "The plan will update when it is done.",
                 };
             else if (string.Equals(doc.Sample?.State, StartSampleStatus.Refused, StringComparison.Ordinal))
@@ -211,7 +211,7 @@ namespace Semanticus.Engine.StartPlan
                 yield return new StartNeed
                 {
                     Id = "grant", Kind = "grant_declined",
-                    Text = "You chose to carry on without Jev. The plan is made the way a free plan is, with your assistant's words. You can allow Jev later.",
+                    Text = "You chose to carry on without Jev. The plan is made the way a free plan is, with your assistant's words. You can allow Jev later. " + GrantScopeWords(doc, manifest),
                     Options = new[] { "Allow" },
                     Recommended = "Allow",
                 };
@@ -225,7 +225,7 @@ namespace Semanticus.Engine.StartPlan
         }
 
         /// <summary>What a grant would let Jev see, in plain words: the tables (names, columns and settings), and whether counts and patterns from a sample of their rows go too, and for which
-        /// tables (UAT-J7-S2-002: the band named only the source). Never rows. The same scope the permission dialog lists and the grant is bound to.</summary>
+        /// tables (UAT-J7-S2-002: the band named only the source). Also names the model advice the same yes grants.</summary>
         internal static string GrantScopeWords(StartPlanDoc doc, StructureManifest manifest)
         {
             var included = manifest.Tables.Where(t => t.Include).ToList();
@@ -240,15 +240,18 @@ namespace Semanticus.Engine.StartPlan
             var scope = "It would see the names, columns and settings of " + (included.Count == 0 ? "no tables" : Names(included.Select(t => t.Name))) + ".";
             string sample;
             if (string.Equals(doc.Sample?.State, StartSampleStatus.Reading, StringComparison.Ordinal))
-                sample = "A sample of the rows is being read on your computer; Jev would see only counts and patterns from it, never the rows.";
+                sample = "A source sample is being read on your computer. Jev would see counts and patterns. Source sample rows stay here.";
             else if (!doc.SampleFacts)
-                sample = "No sample of the rows was read, so it would see names and settings only.";
+                sample = "No source sample was read, so source planning would see names and settings only.";
             else if (sampled.Count == 0)
-                sample = "It would see no sample of the rows, because you refused it for every table.";
+                sample = "No sample facts go to Jev, because you refused each table.";
             else
-                sample = "It would also see counts and patterns from a sample of the rows in " + Names(sampled.Select(t => t.Name)) + ", never the rows themselves."
+                sample = "It would also see counts and patterns from a source sample of " + Names(sampled.Select(t => t.Name)) + ". Source sample rows stay on your computer."
                          + (left.Count > 0 ? " You refused the sample for " + Names(left.Select(t => t.Name)) + "." : "");
-            return scope + " " + sample;
+            return scope + " " + sample
+                + " Model advice also sends the name, Description and formula for the Description score and Totals."
+                + " Totals Fit also sends the expected total rule, grouping column, calculated facts, probe rows and total."
+                + " Each probe row contains a member name and a measure value.";
         }
 
         // ---- sections -----------------------------------------------------------------------------------------

@@ -103,6 +103,7 @@ namespace Semanticus.Tests
         private static async Task<DecisionFixture> GappyAsync(string file, bool pro = false)
         {
             var f = new DecisionFixture(pro ? TestEntitlements.Pro : TestEntitlements.Free);
+            f.Engine.AssistantHostForTest = () => DisconnectedHost(f);
             await f.Engine.CreateModelAsync("Contoso", 1604);
             await f.Engine.CreateTableAsync("Sales", "human");
             await f.Engine.CreateColumnAsync("table:Sales", "Amount", "Double", null, "human");
@@ -116,6 +117,17 @@ namespace Semanticus.Tests
             f.UseNull();
             return f;
         }
+
+        // Plan state must depend on this fixture, even when the laptop has Semanticus connected in Claude Code.
+        private static ConnectHost DisconnectedHost(DecisionFixture f) => new ConnectHost
+        {
+            Os = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux",
+            Home = Path.Combine(f.Home, "assistant"),
+            AppData = Path.Combine(f.Home, "assistant", "AppData", "Roaming"),
+            LocalAppData = Path.Combine(f.Home, "assistant", "AppData", "Local"),
+            Workspace = f.Workspace,
+            Command = () => Path.Combine(f.Home, "Semanticus.Engine"),
+        };
 
         private static Task<ModelPlanActionResult> AskAsync(DecisionFixture f, string words, string doer = null,
                                                              string doneWhen = null, string[] objects = null,
@@ -153,6 +165,7 @@ namespace Semanticus.Tests
             // A restart: a new engine over the same workspace, opening the same file.
             using var sessions = new SessionManager();
             using var again = new LocalEngine(sessions, TestEntitlements.Free, f.Workspace);
+            again.AssistantHostForTest = () => DisconnectedHost(f);
             await again.OpenAsync(Path.Combine(f.Workspace, "TaskIds.bim"));
             var second = new List<string>();
             for (var i = 0; i < 12; i++)
@@ -527,6 +540,7 @@ namespace Semanticus.Tests
 
             using var sessions = new SessionManager();
             using var again = new LocalEngine(sessions, TestEntitlements.Free, f.Workspace);
+            again.AssistantHostForTest = () => DisconnectedHost(f);
             await again.OpenAsync(Path.Combine(f.Workspace, "SendRestart.bim"));
             var second = await again.AddPlanTaskAsync(new PlanTaskRequest
             {

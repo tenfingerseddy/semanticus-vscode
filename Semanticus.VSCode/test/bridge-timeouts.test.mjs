@@ -20,6 +20,7 @@ const longMethods = Function(`"use strict"; return ${policy[3]};`)();
 assert.equal(defaultMs, 30_000);
 assert.equal(longMs, 600_000);
 assert.equal(longMethods.test('runTests'), true, 'whole-suite tests must never use the generic 30-second guard');
+assert.equal(longMethods.test('getChecksPage'), true, 'a page can read saved numbers and table results');
 assert.equal(longMethods.test('prepareWorkingCopy'), true, 'creating a local copy can include live authentication and export');
 // Round 1 (K1): a Run the plan press measured 33 to 60 s a wave on the real engine, and the first plan read about 25 s. Under the generic
 // 30-second guard the page reported "no response" for a press that was still working and then finished.
@@ -30,7 +31,7 @@ assert.equal(longMethods.test('sessionInfo'), false, 'fast metadata calls should
 
 // A source-only assertion can pass while a stale generated asset ships. Pin the compiled preview as well.
 assert.match(bundle, /10\*6e4/);
-assert.match(bundle, /runSql\|runTests\|runInterview/);
+assert.match(bundle, /runSql\|runTests\|getChecksPage\|runInterview/);
 assert.match(bundle, /openLive\|openLocal\|prepareWorkingCopy/);
 
 console.log('bridge timeout policy tests passed');

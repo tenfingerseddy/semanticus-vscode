@@ -247,7 +247,7 @@ namespace Semanticus.Tests
             await engine.DryRunOpAsync("create_measure", "{\"tableRef\":\"table:Facts\",\"name\":\"Ghost\",\"expression\":\"1\"}");
 
             var seen = new List<ChangeNotification>();
-            Action<ChangeNotification> handler = n => seen.Add(n);
+            Action<ChangeNotification> handler = n => { if (n.IsCommit) seen.Add(n); };
             sm.Bus.Changed += handler;
             try
             {

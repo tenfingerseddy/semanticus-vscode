@@ -36,6 +36,7 @@ import { BpaView } from './bpa';
 // longer mounts either of them: plan.tsx owns both, one as a section and one as a panel.
 import { DocumentationView } from './documentation';
 import { CopilotTestView } from './copilot-test';
+import { StandardView } from './standard';
 import { DeployView } from './deploy';
 import { usePublishReach } from './publishReach';
 import { TestsView } from './tests';
@@ -63,10 +64,12 @@ import { assistantChipCount, type Plan as PlanModel, type PlanDoer } from './pla
 import { AskBar, isAskKey } from './askbox';
 import { draftRowId } from './composer-model';
 import { ProDecisionsHost } from './decisions-settings';
+import { openConsentCard } from './consent';
 import { band } from './readinessband.mjs';
 import { SCAN_PAGE_OF_TOOL } from './studio/checks-run';
 import { GradeFlip, BigWin } from './personality/motion';
 import { RagBars } from './ragbars';
+import { LiveReadinessCheck, RatioFixChoice } from './readiness-numbers';
 import { AREA_ALIASES, DESTINATION_OF_TOOL, PLAN_START_TARGET, SQL_DRAFT_TARGET, areaHomeTool, landingOf, objectLabel, objectToRef, refToObject, tableOfObject, type Area, type Route, type Seed, type ToolId } from './route';
 
 // M Code is the heaviest tab (the @microsoft/powerquery-* parser/formatter/language-services + the 866-symbol
@@ -120,7 +123,7 @@ const TAB_GROUPS: { id: Area; label: string; tabs: { id: StudioTab; label: strin
     { id: 'instructions', label: 'AI instructions' }, { id: 'advmodels', label: 'Advanced modelling' }, { id: 'mcode', label: 'Power Query' },
   ] },
   { id: 'review', label: 'Review', tabs: [
-    { id: 'bpa', label: 'Model quality (BPA)' }, { id: 'readiness', label: 'AI readiness' }, { id: 'copilottest', label: 'Copilot test' }, { id: 'tests', label: 'Validation' }, { id: 'docs', label: 'Docs' },
+    { id: 'bpa', label: 'Model quality (BPA)' }, { id: 'readiness', label: 'AI readiness' }, { id: 'copilottest', label: 'Copilot test' }, { id: 'tests', label: 'Checks' }, { id: 'docs', label: 'Docs' }, { id: 'standard', label: 'Your standard' },
   ] },
   { id: 'publish', label: 'Publish', tabs: [
     { id: 'deploy', label: 'Published' },
@@ -143,8 +146,8 @@ TAB_TO_GROUP.compare = 'publish'; TAB_TO_GROUP.dataagent = 'publish';
 // (Kane: "No point in three similar pages"). The IDS stay real routes, the way `evidence` does: every
 // "Review these together" button, every saved page and every deep link still points at them.
 TAB_TO_GROUP.optimize = 'plan'; TAB_TO_GROUP.spec = 'plan';
-// Reports left the strip and became a tab inside Validation. The id stays a real route so an old link, a
-// saved page and the Reports button on Validation all still work; it simply opens Validation on that tab.
+// Reports left the strip and became a tab inside Checks. The id stays a real route so an old link, a
+// saved page and the Reports button on Checks all still work; it simply opens Checks on that tab.
 TAB_TO_GROUP.evidence = 'review';
 // And Model notes did the same on 23 September: it is the Notes tab inside AI instructions now. `knowledge`
 // stays a real route for the deep link, the ask box, the Plan and every saved page that still names it.
@@ -157,10 +160,6 @@ const CYCLE_TABS: StudioTab[] = SHOWN_GROUPS.flatMap((g) => g.tabs.map((t) => t.
 // The Plan is where a person starts (Plan at the heart, Kane 24 Sep). Every older area word, the Overview's
 // among them, resolves through route.ts's AREA_ALIASES.
 const FALLBACK_TAB: StudioTab = 'plan';
-// The exact sentence the host relay answers with when it holds no engine connection (extension.ts, the Studio and
-// Connections message handlers). Matched, not guessed: it is the only evidence a panel that mounted while the engine
-// was already down ever receives. engine-restart-recovery.test.mjs keeps the two literals identical.
-const ENGINE_NOT_CONNECTED = 'Engine not connected.';
 export function App() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   // The open model's FILE is what a typed, unsaved draft is held under (drafts.ts), set before any editor below renders. It keeps the last model through an outage, so a draft is found again when the engine returns.
@@ -170,6 +169,7 @@ export function App() {
   // No engine at all. Distinct from "no model open": with no engine the Open a model placeholder is a dead end,
   // because its button needs the engine too. That is what Kane hit on 2026-09-15 after a restart failed.
   const [engineDown, setEngineDown] = useState(false);
+  const [engineStarting, setEngineStarting] = useState(true);
   // The remembered published model that is waiting for the person to sign in (host: setPendingReconnect). While it
   // waits the page names that model and offers Sign in to reconnect, instead of the generic Open a model page.
   const [reconnectName, setReconnectName] = useState<string | null>(null);
@@ -448,7 +448,9 @@ export function App() {
     setSelectedObject(initialSelection); setCompareSeed(null); setSeedPending(false);
     setAgentPolicy(undefined); setModelChangeNonce(0);
     if (!coldStampedRoute) {
-      const next: Route = { sessionId: sid, destination: 'plan', tool: 'plan', object: initialSelection, nonce: ++navNonce.current };
+      const next: Route = !previousSid && sid
+        ? { ...routeRef.current, sessionId: sid, object: initialSelection, nonce: ++navNonce.current }
+        : { sessionId: sid, destination: 'plan', tool: 'plan', object: initialSelection, nonce: ++navNonce.current };
       routeRef.current = next; setRoute(next);
     }
     if (sid) rpc<AgentPolicy>('getAgentPolicy').then((p) => { if (sessionRef.current?.sessionId === sid) setAgentPolicy(p); })
@@ -482,6 +484,26 @@ export function App() {
   // so a second Ctrl J starts from the words then in the field; askTaken empties that field once a draft is made.
   const [askSeed, setAskSeed] = useState<{ text: string; nonce: number } | null>(null);
   const [askTaken, setAskTaken] = useState(0);
+  useEffect(() => {
+    const ask = (e: Event) => {
+      const text = (e as CustomEvent<string>).detail;
+      if (!text) return;
+      // Keep words already in the composer. The person can send both requests together.
+      const box = document.querySelector<HTMLInputElement>('[data-testid="ask-bar-input"]');
+      setAskSeed({ text: box?.value?.trim() ? box.value + '\n\n' + text : text, nonce: ++navNonce.current });
+      setAskOpen(true);
+    };
+    window.addEventListener('semanticus-checked-ask', ask);
+    return () => window.removeEventListener('semanticus-checked-ask', ask);
+  }, []);
+  useEffect(() => {
+    const trust = (e: Event) => {
+      const ref = (e as CustomEvent<{ ref: string }>).detail?.ref;
+      if (ref) goTab('tests', undefined, ref);
+    };
+    window.addEventListener('semanticus-checked-trust', trust);
+    return () => window.removeEventListener('semanticus-checked-trust', trust);
+  }, []);
   // Read by openAsk, which the keydown listener captured once, so it must not read askOpen through a stale closure.
   const askOpenRef = useRef(false);
   askOpenRef.current = askOpen;
@@ -527,7 +549,13 @@ export function App() {
       // Keyboard/command pseudo-targets are session-stamped too. A delayed old-session shortcut must not move the
       // newly opened model any more than an old object target may.
       if (m.tab === 'shortcuts') { setShortcutsOpen(true); return; }
-      if (m.tab === 'ask') { openAsk(); return; }
+      // Turn on from a measure card in Properties (Pro advice off for this model): the Pro page, with the permission card up.
+      if (m.tab === 'pro' && m.target === 'advice') { goTab('pro'); openConsentCard(); return; }
+      if (m.tab === 'ask') {
+        if (m.prompt) window.dispatchEvent(new CustomEvent('semanticus-checked-ask', { detail: m.prompt }));
+        else openAsk();
+        return;
+      }
       // A row of the Plan by id, from inside Studio ("On the plan" on a finding it was given from).
       if (m.tab === 'planrow') { openPlanRow(m.target || null); return; }
       if (m.tab === 'cycle:next') { cycleTab(1); return; }
@@ -537,7 +565,9 @@ export function App() {
       // The native sync status-bar item opens the existing seeded Compare path. All other host messages become one
       // session-stamped route, including Add tables, which is no longer held in a second replayable state slot.
       if (m.tab === 'compare' && m.target === 'seed') { jumpToCompare(); return; }
-      const explicitSeed = m.tab === 'diagram' && m.addTables?.length
+      const explicitSeed = m.tab === 'query' && m.run && m.target?.startsWith('measure:')
+        ? { kind: 'tryCalculation' as const, value: m.target }
+        : m.tab === 'diagram' && m.addTables?.length
         ? { kind: 'addTables' as const, value: m.addTables }
         : undefined;
       if (m.tab) goTab(m.tab, undefined, m.target, messageSid, explicitSeed);
@@ -609,12 +639,9 @@ export function App() {
     try {
       const s = await rpc<SessionInfo>('sessionInfo');
       setSession(s);
-      setEngineDown(false);
       return s;
-    } catch (e) {
-      // The host's own answer when it holds no engine connection. A panel that mounted while the engine was
-      // already down never saw an engineState transition, so this is the second way it can find out.
-      if (String((e as Error)?.message ?? e) === ENGINE_NOT_CONNECTED) setEngineDown(true);
+    } catch {
+      // A request can arrive before the engine starts. Only the host's lifecycle state proves a failed start.
       return null;
     }
   }
@@ -656,8 +683,9 @@ export function App() {
     // The host announces the engine going away and coming back, and answers this on studioReady. Studio must not
     // have to guess it from a failed request: a rejected request could be one wedged call, while this is the host
     // saying it has no engine at all.
-    const offEngine = onEngineState((connected) => {
-      setEngineDown(!connected);
+    const offEngine = onEngineState((connected, _reason, starting) => {
+      setEngineStarting(!!starting);
+      setEngineDown(!connected && !starting);
       if (connected) void refreshSession();
     });
     const offReconnectPending = onReconnectPending((name, offer) => { setReconnectName(name); setReconnectOffer(!!offer); });
@@ -683,9 +711,9 @@ export function App() {
   const keepPlan = keepPlanThroughOutage({ hasSession: !!session?.sessionId, hasDraft: anyWordsDraft, tab });
   const gatedFeature = featureOfTool(tab);
   const featureGrant = useFeature(gatedFeature);
-  // Validation used to need a second grant of its own here: TestsView mounts for EVERY open model and is
+  // Checks used to need a second grant of its own here: TestsView mounts for EVERY open model and is
   // merely hidden with a CSS class, so a gate on the visible branch alone would have left its listTests /
-  // listTableMappings / listTestRuns calls running in the background on the free plan. Validation is free
+  // listTableMappings / listTestRuns calls running in the background on the free plan. Checks is free
   // from 22 September 2026, so there is nothing left to gate and the second grant is gone with it.
   const routeIsCurrent = !!session?.sessionId && route.sessionId === session.sessionId;
   const routeObjectRef = routeIsCurrent && route.object ? objectToRef(route.object) : undefined;
@@ -696,14 +724,14 @@ export function App() {
   const diagramRelationship = tab === 'diagram' && route.object?.kind === 'relationship' ? { id: route.object.id, nonce: route.nonce } : null;
   const lineageTarget = tab === 'lineage' && routeObjectRef ? { ref: routeObjectRef, nonce: route.nonce } : null;
   const testTarget = tab === 'tests' && seed?.kind === 'test' && routeObjectRef ? { ref: routeObjectRef, nonce: route.nonce } : null;
-  // Which of Validation's two tabs the route asks for. `evidence` is a real route id, not a page: it is how
-  // an old link, a saved page and Validation's own Reports button all land on the same tab.
+  // Which of Checks's two tabs the route asks for. `evidence` is a real route id, not a page: it is how
+  // an old link, a saved page and Checks's own Reports button all land on the same tab.
   const validationTab: 'checks' | 'reports' = tab === 'evidence' ? 'reports' : 'checks';
   // The same shape for AI instructions' two tabs. `knowledge` is a real route id and not a page of its own
   // any more: it is how a deep link, the ask box, the Plan and every saved page still reach the Notes tab.
   const instructionsTab: InstructionsTab = tab === 'knowledge' ? 'notes' : 'instructions';
   // A DAX text handed to the Query page (seed kind 'daxText') is adopted once and acknowledged.
-  const daxTarget = tab === 'query' && seed?.kind === 'query' && routeObjectRef ? { ref: routeObjectRef, nonce: route.nonce }
+  const daxTarget = tab === 'query' && (seed?.kind === 'query' || seed?.kind === 'tryCalculation') && routeObjectRef ? { ref: routeObjectRef, nonce: route.nonce, run: seed.kind === 'tryCalculation' }
     : tab === 'query' && seed?.kind === 'daxText' ? { ref: '', dax: String(seed.value), nonce: route.nonce } : null;
   // A draft handed to Author arrives as the seed { kind: 'draft', value: '<dr id>' } (Edit in Workflows and Make it
   // reusable on a draft, lane U5).
@@ -770,7 +798,7 @@ export function App() {
       <TrialEndingLine hidden={tab === 'pro'} />
       {/* A test run can carry substantial cell evidence, so keep the view alive across Studio navigation instead
           of copying it into persisted webview state. The session key still discards it when a different model opens. */}
-      {session?.sessionId && <div className={tab === 'tests' || tab === 'evidence' ? 'h-full' : 'hidden'}><TestsView key={session.sessionId} navTarget={testTarget} onNavConsumed={consumeRouteSeed}
+      {session?.sessionId && <div className={(tab === 'tests' || tab === 'evidence') && !engineStarting && !engineDown ? 'h-full' : 'hidden'}><TestsView key={session.sessionId} navTarget={testTarget} onNavConsumed={consumeRouteSeed}
         page={validationTab} onPage={(next) => goTab(next === 'reports' ? 'evidence' : 'tests')}
         onOpenDaxLab={(ref) => goTab('query', undefined, ref)} onOpenSavedReports={() => goTab('evidence')} /></div>}
       {tab === 'pro' ? (
@@ -779,6 +807,8 @@ export function App() {
         <ProPage />
       ) : engineDown && !keepPlan ? (
         <EngineDown />
+      ) : engineStarting && !keepPlan ? (
+        <EngineStarting />
       ) : !session?.sessionId ? (
         <Empty onOpen={() => showConnections('open')} reconnectName={reconnectName} offer={reconnectOffer} />
       ) : featureGrant === 'denied' ? (
@@ -819,7 +849,7 @@ export function App() {
             goTab(tool, undefined, target);
           }} />
       ) : tab === 'evidence' ? (
-        // Reports is a TAB on Validation, not a page beside it, so the body is rendered by the always-mounted
+        // Reports is a TAB on Checks, not a page beside it, so the body is rendered by the always-mounted
         // TestsView above. Nothing here, for the same reason `tests` renders nothing here.
         null
       ) : tab === 'readiness' ? (
@@ -829,6 +859,7 @@ export function App() {
           {card?.caveat ? <ReadyBanner tone="warn">{card.caveat}</ReadyBanner> : null}
           {card?.ruleErrors?.length ? <ReadyBanner tone="warn">{card.ruleErrors.join(' · ')}</ReadyBanner> : null}
           {card ? <Hero card={card} trend={trend} busy={busy} onSafe={applySafeFixes} /> : <ReadyPanel><div className="sem-text-meta">Scanning model…</div></ReadyPanel>}
+          <LiveReadinessCheck<Scorecard> onScan={setCard} />
           {card && <Categories card={card} />}
           {/* No Model interview card here (Kane, 8 October 2026: the interview is hidden from the whole app; the
               engine and the assistant's tools keep it). docs/PLAN.md decisions log carries the exception. */}
@@ -866,6 +897,8 @@ export function App() {
           // Tests page with the context dropped. One line, on the line this hand-off already owned.
           onAddCheck={(ref) => goTab('tests', undefined, ref, undefined, { kind: 'test', value: ref })}
           onRename={(ref) => goTab('plan', undefined, ref)} onOpenWorkflow={openWorkflow} />
+      ) : tab === 'standard' ? (
+        <StandardView />
       ) : tab === 'copilottest' ? (
         <CopilotTestView />
       ) : tab === 'docs' ? (
@@ -1185,7 +1218,7 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
     : agentPolicy === null ? 'assistant permissions unavailable' : 'checking your assistant permissions';
   const publishLine = publishTarget ? `to ${publishTarget} · ${publishStage}` : 'no publish target · choose before publishing';
   const permissionDetail = agentPolicy ? `${agentPolicy.preset}: ${permissionPresetDescription(agentPolicy)}` : permissionLine;
-  const toolLabel = tab === 'pro' ? 'Semanticus Pro' : tab === 'permissions' ? 'Assistant permissions' : tab === 'compare' || tab === 'dataagent' ? 'Published' : tab === 'evidence' ? 'Validation' : tab === 'knowledge' ? 'AI instructions'
+  const toolLabel = tab === 'pro' ? 'Semanticus Pro' : tab === 'permissions' ? 'Assistant permissions' : tab === 'compare' || tab === 'dataagent' ? 'Published' : tab === 'evidence' ? 'Checks' : tab === 'knowledge' ? 'AI instructions'
     : tab === 'optimize' || tab === 'spec' ? 'Plan'
     : TAB_GROUPS.flatMap((item) => item.tabs).find((item) => item.id === tab)?.label ?? tab;
   const isSettings = route.destination === 'utility';
@@ -1389,7 +1422,7 @@ function AreaTabs({ group, tab, unseen, busyTabs, locked, onTab }: {
   group: (typeof TAB_GROUPS)[number]; tab: StudioTab; unseen: Set<string>; busyTabs: Set<string>;
   locked: Set<string>; onTab: (tool: string) => void;
 }) {
-  // Ids that are not places of their own: the legacy Published routes, Reports (a tab inside Validation),
+  // Ids that are not places of their own: the legacy Published routes, Reports (a tab inside Checks),
   // Notes (a tab inside AI instructions), Pending changes and Model Spec (views inside Plan), and Power Query (a
   // page of Advanced modelling). Each lights its host's segment.
   const visibleTab = tab === 'compare' || tab === 'dataagent' ? 'deploy' : tab === 'evidence' ? 'tests'
@@ -1617,6 +1650,7 @@ function Findings({ card, onRescan }: { card: Scorecard; onRescan: () => void })
             behind it is not drawn. Pressing the lit chip again clears it, so there is no "Any fix" chip. Under nine
             findings the row is not needed at all, the same rule findings.tsx uses for the level filter. */}
         <div className="mt-2"><GroupedFindings rows={rows} renderActions={actions} renderRuleActions={(ruleId) => ruleActions(ruleId)}
+          renderDetail={(r) => r.ruleId === 'AVG-OF-RATIO' ? <RatioFixChoice objectRef={r.objectRef} onChanged={onRescan} /> : null}
           extraFilters={activeFindings.length < FILTER_ROW_FROM ? undefined : (
             <div className="sem-seg flex-wrap" role="group" aria-label="Filter findings by who fixes them">
               {([['SafeFix', 'Safe', 'Fixes this app can apply on its own'], ['AiContent', 'AI', 'Wording your assistant can write'], ['Proposal', 'Review', 'Changes that need your decision']] as const)
@@ -1693,9 +1727,13 @@ function FeatureChecking() {
     </div>
   );
 }
-// The page when there is no engine. It replaces the body inside the Shell, so the header and the areas stay where
-// they were. Every button is a HOST command: nothing here can reach the engine, because there is no engine to reach.
-// Kane, 2026-09-15: "Tried restart engine and it broke everything. Engine not connected now and no way back."
+function EngineStarting() {
+  return <div className="h-full flex items-center justify-center p-8" data-testid="engine-starting">
+    <p role="status">Starting Semanticus...</p>
+  </div>;
+}
+
+// The page when a start failed. Every recovery button is a host command, so it works without an engine connection.
 function EngineDown() {
   return (
     <div className="h-full flex items-center justify-center p-8">

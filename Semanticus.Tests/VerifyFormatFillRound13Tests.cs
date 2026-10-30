@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.CompilerServices;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -85,12 +86,17 @@ namespace Semanticus.Tests
         {
             public volatile bool Silent;
             public SemaphoreSlim Hold;
+            public TaskCompletionSource<bool> Entered;
             public string Folder;   // a model folder id ("folder:Counts") Jev picks for every measure, or null for none
             public bool Available => true;
             public async Task<DecisionAnswers> AskAsync(DecisionRequest request, CancellationToken ct)
             {
                 var hold = Hold;
-                if (hold != null) { try { await hold.WaitAsync(TimeSpan.FromSeconds(60), ct); } catch { } }
+                if (hold != null)
+                {
+                    Entered?.TrySetResult(true);
+                    await hold.WaitAsync(ct);
+                }
                 if (Silent) return DecisionAnswers.NotDecided(request, "the service did not answer");
                 // m11/jev-batch: a table's objects arrive in one request, one question each, named "<plain>:<objectRef>".
                 if (request.PerQuestion)
@@ -110,19 +116,17 @@ namespace Semanticus.Tests
             }
         }
 
-        // Lean suite: the plain model (no extra step) is built once for the class and each test opens a copy; a test that adds its own
-        // extra step to the model still builds it in full.
-        private async Task<(DecisionFixture f, ByName jev)> JevModelAsync(Func<LocalEngine, Task> extra = null)
+        // Each scenario has a fixed setup across its theory rows. Build it once; every case opens a fresh copy.
+        private async Task<(DecisionFixture f, ByName jev)> JevModelAsync(Func<LocalEngine, Task> extra = null,
+            [CallerMemberName] string scenario = null)
         {
             var f = new DecisionFixture(TestEntitlements.Pro);
             var e = f.Engine;
-            if (extra == null) await _templates.OpenCopyAsync(f, "round13", BuildJevModelAsync, "Round13.bim");
-            else
+            await _templates.OpenCopyAsync(f, extra == null ? "round13" : "round13-" + scenario, async template =>
             {
-                await BuildJevModelAsync(f);
-                await extra(e);
-                await f.SaveAsAsync("Round13.bim");
-            }
+                await BuildJevModelAsync(template);
+                if (extra != null) await extra(template.Engine);
+            }, "Round13.bim");
             await f.ConsentAsync();
             var jev = new ByName();
             e.UseDecisionsForTest(new Semanticus.Engine.Decisions.DecisionService(jev, new DecisionBudget()));
@@ -131,9 +135,15 @@ namespace Semanticus.Tests
 
         private static async Task<ModelPlanView> SettledPlanAsync(DecisionFixture f, string door)
         {
-            await f.Engine.GetModelPlanAsync();
-            await f.Engine.JevSettledForTest();
-            return door == "mcp" ? await McpPlanWithDetailAsync(f.Engine) : await new EngineRpcTarget(f.Engine).getModelPlan();
+            for (var pass = 0; pass < 10; pass++)
+            {
+                await f.Engine.GetModelPlanAsync();
+                await f.Engine.JevSettledForTest();
+                var started = f.Engine.JevRunsStartedForTest;
+                var plan = door == "mcp" ? await McpPlanWithDetailAsync(f.Engine) : await new EngineRpcTarget(f.Engine).getModelPlan();
+                if (started == f.Engine.JevRunsStartedForTest) return plan;
+            }
+            throw new InvalidOperationException("The plan kept starting another decision run while its detail was read.");
         }
 
         /// <summary>The agent door reads a plan over 40,000 characters short, each row's lines and objects left out (PlanReadShape).
@@ -268,11 +278,14 @@ namespace Semanticus.Tests
                 var e = f.Engine;
                 var line = FormatLine(await SettledPlanAsync(f, door), "measure:Sales/Share");
                 Assert.True(line != null && line.Suggestion && !line.Kept, "precondition: Share's line is a suggestion");
-                jev.Hold = new SemaphoreSlim(0);   // Jev is slow: the old line stays listed while it works the new one out
+                using var hold = new SemaphoreSlim(0);
+                jev.Hold = hold;   // Jev is slow: the old line stays listed while it works the new one out
+                jev.Entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
                 try
                 {
                     await e.SetDaxAsync("measure:Sales/Share", "SUM ( Sales[Amount] )", "human");
                     await e.GetModelPlanAsync();
+                    await jev.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
                     var listed = (await e.GetPlanAsync()).Items.FirstOrDefault(i => i.Id == line.PlanItemId);
                     Assert.True(listed != null && listed.ProposedAtRevision < f.Sessions.Require().Revision,
                         "precondition: the Pending changes panel still lists the line worked out for the ratio");
@@ -284,7 +297,7 @@ namespace Semanticus.Tests
                         // The person's Apply on that row of Pending changes, or the assistant's apply_plan with the line's id.
                         _ = door == "mcp" ? await McpTools.ApplyPlan(e, new[] { line.PlanItemId }) : await new EngineRpcTarget(e).applyPlan(new[] { line.PlanItemId });
                 }
-                finally { jev.Hold.Release(1000); jev.Hold = null; }
+                finally { jev.Hold = null; hold.Release(1000); await e.JevSettledForTest(); }
                 if (how.StartsWith("Run the plan", StringComparison.Ordinal))
                 {
                     await RunThePlanAsync(f, door);

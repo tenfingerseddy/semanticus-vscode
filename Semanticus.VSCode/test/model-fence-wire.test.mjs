@@ -81,6 +81,8 @@ test('the engine connection stamps the model on the wire, and the Studio relay, 
   assert.match(extension, /withModelIdentity\(named, \(\) => caller\.sendRequest\(msg\.method\)\)/, '...with or without parameters');
   assert.match(extension, /withModelIdentity\(msg\.model, \(\) => conn\.sendRequest<SetResult \| undefined>\(call\.method, \.\.\.call\.args\)\)/, 'the Properties grid names the model its words were typed on');
   assert.match(extension, /withModelIdentity\(openedOn, \(\) => conn!\.sendRequest\('applySchemaUpdate'/, 'the Update Schema panel names the model it was opened on');
-  // no other relay of a page's request may skip it: the only `msg.method` sends are the two above
-  assert.equal((extension.match(/sendRequest\(msg\.method/g) ?? []).length, 2);
+  assert.match(extension, /withModelIdentity\(msg\.model, \(\) => args\.length\s*\? conn\.sendRequest\(msg\.method, ParameterStructures\.byPosition, \.\.\.args\)\s*: conn\.sendRequest\(msg\.method\)\)/,
+    'Properties marks name their model, with or without arguments');
+  // Both Studio and Properties marks have a positional path and a parameterless path.
+  assert.equal((extension.match(/sendRequest\(msg\.method/g) ?? []).length, 4);
 });

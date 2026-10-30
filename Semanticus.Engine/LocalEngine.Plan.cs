@@ -1564,6 +1564,10 @@ namespace Semanticus.Engine
             public string ModelName;
             public SessionInfo Session;
 
+            /// <summary>The checks part of the model's standard, read fresh on every call (the file moves without the revision moving).
+            /// Null means no filter.</summary>
+            public StandardChecks StandardChecks;
+
             /// <summary>The session <see cref="Session"/> describes and how many saves that wrote edits it had made, read in the same
             /// dispatcher turn as its HasUnsavedChanges. "Save the changes you have made" is judged against these and
             /// never against the session's live count, which a save landing while the plan is composed has already
@@ -1795,6 +1799,8 @@ namespace Semanticus.Engine
             facts.ReportsNeedingChecking = basis.Coverage?.Unchecked?.Length ?? 0;
             facts.ReportsUnchecked = basis.Coverage?.Unchecked ?? Array.Empty<string>();
             facts.Tables = WithSizes(facts.Tables, s);
+            try { facts.StandardChecks = StandardStore.Resolve(s.SourcePath).Effective.Checks; }
+            catch { /* an unreadable standard file is the preset: no filter */ }
 
             // The compatibility level is a database setting the edit timeline does not count: raising it leaves the revision where it was, so the
             // remembered half would go on offering "Raise compatibility level" after it was raised. Read every call, like the saved checks.
@@ -2132,7 +2138,9 @@ namespace Semanticus.Engine
             // A finding whose object a live Jev family decided is not the rule's to act on here (JevDecidedFinding): a safe
             // fix is not its to make and a proposal not its to offer, because the family's row makes that change for the
             // column. The scan itself is never filtered.
-            var open = (f.Readiness?.Findings ?? Array.Empty<ReadinessFinding>()).Where(x => !x.Waived || countDeclined).ToArray();
+            // The model's standard decides which checks become tasks (checks: level, off, must). It never touches the scan or the grade.
+            var open = (f.Readiness?.Findings ?? Array.Empty<ReadinessFinding>()).Where(x => !x.Waived || countDeclined)
+                .Where(x => StandardChecksFilter.Keeps(f.StandardChecks, x.RuleId, x.Severity)).ToArray();
             var findings = open
                 .Where(x => decidedByJev == null || !decidedByJev(x.RuleId, x.ObjectRef))
                 .ToArray();

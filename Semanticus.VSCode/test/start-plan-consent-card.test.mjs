@@ -29,10 +29,10 @@ for (const line of strings) {
 
 assert.match(copy, /title: 'Let Pro see this source\?'/, 'the card does not ask the question it is for');
 assert.match(copy, /Also let Pro see \$\{joinNames\(names\)\}\?/, 'the card does not ask "Also let Pro see ...?" when a table is added');
-assert.match(copy, /sampleOn: 'It also sees counts and patterns worked out from a sample of rows\. It never sees the rows\.'/,
-  'the sample line is not the promised one: counts and patterns, never rows');
-assert.match(copy, /never: \[[^\]]*'rows or values from any table'[^\]]*'tables you left out'/s,
-  'the card does not say that rows and left-out tables never go');
+assert.match(copy, /sampleOn: 'It also sees counts and patterns from a source sample\. Source sample rows stay on your computer\.'/,
+  'the sample line must distinguish source sample rows from Totals probe rows');
+assert.match(copy, /never: \[[^\]]*'source table rows themselves'[^\]]*'tables you left out'[^\]]*'your connection or credentials'[^\]]*'anything beyond the fields you allow'/s,
+  'the card must exclude source rows, left-out tables, credentials and fields beyond the disclosure');
 
 // ---- what it does, in order -----------------------------------------------------------------------
 const agree = /const agreeStartPlan = \(\) => \{([\s\S]*?)\n  \};/.exec(card);

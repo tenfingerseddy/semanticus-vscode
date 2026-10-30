@@ -14,7 +14,7 @@ function postToHostStamped(message: { type: string } & Record<string, unknown>):
   vscode.postMessage({ ...message, modelIdentity: pageModelIdentity() });
 }
 
-type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: number };
+type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: number; progress?: () => void };
 const pending = new Map<number, Pending>();
 let seq = 0;
 
@@ -41,8 +41,10 @@ function observeRpc(event: RpcObservation): void {
 // The host wire protocol is unchanged.
 const RPC_DEFAULT_TIMEOUT_MS = 30_000;
 const RPC_LONG_TIMEOUT_MS = 10 * 60_000;
-const LONG_RPC = /^(deploy|cicd|analyze|listReports|listWorkspaces|listDataAgents|listDeploymentPipelines|getDataAgent|getPipelineStages|createDataAgent|updateDataAgent|publishDataAgent|deleteDataAgent|generateDataAgentConfig|autogenerateSpecFrom|buildModelFromSpec|previewDeploy|previewTable|runDax|runSql|runTests|runInterview|evaluateAndLog|explainValue|tryTest|testSqlSource|profileDax|benchmark|verifyEquivalence|refreshPartition|captureQueryPlan|optimizeMeasure|aiReadinessScanLive|vertiPaqScan|exportVpax|applySchemaUpdate|diffSchema|getSourceSchema|makeModelAiReady|proposePlan|applyPlanItems|getModelPlan|fabricGit|connectLocal|connectXmla|openLive|openLocal|prepareWorkingCopy|gitPush|gitPull|gitClone|compareModels|applyDiff|daxLib|startModelFromSql|buildStartPlan|publishNewModel)/;
-function rpcTimeoutMs(method: string): number {
+const LONG_RPC = /^(setupCalendars|deploy|cicd|analyze|listReports|listWorkspaces|listDataAgents|listDeploymentPipelines|getDataAgent|getPipelineStages|createDataAgent|updateDataAgent|publishDataAgent|deleteDataAgent|generateDataAgentConfig|autogenerateSpecFrom|buildModelFromSpec|previewDeploy|previewTable|runDax|runSql|runTests|getChecksPage|runInterview|evaluateAndLog|explainValue|tryTest|testSqlSource|profileDax|benchmark|verifyEquivalence|refreshPartition|captureQueryPlan|optimizeMeasure|aiReadinessScanLive|vertiPaqScan|exportVpax|applySchemaUpdate|diffSchema|getSourceSchema|makeModelAiReady|proposePlan|applyPlanItems|getModelPlan|fabricGit|connectLocal|connectXmla|openLive|openLocal|prepareWorkingCopy|gitPush|gitPull|gitClone|compareModels|applyDiff|daxLib|startModelFromSql|buildStartPlan|publishNewModel)/;
+const measurePlanTimeouts = new Map<string, number>();
+function rpcTimeoutMs(method: string, params: unknown[] = []): number {
+  if (method === 'runMeasurePlan') return measurePlanTimeouts.get(String(params[0])) ?? RPC_LONG_TIMEOUT_MS;
   return LONG_RPC.test(method) ? RPC_LONG_TIMEOUT_MS : RPC_DEFAULT_TIMEOUT_MS;
 }
 
@@ -265,7 +267,7 @@ export function onReconnect(fn: (by: ReconnectBy) => void): () => void {
 // The host asks the webview to navigate to a tab (optionally selecting a target object) — e.g. a Model-tree
 // right-click "Preview data" jumps to the Data tab and previews that table. `addTables` carries the tables a
 // "Add to Studio Diagram" right-click should drop onto the Diagram canvas. Host→webview, not an engine RPC.
-export type NavigateMessage = { tab: string; target?: string; addTables?: string[]; sessionId?: string };
+export type NavigateMessage = { tab: string; target?: string; addTables?: string[]; sessionId?: string; prompt?: string; run?: boolean };
 const navigateListeners = new Set<(m: NavigateMessage) => void>();
 export function onNavigate(fn: (m: NavigateMessage) => void): () => void {
   navigateListeners.add(fn);
@@ -337,8 +339,8 @@ export function onConnectionChange(fn: () => void): () => void {
 // back empty, and the page fell through to the same "Open a model to begin" placeholder whose only button ALSO needs
 // the engine. The host announces both transitions and answers this on 'studioReady', so a panel that mounts while
 // the engine is down learns the truth instead of inferring it from a rejection.
-const engineStateListeners = new Set<(connected: boolean, reason?: string) => void>();
-export function onEngineState(fn: (connected: boolean, reason?: string) => void): () => void {
+const engineStateListeners = new Set<(connected: boolean, reason?: string, starting?: boolean) => void>();
+export function onEngineState(fn: (connected: boolean, reason?: string, starting?: boolean) => void): () => void {
   engineStateListeners.add(fn);
   return () => { engineStateListeners.delete(fn); };
 }
@@ -443,6 +445,14 @@ export function firstRunClose(mode: 'assistant' | 'hand' | 'tour'): void {
   postToHostStamped({ type: 'firstRunClose', mode });
 }
 
+// The engine's check state push (checks/didChange): the states that changed, each with its version. Keep is an engine call
+// (keepMeasureEdit), so every window and the assistant read it; the page keeps the newest version per measure.
+const checkStateListeners = new Set<(v: unknown) => void>();
+export function onCheckState(fn: (v: unknown) => void): () => void {
+  checkStateListeners.add(fn);
+  return () => { checkStateListeners.delete(fn); };
+}
+
 // Whether the Pro permission card may ask about model `scope` now. The host keeps that memory for the window's run
 // (src/consentAsks.ts), because this page is rebuilt each time Studio is closed and reopened. An answer that never
 // comes settles to no: a card that cannot be remembered as asked must not interrupt anyone.
@@ -527,6 +537,12 @@ window.addEventListener('message', (e: MessageEvent) => {
     if (r) { firstRunConnectPending.delete(msg.id); r({ ok: msg.ok === true, error: typeof msg.error === 'string' ? msg.error : undefined, note: typeof msg.note === 'string' ? msg.note : undefined, needsFolder: msg.needsFolder === true }); }
     return;
   }
+  if (msg.type === 'checkState') {
+    // A check state push is the long run's progress: it keeps a runMeasurePlan call from timing out while rows land.
+    pending.forEach(p => p.progress?.());
+    checkStateListeners.forEach((l) => { try { l(msg.payload); } catch { /* isolate a view's handler */ } });
+    return;
+  }
   if (msg.type === 'consentAsk') {
     const r = consentAskPending.get(msg.id);
     if (r) { consentAskPending.delete(msg.id); r(msg.ask === true); }
@@ -597,7 +613,7 @@ window.addEventListener('message', (e: MessageEvent) => {
   } else if (msg.type === 'driveMode') {
     if (msg.mode === 'claudeDrives' || msg.mode === 'iDrive') { const mode: DriveMode = msg.mode; driveModeListeners.forEach((l) => { try { l(mode, typeof msg.assistantConnected === 'boolean' ? msg.assistantConnected : undefined); } catch { /* isolate a view's handler */ } }); }
   } else if (msg.type === 'navigate') {
-    const m: NavigateMessage = { tab: msg.tab, target: msg.target, addTables: msg.addTables, sessionId: typeof msg.sessionId === 'string' ? msg.sessionId : undefined };
+    const m: NavigateMessage = { tab: msg.tab, target: msg.target, addTables: msg.addTables, sessionId: typeof msg.sessionId === 'string' ? msg.sessionId : undefined, run: msg.run === true };
     navigateListeners.forEach((l) => { try { l(m); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'proState') {
     const state = msg.state as ProPageStateMessage;
@@ -615,7 +631,7 @@ window.addEventListener('message', (e: MessageEvent) => {
   } else if (msg.type === 'engineState') {
     const connected = !!msg.connected;
     const reason = typeof msg.reason === 'string' && msg.reason ? msg.reason : undefined;   // why a start failed, in a sentence a person can read
-    engineStateListeners.forEach((l) => { try { l(connected, reason); } catch { /* isolate a view's handler */ } });
+    engineStateListeners.forEach((l) => { try { l(connected, reason, msg.starting === true); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'reconnectPending') {
     const name = typeof msg.name === 'string' && msg.name ? msg.name : null;
     const offer = msg.offer === true;   // the last model offered to a window with no folder, not one waiting for a sign-in
@@ -819,6 +835,11 @@ export function openExternal(url: string): void {
   postToHostStamped({ type: 'openExternal', url });
 }
 
+// Open a file on this computer in VS Code's editor. The host only opens a file that exists.
+export function openFileInEditor(path: string): void {
+  postToHostStamped({ type: 'openFileInEditor', path });
+}
+
 // Licensing always routes through the native command. The host reads the engine-owned account URL and applies
 // the HTTPS guard; the sandboxed webview never owns or duplicates a checkout/customer-portal address.
 export function manageLicense(): void {
@@ -856,12 +877,29 @@ function send<T>(pressed: boolean, method: string, params: unknown[]): Promise<T
   return new Promise<T>((resolve, reject) => {
     observeRpc({ id, method, params, phase: 'start' });
     const end = (result?: unknown, error?: unknown) => observeRpc({ id, method, params, phase: 'end', result, error });
-    const succeed = (v: unknown) => { end(v); resolve(v as T); };
+    const succeed = (v: unknown) => {
+      if (method === 'planMeasureRun') {
+        const plan = v as { id?: string; estimatedSeconds?: number; includePerformance?: boolean };
+        if (plan?.id && Number.isFinite(plan.estimatedSeconds)) {
+          // Timing adds six query runs per measure. Keep the same allowance as the plan's displayed estimate.
+          const seconds = (plan.estimatedSeconds ?? 0) * (plan.includePerformance ? 3 : 1);
+          if (measurePlanTimeouts.size >= 32) measurePlanTimeouts.delete(measurePlanTimeouts.keys().next().value!);
+          measurePlanTimeouts.set(plan.id, Math.max(RPC_LONG_TIMEOUT_MS, seconds * 3_000 + 60_000));
+        }
+      }
+      end(v); resolve(v as T);
+    };
     const fail = (error: Error) => { end(undefined, error); reject(error); };
-    const timer = window.setTimeout(() => {
-      if (pending.delete(id)) fail(new Error(`Semanticus: no response to "${method}" within ${Math.round(rpcTimeoutMs(method) / 1000)}s. The engine may be busy or disconnected. If this was a change it may still complete. Check the Semanticus output before retrying.`));
-    }, rpcTimeoutMs(method));
-    pending.set(id, { resolve: succeed, reject: fail, timer });
+    const timeout = rpcTimeoutMs(method, params);
+    const expired = () => {
+      if (pending.delete(id)) fail(new Error(`Semanticus: no response to "${method}" within ${Math.round(timeout / 1000)}s. The engine may be busy or disconnected. If this was a change it may still complete. Check the Semanticus output before retrying.`));
+    };
+    const request: Pending = { resolve: succeed, reject: fail, timer: window.setTimeout(expired, timeout) };
+    if (method === 'runMeasurePlan') request.progress = () => {
+      window.clearTimeout(request.timer);
+      request.timer = window.setTimeout(expired, timeout);
+    };
+    pending.set(id, request);
     // Every request names the model this page is showing; the engine refuses a write whose page is not on the open model (pagemodel.ts). One place, so no editor can forget it.
     postToHostStamped(pressed ? { type: 'rpc', id, method, params, pressed: true } : { type: 'rpc', id, method, params });
   });

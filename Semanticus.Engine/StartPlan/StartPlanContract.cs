@@ -195,6 +195,9 @@ namespace Semanticus.Engine.StartPlan
         public string Point { get; set; }
         /// <summary>The assistant's words, when this line carries them.</summary>
         public string Word { get; set; }
+        /// <summary>Who wrote the Description. Keeping or dropping a line changes DecidedBy, never this author.</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string DescriptionBy { get; set; }
         /// <summary>The decide round that last set it.</summary>
         public int Round { get; set; }
         public bool Kept { get; set; } = true;

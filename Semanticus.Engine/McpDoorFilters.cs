@@ -47,7 +47,7 @@ namespace Semanticus.Engine
             "create_calculated_column", "create_calculated_table", "create_calculation_group", "create_calculation_item", "create_column",
             "create_directlake_table", "create_field_parameter", "create_function", "create_hierarchy", "create_import_table",
             "create_measure", "create_measures", "create_named_expression", "create_perspective", "create_relationship", "create_role",
-            "create_table", "define_calendar", "define_calendar_from_template", "delete_calendar", "delete_object", "delete_objects",
+            "create_table", "add_time_measures", "define_calendar", "define_calendar_from_template", "delete_calendar", "delete_object", "delete_objects",
             "delete_role", "duplicate_object", "duplicate_objects", "edit_objects", "fix_them", "generate_date_table",
             "generate_time_intelligence", "make_model_ai_ready", "mark_date_table", "model_plan_action", "remove_incremental_refresh_policy",
             "remove_safe_objects", "rename_display_folder", "rename_object", "replace_in_object", "set_ai_data_schema", "set_ai_instructions",
@@ -56,7 +56,7 @@ namespace Semanticus.Engine
             "set_measure_format", "set_measure_format_expression", "set_object_permissions", "set_partition_m", "set_perspective_member",
             "set_perspective_members", "set_properties", "set_property", "set_relationship_active", "set_relationship_cardinality",
             "set_relationship_crossfilter", "set_role_member", "set_role_permission", "set_sort_by_column", "set_summarize_by",
-            "set_synonyms", "set_table_ols", "set_table_permission", "tag_calendar_column", "update_measure", "update_named_expression",
+            "set_synonyms", "set_table_ols", "set_table_permission", "setup_calendars", "tag_calendar_column", "update_measure", "update_named_expression",
             "write_words",
         };
 

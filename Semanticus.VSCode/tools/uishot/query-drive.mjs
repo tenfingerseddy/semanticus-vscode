@@ -298,7 +298,7 @@ try {
     await press(page, t('new-query'));
     expect(await has(page, t('dax-card')), 'free: New query opens a row with its DAX view');
     await shoot(page, '13-free-new', 'Free, a new query: Fields or DAX', { check: true });
-    await press(page, t('mode-dax')); await press(page, t('dax-run')); await wait(1500);
+    await press(page, t('mode-dax')); await page.click('.cm-content'); await page.keyboard.type('EVALUATE ROW("x", 1)'); await press(page, t('dax-run')); await wait(1500);   // there is no placeholder query since 18 Oct: the person types one
     const sent = await methods(page);
     expect(!sent.some((m) => ['askData', 'listDataQuestions', 'pickChartKind'].includes(m)), 'free: no askData, listDataQuestions or pickChartKind call: ' + sent.filter((m) => ['askData', 'listDataQuestions', 'pickChartKind'].includes(m)).join(','));
     expect(sent.includes('runDax') && sent.includes('recordQueryRun'), 'free: the query runs and is kept as a row');

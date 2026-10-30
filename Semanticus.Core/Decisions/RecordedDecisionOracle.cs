@@ -44,6 +44,7 @@ namespace Semanticus.Decisions
 
         private readonly Dictionary<string, Entry> _byDigest = new Dictionary<string, Entry>(StringComparer.Ordinal);
         private readonly List<string> _asked = new List<string>();
+        private readonly List<(string PointName, string Digest)> _askedRequests = new List<(string, string)>();
         private readonly object _gate = new object();
         private readonly JsonDocument _document;
 
@@ -110,13 +111,23 @@ namespace Semanticus.Decisions
             get { lock (_gate) { return _asked.ToList(); } }
         }
 
+        /// <summary>Every requested point and digest, in order. Replay tests use this without changing the oracle or its cache version.</summary>
+        public IReadOnlyList<(string PointName, string Digest)> AskedRequests
+        {
+            get { lock (_gate) { return _askedRequests.ToList(); } }
+        }
+
         public int AskCount { get { lock (_gate) { return _asked.Count; } } }
 
         public Task<DecisionAnswers> AskAsync(DecisionRequest request, CancellationToken ct)
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
 
-            lock (_gate) _asked.Add(request.Digest);
+            lock (_gate)
+            {
+                _asked.Add(request.Digest);
+                _askedRequests.Add((request.PointName, request.Digest));
+            }
 
             if (ct.IsCancellationRequested)
                 return Task.FromResult(DecisionAnswers.NotDecided(request, "the request was cancelled before it was answered"));

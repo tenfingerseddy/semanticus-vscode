@@ -26,6 +26,7 @@
 //   - the `font` shorthand is not parsed, so a size inside it is not seen;
 //   - an inline style value held in a variable or computed by an expression is not evaluated;
 //   - HTML strings built in .ts files (docrender.ts and similar) are not read;
+//   - a raw colour (hex, rgb(), hsl(), a named colour) is read in webview/src/checked.css and checks-page.css only;
 //   - height is checked on controls only: CSS selectors naming a button, input, select, textarea or a
 //     btn/chip/pill/seg/tab/control/field class, and <button>/<input>/<select>/<textarea> in JSX.
 import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
@@ -56,6 +57,31 @@ const CONTROL_PX = new Set([20, 24, 28]);
 const CSS_PROPS = /^(padding(-(top|right|bottom|left|inline|block|inline-start|inline-end|block-start|block-end))?|margin(-(top|right|bottom|left|inline|block|inline-start|inline-end|block-start|block-end))?|gap|row-gap|column-gap|grid-gap|font-size|line-height|border(-(top|bottom|start|end)-(left|right|start|end))?-radius|height|min-height)$/;
 const CONTROL_SELECTOR = /(^|[^\w-])(button|input|select|textarea)\b|btn|chip|pill|seg|(^|[^\w])tab\b|-tab\b|control|field/i;
 const KEYWORDS = new Set(['0', 'auto', 'inherit', 'initial', 'unset', 'revert', 'none']);
+
+// RAW COLOURS, in the Checked stylesheets only. The Checked page takes every colour from a token or the VS Code theme, so a hex,
+// rgb(), hsl() or named colour anywhere in its declarations (a var() fallback included, as NT1-04 counted) is a violation. The
+// rest of the tree is not read for colour: it holds older colours that no baseline counts, and tokens.css, where colours are
+// defined, is never scanned. `transparent` and `currentColor` name no colour of their own, so they pass.
+const COLOUR_FILES = new Set(['checked.css', 'checks-page.css']);
+const NAMED_COLOURS = new Set(('aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood '
+  + 'cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey '
+  + 'darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey '
+  + 'darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite '
+  + 'gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon '
+  + 'lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue '
+  + 'lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid '
+  + 'mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin '
+  + 'navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff '
+  + 'peru pink plum powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver '
+  + 'skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow '
+  + 'yellowgreen').split(' '));
+// Names of custom properties and quoted text are removed first, so var(--red) and content: "red" are not read as colours.
+const isRawColour = (value) => {
+  const v = value.replace(/"[^"]*"|'[^']*'/g, ' ').replace(/url\([^)]*\)/g, ' ').replace(/--[\w-]+/g, ' ');
+  if (/#[0-9a-fA-F]{3,8}\b/.test(v)) return true;
+  if (/\b(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\s*\(/i.test(v)) return true;
+  return (v.toLowerCase().match(/[a-z]+/g) ?? []).some((w) => NAMED_COLOURS.has(w));
+};
 
 export const formatViolation = (v) => `${v.file}:${v.line} ${v.selector} ${v.prop} ${v.value}`;
 
@@ -110,11 +136,17 @@ export function scanCss(text, file, tokens) {
   const stack = [];
   let start = 0;
   const lineAt = (i) => src.slice(0, i).split('\n').length;
+  const colours = COLOUR_FILES.has(file.split('/').pop());
   const checkDecl = (from, to) => {
     const raw = src.slice(from, to);
     const colon = raw.indexOf(':');
     if (colon === -1) return;
     const prop = raw.slice(0, colon).trim().toLowerCase();
+    if (colours && isRawColour(raw.slice(colon + 1))) {
+      const lead = raw.length - raw.trimStart().length;
+      out.push({ file, line: lineAt(from + lead), selector: stack[stack.length - 1] ?? '', prop, value: raw.slice(colon + 1).trim() });
+      return;
+    }
     if (prop.startsWith('--') || !CSS_PROPS.test(prop)) return;
     const selector = stack[stack.length - 1] ?? '';
     if ((prop === 'height' || prop === 'min-height') && !CONTROL_SELECTOR.test(selector)) return;

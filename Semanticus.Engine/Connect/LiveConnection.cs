@@ -15,7 +15,7 @@ namespace Semanticus.Engine
     /// All ADOMD access is serialized on a dedicated query thread (separate from the model writer),
     /// so a slow EVALUATE never blocks edits, and the connection is touched by one thread only.
     /// </summary>
-    public sealed class LiveConnection : IDisposable
+    public sealed partial class LiveConnection : IDisposable
     {
         private readonly Adomd.AdomdConnection _conn;
         private readonly Func<string, CancellationToken, ResultSet> _executeForTest;
@@ -194,6 +194,11 @@ namespace Semanticus.Engine
         /// crash class the ceiling guards against.</summary>
         public async Task<ResultSet> ExecuteAsync(string query, int maxRows, int commandTimeoutSeconds, System.Threading.CancellationToken ct)
         {
+            using var runCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct,
+                MeasureRunTokens.Value?.Connection == this ? MeasureRunTokens.Value.Token : CancellationToken.None);
+            ct = runCancellation.Token;
+            ct.ThrowIfCancellationRequested();
+            query = ApplyMarkQuery(query);
             try { return await RunExclusiveAsync(() => ExecuteWithinExclusiveAsync(query, maxRows, commandTimeoutSeconds, ct)).ConfigureAwait(false); }
             catch (Azure.Identity.AuthenticationFailedException)
             {

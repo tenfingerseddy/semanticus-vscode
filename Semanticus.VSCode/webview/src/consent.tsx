@@ -85,8 +85,8 @@ export interface DecisionPointW {
 // 23 September (F-231): "What goes" gained the typed questions, because the ask box sends the words a
 // person types and a typed question can carry a value. Kane chose to name them on the card. The engine's
 // consent version went to 3 in the same change (DecisionRegistry.ConsentSchemaVersion), so a person who
-// agreed to the three-line card sees this one once more. The formula text is NOT on the card because it
-// is no longer sent (F-229): the measure point sends facts worked out from it instead.
+// agreed to the three-line card sees this one once more. Folder and format suggestions send derived formula facts
+// (F-229). Version 7 also covers formula text for the Description score and Totals, and probe rows for Totals Fit.
 //
 // 25 September (composer lane L5, F-231's rule): Jev drafting sends the words a person types to describe a task (the
 // Plan field, Ctrl J) or a workflow (Describe it in words), so the card names them too. New copy, for Kane's sweep.
@@ -104,15 +104,17 @@ export interface DecisionPointW {
 // date. It gets its own line. New copy, for Kane's sweep.
 const CARD = {
   title: 'Let Pro decide for this model?',
-  lead: "To rank the plan and answer questions, Semanticus sends this model's shape to the advice service. It never sends your data.",
+  lead: "Semanticus sends model details to Jev with your permission. The Description score and Totals send formulas. Totals Fit also sends chosen probe rows and totals.",
   goesTitle: 'What goes',
-  goes: ['table, column and measure names', 'data types, formats, folders', 'counts and relationships',
+  goes: ['table, column and measure names', 'data types, formats, folders', 'counts, relationships and facts about formulas',
     'the questions you type into the ask box', 'the words you type to describe a task',
     'the words of your data questions', 'measure and column descriptions, when you ask about your data',
     'other names the model gives a measure, when your data question uses one',
-    'how a data question was read, in the words of the question, with no values or dates'],
+    'how a data question was read, in the words of the question, with no values or dates',
+    'the name, Description and formula for the Description score and Totals',
+    'for the Totals Fit question: the expected total rule, grouping column, calculated facts, probe rows and total. Each probe row contains a member name and a measure value.'],
   neverTitle: 'What never goes',
-  never: ['rows or values from any table', 'your connection or credentials', 'anything from other models'],
+  never: ['table rows outside the chosen totals probes', 'your connection or credentials', 'anything from other models'],
   notNow: 'Not now',
   ok: 'OK for this model',
 };
@@ -130,17 +132,17 @@ export const START_CARD = {
   alsoTitle: (names: string[]) => `Also let Pro see ${joinNames(names)}?`,
   lead: (source: string) => `To plan this model, Pro reads the shape of ${source}, and only the tables listed here.`,
   tablesTitle: 'Tables Pro will see',
-  sampleOn: 'It also sees counts and patterns worked out from a sample of rows. It never sees the rows.',
-  sampleOff: 'No sample of rows is used.',
-  sampleReading: 'A sample of rows is being read on your computer. Pro would see only counts and patterns from it, never the rows.',
-  sampleSome: (names: string[]) => `It also sees counts and patterns worked out from a sample of the rows of ${joinNames(names)}. It never sees the rows.`,
-  sampleNone: 'No sample of rows goes to Pro for these tables, because you refused each one.',
+  sampleOn: 'It also sees counts and patterns from a source sample. Source sample rows stay on your computer.',
+  sampleOff: 'No source sample is used.',
+  sampleReading: 'A source sample is being read on your computer. Pro would see counts and patterns. Source sample rows stay here.',
+  sampleSome: (names: string[]) => `It also sees counts and patterns from a source sample of ${joinNames(names)}. Source sample rows stay on your computer.`,
+  sampleNone: 'No sample facts go to Pro, because you refused each table.',
   tableOut: 'Leave this table out', tablePutBack: 'Put it back',
-  tableSample: 'Send counts and patterns from its sample', tableSampleHint: 'Turn off to let Pro see this table\'s names and settings and nothing worked out from its rows.',
+  tableSample: 'Send counts and patterns from its sample', tableSampleHint: 'Turn off to exclude counts and patterns from this source sample. Model advice still follows the model permission.',
   tableLeftOut: 'Left out. Pro does not see it.',
   neverTitle: 'What never goes',
-  never: ['rows or values from any table', 'tables you left out', 'your connection or credentials'],
-  alsoForModel: 'Because you have not yet said yes for this model, this also lets Pro decide for it. This is everything it may be sent:',
+  never: ['source table rows themselves', 'tables you left out', 'your connection or credentials', 'anything beyond the fields you allow'],
+  alsoForModel: 'This also allows model advice, including the Description score and Totals. These fields may go:',
   notNow: 'Not now',
   ok: 'OK, let Pro see these',
   alsoOk: 'OK, add it',

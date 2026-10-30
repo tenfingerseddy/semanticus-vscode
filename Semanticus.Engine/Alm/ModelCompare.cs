@@ -205,6 +205,7 @@ namespace Semanticus.Engine
             // flagged Delete+Create like any tagged kind). Name is the fallback when the tag is empty on both sides.
             CompareCollection(left.Expressions.Cast<TOM.NamedExpression>(), right.Expressions.Cast<TOM.NamedExpression>(), e => e.Name, e => LineageOf(e), "Expression", null, null, null, items, false);
 
+            AddRenameDependencies(items, right);
             return new ModelDiff
             {
                 LeftLabel = leftLabel,
@@ -215,6 +216,34 @@ namespace Semanticus.Engine
                 Equal = items.Count(i => i.Action == "Equal"),
                 Items = (includeEqual ? items : items.Where(i => i.Action != "Equal")).ToArray(),
             };
+        }
+
+        private static void AddRenameDependencies(List<ModelDiffItem> items, TOM.Model right)
+        {
+            var renames = items.Where(i => i.ObjectType == "Column" && i.Action == "Update"
+                && !string.Equals(i.Name, i.TargetName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (renames.Length == 0) return;
+            var measureNames = new HashSet<string>(right.Tables.SelectMany(t => t.Measures).Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
+            foreach (var item in items.Where(i => i.ObjectType == "Measure" && i.Action == "Update"))
+            {
+                var measure = right.Tables.Find(item.TargetTable)?.Measures.Find(item.TargetName);
+                if (measure == null) continue;
+                var names = Lineage.ReportMeasureReferences.Read(measure.Expression);
+                names.AddRange(Lineage.ReportMeasureReferences.Read(measure.FormatStringDefinition?.Expression));
+                item.RenameDependencies = renames.Where(rename => names.Any(name =>
+                    string.Equals(name.Name, rename.TargetName, StringComparison.OrdinalIgnoreCase)
+                    && (name.Table != null
+                        ? string.Equals(name.Table, rename.TargetTable, StringComparison.OrdinalIgnoreCase)
+                        : !measureNames.Contains(name.Name) && string.Equals(item.TargetTable, rename.TargetTable, StringComparison.OrdinalIgnoreCase))))
+                    .Select(rename => rename.Ref).Distinct(StringComparer.Ordinal).ToArray();
+            }
+        }
+
+        internal static string RenameBreakNote(IEnumerable<ModelDiffItem> items, IEnumerable<string> selectedRefs, string destination)
+        {
+            var selected = new HashSet<string>(selectedRefs, StringComparer.Ordinal);
+            return string.Join(" ", items.Where(i => !selected.Contains(i.Ref) && i.RenameDependencies.Any(selected.Contains))
+                .Select(i => $"Publishing this rename without {i.Name} breaks {i.Name} on {destination}."));
         }
 
         // type = the display ObjectType ("Measure"…); the ref kind is its lowercase form ("measure"…). srcTable/tgtTable

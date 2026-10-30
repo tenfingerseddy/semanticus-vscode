@@ -27,6 +27,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Semanticus.Core\Semanticus.Core.csproj" />
     <ProjectReference Include="..\Semanticus.Analysis\Semanticus.Analysis.csproj" />
+    <ProjectReference Include="..\Semanticus.Dax\Semanticus.Dax.csproj" />
   </ItemGroup>
 
   <!-- Reads the YAML interiors of format-v2 workflow files (WorkflowParser.cs). Pinned: MIT verified at

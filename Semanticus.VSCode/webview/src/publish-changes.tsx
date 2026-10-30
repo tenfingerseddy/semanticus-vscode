@@ -9,6 +9,7 @@ import { KIND_ICON, ReviewCardBody } from './diffview';
 import {
   assistantPublish, assistantPublishLine, assistantPublishUndo, checkingCopy, leftAfterPublish, clockTime, failureReasons, groupRows, isRemoval, neededParent, notPublishedLine, nothingToPublishCopy,
   brokenRoleLine, couldNotGoLine, freeNewModelName, PUBLISH_WAIT_MS, stillPublishingLine, waitUpTo, newModelLabel, newModelSignIn, plainPublishError, publishableRows, publishCounts, publishedLine, publishLabel, undoPublishResult, unreachableCopy,
+  togglePublishRow, renameBreakLine,
 } from './publishcopy';
 import { engineSentence, sortWorkspaces, workspaceName, type FabricWorkspace, type Load } from './connectpickers-model';
 import { PublishDraw } from './personality/motion';
@@ -129,7 +130,7 @@ export function PublishChanges({ seed, destination, stage, slot, onWrote, onReac
   const counts = useMemo(() => publishCounts(items, effective), [items, effective]);
   const groups = useMemo(() => groupRows(items), [items]);
 
-  const flip = (ref: string, on: boolean) => setWish((w) => { const n = new Set(w); if (on) n.add(ref); else n.delete(ref); return n; });
+  const flip = (ref: string, on: boolean) => setWish((w) => togglePublishRow(items, w, ref, on));
   const tickAll = () => setWish(new Set(items.filter((i) => !isRemoval(i)).map((i) => i.ref)));   // removals stay a choice
 
   async function publish() {
@@ -250,6 +251,7 @@ export function PublishChanges({ seed, destination, stage, slot, onWrote, onReac
                 const reason = refused.get(row.ref);
                 const blocked = !!parent || !!reason;
                 const words = rowWords(row, destination);
+                const renameWarning = renameBreakLine(row, items, effective, destination);
                 return (
                   <div key={row.ref + ':' + row.action} data-testid="publish-row" data-ref={row.ref} className="px-4"
                     style={{ display: 'grid', gridTemplateColumns: 'var(--sem-space-4) var(--sem-space-4) minmax(0, 1fr)', columnGap: 'var(--sem-space-2)', alignItems: 'center',
@@ -274,6 +276,7 @@ export function PublishChanges({ seed, destination, stage, slot, onWrote, onReac
                         <span className="sem-chip sem-chip-bad" aria-hidden="true" /><span>{reason}</span>
                       </div>
                     )}
+                    {renameWarning && <div className="sem-inline text-(length:--sem-text-meta) pb-2" style={{ gridColumn: 3 }} data-testid="publish-rename-warning">{renameWarning}</div>}
                     {open === row.ref && <div className="sem-inset" style={{ gridColumn: '1 / -1', margin: '0 0 var(--sem-space-2)' }}><ReviewCardBody item={row} leftLabel="Your copy" rightLabel={destination} /></div>}
                   </div>
                 );

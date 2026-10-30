@@ -81,7 +81,7 @@ namespace Semanticus.Engine
             Add(TimelineReason, "undo_change", "redo_change");
             Add(BookkeepingReason, "set_plan_items", "add_plan_items", "plan_rows", "unwaive_findings");
             // Multi-mutate composites whose later steps read earlier persisted writes.
-            Add(CompositeReason, "apply_plan", "apply_safe_fixes", "make_model_ai_ready",
+            Add(CompositeReason, "preview_standard", "apply_plan", "apply_safe_fixes", "make_model_ai_ready",
                 "apply_model_diff", "cherry_pick", "build_model_from_spec", "apply_dax_script", "apply_tmdl");
             // Workflow / knowledge / waiver bookkeeping (sidecar-file or annotation writers, not model-definition edits).
             // The settings-file + workflow-templates writers bypass MutateAsync, so a rehearsal would PERSIST them —
@@ -108,7 +108,8 @@ namespace Semanticus.Engine
                 "set_spec", "clear_spec", "load_spec", "save_spec", "propose_plan", "propose_replace", "add_plan_item", "set_plan_item",
                 "clear_plan", "capture_baseline", "save_layout", "set_verified_mode",
                 "load_rules", "reset_rules",   // rule-annotation writers (both systems)
-                "set_publish_destination", "remember_xmla_connection", "forget_connection");   // connection-registry writers: a rehearsal would persist them outside model rollback
+                "set_publish_destination", "remember_xmla_connection", "forget_connection",
+                "set_standard", "apply_standard");   // the standard file is a sidecar and the Plan rows are session memory: a rehearsal would persist both   // connection-registry writers: a rehearsal would persist them outside model rollback
             return d;
         }
 

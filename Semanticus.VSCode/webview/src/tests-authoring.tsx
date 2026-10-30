@@ -13,6 +13,7 @@ import { useSurfaceEscape } from './surface-escape';
 import { checkTitle } from './askdata-model';
 import { useDaxModelContext } from './daxeditor';
 import { grainWords } from './sortgrain';
+import { saveTrustedNumber } from './checks-number';
 
 // ===================================================================================================
 // The New check drawer (the approved redesign, 2026-09-15).
@@ -283,15 +284,16 @@ export function measureFilterNote(expressionDax: string, filterText: string): { 
 }
 
 const KINDS: { shape: AuthorShape; label: string; hint: string }[] = [
-  { shape: 'measureValue', label: 'Trusted answer', hint: 'A number you know is right' },
+  { shape: 'measureValue', label: 'A number you trust', hint: 'A number you know is right' },
   { shape: 'measureReconcile', label: 'Check against SQL', hint: 'The same number from SQL' },
   { shape: 'tableRowCount', label: 'Table row count', hint: 'Model rows against source rows' },
 ];
 
 export function AuthorDrawer({
-  shape, editing, focus, table, latestSources, onClose, onSaved, addSourceOnOpen, addSourceHost, onSourcesChanged, handedFrom,
+  shape, editing, focus, table, latestSources, onClose, onSaved, addSourceOnOpen, addSourceHost, onSourcesChanged, handedFrom, runOnSave,
 }: {
   shape: AuthorShape; editing?: TestDefinitionW | null; focus?: AuthorFocus; table?: string;
+  runOnSave?: boolean;
   latestSources?: SqlSourceW[] | null;
   /** Opens with the add-a-source form showing (New check > Add a SQL source). The drawer owns adding a source, so a caller never passes a handler for it. */
   addSourceOnOpen?: boolean;
@@ -446,7 +448,7 @@ export function AuthorDrawer({
           : <HeldDraftBanner onKeepMine={keepMine} onUseNew={guard.useNew} disabled={busy} />)}
         {draftRow(guard.drafted, discard, busy)}
         {editId && !draft && <div className="sem-inset text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>Loading the check…</div>}
-        {draft && kind === 'measureValue' && <TrustedAnswerForm measures={measures} fields={draft.fields as TrustedFields} onFields={onFields} editing={draft.from} handedFrom={handedFrom} busy={busy} setBusy={setBusy} setErr={setErr} setTryNote={setTryNote} onSaved={onSaved} onClose={onClose} before={before} onWritten={ended} />}
+        {draft && kind === 'measureValue' && <TrustedAnswerForm measures={measures} fields={draft.fields as TrustedFields} onFields={onFields} editing={draft.from} handedFrom={handedFrom} busy={busy} setBusy={setBusy} setErr={setErr} setTryNote={setTryNote} onSaved={onSaved} onClose={onClose} before={before} onWritten={ended} runOnSave={runOnSave} />}
         {draft && kind === 'measureReconcile' && <CompareWithSourceForm measures={measures} fields={draft.fields as SqlFields} onFields={onFields} sources={sources} sourcesLoaded={sourcesLoaded} adopt={adopt} editing={draft.from} focus={focus} busy={busy} setBusy={setBusy} setErr={setErr} setTryNote={setTryNote} onSaved={onSaved} onClose={onClose} onAddSqlSource={beginAddSqlSource} addSource={addSource} linkedSourceId={linkedSourceId} mappings={mappings} before={before} onWritten={ended} />}
         {kind === 'tableRowCount' && <TableRowCountForm sources={sources} adopt={adopt} table={table} busy={busy} setBusy={setBusy} setErr={setErr} onSaved={onSaved} onClose={onClose} onAddSqlSource={beginAddSqlSource} addSource={addSource} linkedSourceId={linkedSourceId} />}
       </div>
@@ -681,11 +683,12 @@ function Footer({ busy, onTry, onSave, tryLabel = 'Try it now', saveLabel = 'Sav
 // No timing budget either: the timing pass only ever receives reconcile plans, so the old field promised
 // a measurement this kind never gets (Astra, journey A).
 // ---------------------------------------------------------------------------------------------------
-export function TrustedAnswerForm({ measures, fields, onFields, editing, handedFrom, busy, setBusy, setErr, setTryNote, onSaved, onClose, before, onWritten }: {
+export function TrustedAnswerForm({ measures, fields, onFields, editing, handedFrom, busy, setBusy, setErr, setTryNote, onSaved, onClose, before, onWritten, runOnSave = false }: {
   measures: MeasureRowW[];
   /** Every field of the form, held by the drawer (the draft). `editing` is the check they were typed on. */
   fields: TrustedFields; onFields: (patch: Partial<TrustedFields>) => void;
   editing?: TestDefinitionW | null; handedFrom?: 'askdata' | 'queries'; busy: boolean;
+  runOnSave?: boolean;
   setBusy: (v: boolean) => void; setErr: (v: string | null) => void; setTryNote: (v: string | null) => void;
   onSaved: () => void; onClose: () => void;
   /** Run before the write: false means the saved check moved and the person must choose first. */
@@ -794,7 +797,7 @@ export function TrustedAnswerForm({ measures, fields, onFields, editing, handedF
           : { borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>{filterNote.text}</div>
       )}
       <SaveRequirement kind="measureValue" />
-      <Footer busy={busy} onTry={() => void tryDef(def(), setBusy, setErr, setTryNote)} onSave={() => void saveDef(def(), setBusy, setErr, onSaved, onClose, before, onWritten && (() => onWritten(fields)))} />
+      <Footer busy={busy} saveLabel={runOnSave ? 'Save and run' : 'Save check'} onTry={() => void tryDef(def(), setBusy, setErr, setTryNote)} onSave={() => void saveDef(def(), setBusy, setErr, onSaved, onClose, before, onWritten && (() => onWritten(fields)), runOnSave)} />
     </>
   );
 }
@@ -1102,12 +1105,15 @@ async function tryDef(def: TestDefinitionW, setBusy: (v: boolean) => void, setEr
   } finally { setBusy(false); }
 }
 
-async function saveDef(def: TestDefinitionW, setBusy: (v: boolean) => void, setErr: (v: string | null) => void, onSaved: () => void, onClose: () => void, before?: SaveFence, onWritten?: () => boolean | void) {
+async function saveDef(def: TestDefinitionW, setBusy: (v: boolean) => void, setErr: (v: string | null) => void, onSaved: () => void, onClose: () => void, before?: SaveFence, onWritten?: () => boolean | void, runOnSave = false) {
   if (!def.targetRef) { setErr('Pick a calculation.'); return; }
   setBusy(true); setErr(null);
   try {
     if (before && !(await before.before())) return;
-    try { await rpc('saveTest', def, 'human', before?.expected() ?? null); }
+    try {
+      if (runOnSave) await saveTrustedNumber(def, before?.expected() ?? null);
+      else await rpc('saveTest', def, 'human', before?.expected() ?? null);
+    }
     catch (e) { if (before && await before.refused(e)) return; throw e; }   // the check moved after the read: the banner asks, nothing was written
     const owns = onWritten ? onWritten() !== false : true;   // the engine took it: the draft ends, if it still holds what was sent (a refused or failed save keeps it)
     announceTestSuiteChanged();

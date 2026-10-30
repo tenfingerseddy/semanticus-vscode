@@ -16,7 +16,7 @@ const load = async (file) => {
   return import(`data:text/javascript;base64,${Buffer.from(out, 'utf8').toString('base64')}`);
 };
 const M = await load('webview/src/validation-model.ts');
-const page = read('webview/src/tests.tsx');
+const page = read('webview/src/tests.tsx') + read('webview/src/checks-page.tsx');
 const css = read('webview/src/validation.css');
 
 // ---------------------------------------------------------------------------------------------------
@@ -185,25 +185,25 @@ assert.equal(M.groupVerdict([]), 'No checks yet');
 // The page: every feature of the Validation page before the minimal redesign still has a home (Validation A, Kane 16 Oct).
 // ---------------------------------------------------------------------------------------------------
 const FEATURES = {
-  'run everything on one button': /onClick=\{onRunAll\}>\{busy \? 'Running…' : 'Run checks'\}/,
-  'the run menu lists the families': /runScopeGroups\(/,
-  'choose checks to run (replaces the tick boxes)': /Choose checks…/,
+  'the measure run plan': /<RunPlan measures=\{page\.measures\.map/,
+  'the saved numbers run in their detail': /onRunOne=/,
+  'the forms are behind one Add entry': /Add a number you trust/,
   'run one family only (relationships, table counts)': /onRunSection=\{\(id\) => runSuite\(\{ sections: sectionsForGroup\(id\)/,
   'run one check': /onRunOne=\{runOne\}/,
   'new check and Add a SQL source': /<NewCheckChoices onPick=[\s\S]{0,260}onAddSqlSource=/,
   'the report of the latest run': /Report of this run/,
   'the report dialog': /<ReportExportDialog/,
   'kept reports are still the evidence route': /onOpenReports=\{\(\) => onPage\?\.\('reports'\)\}/,
-  'run history and grade': /<HistoryPanel seen=\{\{ passed, differs, cannot, checked, accepted \}\} run=\{run\}/,
+  'run history and grade': /<HistoryPanel seen=/,
   'the grade cap sentence': /health\.gatedBy\.join\(' '\)/,
   'the checks that pass beside the grade, in the one unit the page counts (hero 26 N3)': /health \? `\$\{seen\.passed\.toLocaleString\(\)\} of \$\{seen\.checked\.toLocaleString\(\)\}`/,
   'record this run': /Record this run/,
   'a part run says what its letter covers': /partRunSummary\(/,
-  'run progress': /<RunProgressLine progress=\{progress\} \/>/,
+  'run progress': /role="status"/,
   'the assistant\'s own run and tool sentences': /data-assistant-run=/,
   'stale-model and stale-suite notices': /A saved check changed after this run/,
-  'tick a check to run it on its own': /Tick \$\{r\.def\.title\} to run on its own/,
-  'the checks that pass behind one link': /Show the \$\{passed\.toLocaleString\(\)\} that pass/,
+  'a saved number can run from its detail': /Run this one/,
+  'every measure opens its seven marks': /<MeasureMarksPanel reference=\{m\.ref\} name=\{m\.name\} \/>/,
   'edit a check': /<Item onClick=\{\(\) => \{ close\(\); props\.onEdit\(def\); \}\}>Edit<\/Item>/,
   'turn a check off or on': /\{def\.enabled \? 'Turn off' : 'Turn on'\}/,
   'delete a check with a confirmation and a visible error': /Could not delete this check/,
@@ -222,29 +222,27 @@ const FEATURES = {
   'the values that do not match a relationship': /rpc<UnmatchedRowsW>\('getUnmatchedRows', rel\.name, 200\)/,
   'table row counts with Choose source': /Choose source/,
   'one setup for a table count mapping': /openTableMapping/,
-  'the first-visit empty state: one line that starts the first check': /Start with a check: compare a number with your database, or save one you trust\./,
+  'the first-visit empty state': /No numbers saved yet/ ,
   'history: a dated list whose runs open to their evidence': /rpc<TestRunDetailW>\('getTestRun', runId\)/,
   'the eight-run view and before and after': /historyVisual\(recorded\)[\s\S]{0,800}changesVisual\(recorded\)|changesVisual\(recorded\)[\s\S]{0,800}historyVisual\(recorded\)/,
 };
 for (const [name, pattern] of Object.entries(FEATURES)) assert.match(page, pattern, `Validation A keeps: ${name}`);
 
 // ---------------------------------------------------------------------------------------------------
-// The layout rules Kane gave (16 Oct, option A): the verdict, one strip, then only what needs a look; the passes behind one link;
-// one opened check at a time; the panels closed until the menu opens them; one column of whole grid columns.
+// The current marks layout replaces the retired meaning/Checked disclosure (DEC-0115).
+// It keeps the verdict and run plan, lists all measures worst first, and opens one detail at a time.
+// The other panels stay closed until the menu opens them; the page uses whole grid columns.
 // ---------------------------------------------------------------------------------------------------
 assert.match(page, /<main className="sem-page vc-page" data-testid="validation-A">/, 'the page is the 12-column grid');
-assert.match(page, /const \[open, setOpen\] = useState<string \| null>\(null\);/, 'no check starts open, and one opens at a time');
-assert.match(page, /const \[showPass, setShowPass\] = useState\(false\);/, 'the passes start behind their link');
-assert.match(page, /const \[panel, setPanel\] = useState<PanelId>\(null\);/, 'no panel starts open');
-assert.match(page, /const NEEDS_A_LOOK: ResultChip\[\] = \['Differs', 'Could not check'\];/, 'the list holds what differs or could not be checked; checks not run fold into one line');
-assert.match(page, /\{\(problems\.length > 0 \|\| notRunItems\.length > 0\) && <section className="sem-card va-list" data-testid="v-problems"/, 'only the problems are listed in the first view');
-assert.match(page, /<span className="va-strip" data-testid="v-strip"/, 'one cell per check under the verdict');
-assert.match(page, /ordered\.filter\(\(item\) => item\.chip !== 'Off' && item\.chip !== 'Not run'\)\.map\(\(item\) => <span key=\{item\.id\} className=\{`va-cell va-c-\$\{moodOf\(item\.chip\)\}`\}/, 'the strip is worst first, the same order as the list, and has a cell only for a check that has a result');
-assert.match(page, /\{anyResult && <span className="va-strip" data-testid="v-strip"/, 'no strip, and no empty outline, before anything has run');
+assert.ok(page.includes('const [open, setOpen] = useState<string | null>(null);'), 'one card opens at a time');
+assert.doesNotMatch(page, /showChecked|isChecked\(/, 'all measures stay visible in the marks list');
+for (const family of ['numbersDiffer', 'keyProblems', 'tableProblems'])
+  assert.ok(page.includes(`page.summary.${family}`), `the summary names ${family}`);
+assert.match(page, /<MarkGlyph glyph=\{glyph\} \/>/, 'the measure row uses the shared mark icon');
 assert.match(css, /\.vc-page > \.va-col \{ grid-column: 3 \/ 11;/, 'the column is the middle eight');
 assert.match(css, /@media \(max-width: 1200px\) \{ \.vc-page > \.va-col \{ grid-column: 2 \/ 12; \} \}/, 'and ten when the window is narrow');
-assert.match(page, /relationships' as const/, 'relationships are one line like any other check');
-assert.match(page, /id: 'rowcounts', name: 'Table row counts'/, 'and so are table row counts');
+assert.ok(page.includes("row('relationships', 'Relationships'"), 'relationships have their own row');
+assert.ok(page.includes("row('rowcounts', 'Table rows'"), 'table counts have their own row');
 assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b|rgb\(|hsl\(/, 'the page\'s CSS uses tokens only, no colour is typed');
 for (const [name, source] of [['validation.css', css], ['validation-model.ts', read('webview/src/validation-model.ts')], ['validation-parts.tsx', read('webview/src/validation-parts.tsx')]])
   assert.doesNotMatch(source, /—/, `no em dash in ${name}`);
@@ -266,21 +264,11 @@ assert.equal(T.gapShort(-0.00275, 1, undefined, '36.1%'), '0.27 points lower', '
 
 // Polish (16 Oct): the verdict counts only checks that ran; checks not run fold into one line; a long list is cut at ten; a long
 // pass list gets a filter; and a gap that the grand total would hide names its places.
-assert.match(page, /const tally = boardTally\(items\.map\(\(item\) => item\.chip\)\);/, 'one tally for the headline and the line under it, so the parts add up');
-assert.match(page, /const headline = boardHeadline\(tally\);/, 'the big number comes from the tally');
-assert.doesNotMatch(page, /of \{checked\.toLocaleString\(\)\} pass/, 'the headline never counts only the checks that ran');
-assert.match(page, /const notRunItems = ordered\.filter\(\(item\) => item\.chip === 'Not run'\);/, 'not-run checks leave the problem rows');
-assert.match(page, /onClick=\{runNotRun\} data-testid="v-notrun-run"/, 'one line with a Run button that runs those checks, or says why it cannot');
-assert.match(page, /data-testid="v-notrun-arrow"/, 'the arrow on that line is a button that opens it');
-assert.match(page, /if \(only\?\.family === 'rowcounts'\) onRunSection\('tableCounts'\);/, 'the Run on row counts runs row counts');
-assert.match(page, /const PROBLEMS_SHOWN = 10;/);
-assert.match(page, /problems\.slice\(0, PROBLEMS_SHOWN\)/, 'the first ten problems');
-assert.match(page, /and \{\(problems\.length - shownProblems\.length\)\.toLocaleString\(\)\} more[\s\S]{0,40}/, 'and N more');
-assert.match(page, /onClick=\{\(\) => setShowAllProblems\(true\)\} data-testid="v-problems-more"/, 'the line opens the rest in place');
-assert.match(page, /const PASS_FILTER_FROM = 20;/);
-assert.match(page, /const filterOn = showPass && quiet\.length > PASS_FILTER_FROM;/, 'a filter only for a pass list over twenty');
-assert.match(page, /item\.name\.toLowerCase\(\)\.includes\(wanted\)/, 'the filter finds a check by name');
-assert.match(page, /\{filterOn && <div className="va-filter">/, 'the filter sits at the top of the opened list');
+// marks-ui.test.mjs exercises the current measure ordering as behaviour.
+// d1 7.1: worstFirst became a grouping by verdict, worst group first.
+assert.ok(page.includes('const rows = page.measures.map(m => {') && page.includes('groupByState(rows)'), 'measure rows use severity order');
+assert.ok(page.includes('page.summary.total'), 'the headline uses the engine measure count');
+assert.ok(page.includes("rpc<CheckCache[]>('getMeasureCheckCache')"), 'the rows read current marks from the engine cache');
 const rows2 = [
   { delta: 500, verdict: 'Fail' }, { delta: -497, verdict: 'Fail' }, { delta: 3, verdict: 'Pass', grandTotal: true }];
 assert.equal(T.gapShort(3, 2, rows2), '2 places differ, up to 500', 'opposite gaps are never hidden by their total');
@@ -334,36 +322,5 @@ assert.equal(M.readableTitle('Net Sales ties to source SQL'), 'Net Sales ties to
 assert.match(page, /<details className="va-details" data-testid="check-details">/, 'detail on demand');
 assert.doesNotMatch(page.slice(page.indexOf('facts = <>'), page.indexOf('const meta =')), /toleranceSentence/, 'no allowed-difference line in the first view');
 assert.doesNotMatch(page, /authoredSuffix/, 'no powerbi:// authored line in the first view');
-// Round 2 N16: Run checks adds Relationships and Table row counts to the person's own checks; the page says so in one line.
-assert.equal(M.quickChecksNote(true, true), 'Two quick model checks ran too: Relationships and Table row counts.');
-assert.equal(M.quickChecksNote(true, false), 'A quick model check ran too: Relationships.');
-assert.equal(M.quickChecksNote(false, true), 'A quick model check ran too: Table row counts.');
-assert.equal(M.quickChecksNote(false, false), null);
-
-// UAT 1.5.104 (K8, F47): the page said the engine's line ("Reconciled 'measure:Sales/Net Sales' vs SQL (Reconciled)") and then up to four more notes,
-// two of them near copies. A note reads in plain words, never as an object reference, and the page shows one note at most.
-assert.equal(M.plainToolNote("Reconciled 'measure:Sales/Net Sales' vs SQL (Reconciled)"), 'Compared Net Sales with its source: they match.');
-assert.equal(M.plainToolNote("Reconciled 'measure:Sales/Net Sales' vs SQL (Mismatch)"), 'Compared Net Sales with its source: they differ.');
-assert.equal(M.plainToolNote("Reconciled 'measure:Key Measures/# Sales' vs SQL (InsufficientCoverage)"), 'Compared # Sales with its source: could not check.');
-assert.equal(M.plainToolNote("Saved check 'column:Product/Brand' for measure:Sales/Net Sales"), 'Saved check Product Brand for Net Sales');
-assert.equal(M.plainToolNote('Your assistant is running your checks.'), 'Your assistant is running your checks.');
-assert.doesNotMatch(M.plainToolNote("x measure:A/B y column:T/C z table:Sales"), /measure:|column:|table:/);
-{
-  const err = { key: 'err', tone: 'bad', text: 'It broke.' }, partial = { key: 'part', tone: 'warn', text: 'Only part ran.' }, assistant = { key: 'a', tone: 'ok', text: 'Done.' };
-  assert.deepEqual(M.oneNotice([false, null, undefined]), null);
-  assert.equal(M.oneNotice([null, partial, assistant]).key, 'part', 'the first note that has something to say wins, and only one is shown');
-  assert.equal(M.oneNotice([err, partial, assistant]).key, 'err', 'a failure outranks the rest');
-  assert.equal(M.oneNotice([{ key: 'x', tone: 'ok', text: '  ' }, assistant]).key, 'a', 'an empty note is no note');
-}
-const notices = page.slice(page.indexOf('const notices = '), page.indexOf('const notices = ') + 2600);
-assert.equal((notices.match(/<Banner/g) ?? []).length, 1, 'the notices block draws one banner');
-assert.doesNotMatch(page, /\{partRun && run\?\.scope && <div className="va-notice">/, 'the part-run sentence is a candidate for the one note, not a second banner');
-
-console.log('validation view tests passed');
-
-// Round 2 N16: the "quick checks ran too" line comes from THIS run's scope, never from chips kept from an older run.
-{
-  const quick = page.slice(page.indexOf('const quickNote'), page.indexOf('const quickNote') + 400);
-  assert.match(quick, /!relSkipped/, 'Relationships counts only when this run ran it');
-  assert.match(quick, /!countsSkipped/, 'Table row counts counts only when this run ran it');
-}
+// Full runs refresh the page snapshot, including saved numbers and table checks.
+assert.ok(page.includes('void loadChecksPage();'));

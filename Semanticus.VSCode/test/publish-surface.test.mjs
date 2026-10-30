@@ -29,6 +29,21 @@ const sharedCopy = await loadTypeScriptModule(resolve(root, 'webview/src/copy.ts
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; };
 
+test('K22 a rename ticks its dependent measure and an explicit untick names the broken service copy', () => {
+  const rename = { ref: 'column:Sales/Amount', objectType: 'Column', name: 'Amount', table: 'Sales', action: 'Update' };
+  const measure = { ref: 'measure:Sales/Total', objectType: 'Measure', name: 'Total', table: 'Sales', action: 'Update', renameDependencies: [rename.ref] };
+  const rows = [rename, measure];
+  const picked = copy.togglePublishRow(rows, new Set(), rename.ref, true);
+  assert.deepEqual([...picked].sort(), [rename.ref, measure.ref].sort());
+  assert.equal(copy.renameBreakLine(measure, rows, picked, 'Sales live'), null);
+  const omitted = copy.togglePublishRow(rows, picked, measure.ref, false);
+  assert.equal(omitted.has(measure.ref), false, 'an explicit untick stays a choice');
+  assert.equal(copy.renameBreakLine(measure, rows, omitted, 'Sales live'), 'Publishing this rename without Total breaks Total on Sales live.');
+  assert.equal(copy.renameBreakLine(measure, rows, new Set(), 'Sales live'), null);
+  assert.match(changes, /togglePublishRow\(items,/);
+  assert.match(changes, /renameBreakLine\(row,/);
+});
+
 test('H1 the page publishes through one operation, and the destination travels with every call', () => {
   // The host relays the engine's set_publish_destination activity, so Studio re-reads without opening Connections.
   assert.match(extension, /kind === 'set_publish_destination'/, 'the host must relay set_publish_destination as a connectionChanged nudge');

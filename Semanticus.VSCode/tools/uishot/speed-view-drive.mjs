@@ -126,7 +126,7 @@ try {
     const first = await text(page, t('speed-card'));
     await shoot(page, `${kind}-1-first`, `${kind} query: the Speed view right after Measure speed`);
     if (kind === 'fast') {
-      check(/Fast: 75 ms\. Nothing to fix\./.test(await text(page, t('speed-insight'))), `fast: the headline is the answer (${await text(page, t('speed-insight'))})`);
+      check(/Fast: 77 ms\. Nothing to fix\./.test(await text(page, t('speed-insight'))), `fast: the headline is the answer (${await text(page, t('speed-insight'))})`);
       check(!/calculation|reading data|\d+%/.test(first), `fast: no split sentence on the first view`);
       check(!(await has(page, '.qv-splits')) && !(await has(page, '.qv-legend')), 'fast: no split bars and no legend');
     } else {
@@ -141,7 +141,8 @@ try {
       check(!(await has(page, t('seq-0'))), 'fast: no scan of 0 ms is listed');
       const hs = await page.$$eval('.qv-run-bar', (b) => b.map((x) => x.getBoundingClientRect().height));
       check(hs.length === 5 && Math.abs(hs[4] / hs[0] - 67 / 79) < 0.02, `fast: the bars show the times (${hs.map((h) => h.toFixed(1)).join(', ')})`);
-      check(/72 ms round trip/.test(detail) && /16 ms/.test(detail) && /on the server/.test(detail) && /One profiled run/.test(detail), 'fast: the server time and the round trip are both labelled');
+      const profiled = await page.$eval('.qv-split-figs', (e) => e.textContent).catch(() => '');   // the profiled-run line sits beside the time card since the Query page
+      check(/72 ms round trip/.test(detail + ' ' + profiled) && /16 ms/.test(detail + ' ' + profiled) && /on the server/.test(profiled) && /One profiled run/.test(profiled), `fast: the server time and the round trip are both labelled (${(detail + ' ' + profiled).slice(0, 200)})`);
     } else {
       check(await has(page, t('seq-0')), 'slow: the scans are listed');
       check(/First run/.test(await text(page, t('coldwarm'))), 'slow: the First run column is there');

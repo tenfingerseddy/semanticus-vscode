@@ -4093,8 +4093,8 @@
   "launchReadiness": {
     "assessedAt": "2026-07-14",
     "verdict": "enough-for-1.0",
-    "offlineBuiltInRules": 88,
-    "liveBuiltInRules": 2,
+    "offlineBuiltInRules": 91,
+    "liveBuiltInRules": 3,
     "closedCriticRuleIds": [
       "FMT-SORTBY",
       "FMT-SUMMARIZE",
@@ -4151,7 +4151,7 @@
       "why": "These cannot be determined safely from names or object counts. They are suited to the Model Interview, workflows and human review, not deterministic scoring rules."
     }
   ],
-  "criticVerdict": "Enough for 1.0, with the next-release completion lane still adding deterministic model-visible rows. Semanticus ships 88 offline and 2 live built-in readiness rules covering the high-value model-visible path: naming/descriptions/synonyms, visibility, formats and sort order, relationship/star-shape risks, Prep-for-AI indexing setting/schema/instructions/verified answers, AI-data-schema dependency closure, linguistic-entity integrity, helper and duplicate measures, calculation-group/field-parameter complexity, implicit measures, deterministic DAX practice and Copilot index/DAX scale limits. The completion ledger, recomputed 2026-09-06 from this file's own arrays, records 66 covered, 48 partial and 92 missing coverage-reconciliation rows, 206 in total (amended 2026-09-23: the Q&A-only Direct Lake row was retired with Q&A). Those rows are not 206 confirmed requirements: the source-requirement ledger in this file holds 192 (190 of the 206 rows carry a ledger entry, 16 are Semanticus-authored checks with no source requirement, and 2 ledger entries are rejected). See counts.countsDerivation. Its 138 residual non-goals remain explicit because they depend on unpublished linguistic storage, partial Prep-for-AI storage, service/report state, or subjective business judgment. Excluding covered, rejected and bucketed rows leaves two objective gaps that need new live Engine statistics: maximum text length for Copilot's value index and null/blank profiling.",
+  "criticVerdict": "Enough for 1.0, with the next-release completion lane still adding deterministic model-visible rows. Semanticus ships 91 offline and 3 live built-in readiness rules covering the high-value model-visible path: naming/descriptions/synonyms, visibility, formats and sort order, relationship/star-shape risks, Prep-for-AI indexing setting/schema/instructions/verified answers, AI-data-schema dependency closure, linguistic-entity integrity, helper and duplicate measures, calculation-group/field-parameter complexity, implicit measures, deterministic DAX practice and Copilot index/DAX scale limits. The completion ledger, recomputed 2026-09-06 from this file's own arrays, records 66 covered, 48 partial and 92 missing coverage-reconciliation rows, 206 in total (amended 2026-09-23: the Q&A-only Direct Lake row was retired with Q&A). Those rows are not 206 confirmed requirements: the source-requirement ledger in this file holds 192 (190 of the 206 rows carry a ledger entry, 16 are Semanticus-authored checks with no source requirement, and 2 ledger entries are rejected). See counts.countsDerivation. Its 138 residual non-goals remain explicit because they depend on unpublished linguistic storage, partial Prep-for-AI storage, service/report state, or subjective business judgment. Excluding covered, rejected and bucketed rows leaves two objective gaps that need new live Engine statistics: maximum text length for Copilot's value index and null/blank profiling.",
   "rejected": [
     {
       "title": "Harmful/problematic phrases in metadata break Copilot entirely",

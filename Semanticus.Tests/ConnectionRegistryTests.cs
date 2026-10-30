@@ -65,11 +65,11 @@ namespace Semanticus.Tests
             Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(null));
         }
 
-        // ---- NEVER infer a label from an endpoint's NAME. Kane's real client endpoint is `.../UAT_SEM`, and for that
+        // ---- NEVER infer a label from an endpoint's NAME. Kane's real client endpoint is `.../Fabrikam_UAT`, and for that
         // client UAT *is* dev — no DEV workspace exists. A name-based matcher would nag on every write to a sandbox.
         // Conversely someone's `SEM_TEST` could be the model the board reads. A name is a convention, not a fact. ----
         [Theory]
-        [InlineData("powerbi://api.powerbi.com/v1.0/myorg/UAT_SEM")]
+        [InlineData("powerbi://api.powerbi.com/v1.0/myorg/Fabrikam_UAT")]
         [InlineData("powerbi://api.powerbi.com/v1.0/myorg/DEV_workspace")]
         [InlineData("powerbi://api.powerbi.com/v1.0/myorg/sandbox-test-local")]
         [InlineData("localhost:51234")]

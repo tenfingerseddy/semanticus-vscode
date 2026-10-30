@@ -165,6 +165,9 @@ namespace Semanticus.Tests
             /// <summary>Every request's snapshot as the wire carries it, with its questions' names, in order: a test that finds a request it did not expect can say
             /// how it differs from the earlier request about the same object.</summary>
             public readonly List<(int Phase, string[] QuestionNames, string SnapshotJson)> Snapshots = new List<(int, string[], string)>();
+            // Description scoring can append while a family run has already settled.
+            public (int Phase, string Digest, string Point, string[] QuestionNames)[] RequestLog { get { lock (_gate) return Requests.ToArray(); } }
+            public (int Phase, string[] QuestionNames, string SnapshotJson)[] SnapshotLog { get { lock (_gate) return Snapshots.ToArray(); } }
             public bool Available => true;
 
             public async Task<DecisionAnswers> AskAsync(DecisionRequest request, CancellationToken ct)
@@ -265,6 +268,7 @@ namespace Semanticus.Tests
 
             public async Task<bool> DecideAsync(CancellationToken ct = default) => await Engine.DecideStartPlanAsync(Doc, Host, ct);
             public void Dispose() => F.Dispose();
+
         }
 
         /// <summary>Record a full decide with the policy oracle, then return the fixture and the state it reached. The doc is the recorded run's, so the
@@ -483,7 +487,10 @@ namespace Semanticus.Tests
             var (fixture, _, _) = await RecordAsync(schema);
             using var rig = await ReplayRigAsync(schema, fixture);
             Assert.True(await rig.DecideAsync());
-            var asks = rig.Asks;
+            var replay = Assert.IsType<RecordedDecisionOracle>(rig.Engine.Decisions.Oracle);
+            Assert.Equal("jev-test-1", rig.Engine.Decisions.ServedVersionNow);
+            Assert.NotEmpty(replay.AskedRequests);
+            var requestsBeforeBuild = replay.AskedRequests.Count;
             Assert.Equal(StartDecideState.Stable, rig.Doc.Decide.State);
 
             await BuildLikeTheRealBuildAsync(rig);
@@ -505,9 +512,11 @@ namespace Semanticus.Tests
             Assert.True(unseen.Count == 0, "Jev lines on the built model the decide never showed: " + string.Join(" | ", unseen.Select(l => l.Kind + " " + l.ObjectRef + " " + l.Target + "=" + l.After + " [" + l.Status + "]")));
             Assert.All(jevLines, i => Assert.True(i.Suggestion, "only an unproven suggestion may be left: " + i.Kind + " " + i.ObjectRef));
             Assert.DoesNotContain(view.Items, i => i.Doer == PlanDoers.Semanticus && i.StateWord == PlanStateWords.Ready && !i.Held);   // no Ready Semanticus row
-            // 0 new asks from the families is proved by name in the next test, which sees every request. (Here the Plan's own ranking of its rows,
-            // plan.rank, is one more request to this oracle, so the oracle's plain count is not the family count.)
-            Assert.True(rig.Asks - asks <= 1, "the Plan sent " + (rig.Asks - asks) + " requests; only its own plan.rank may be new");
+            // Description scoring follows the build's edits. It does not decide a family or propose another plan line.
+            // Apart from that scoring, only the Plan's own ranking may be new, once at most.
+            var modelRequests = replay.AskedRequests.Skip(requestsBeforeBuild).Where(r => r.PointName != DecisionRegistry.DescriptionMatch).ToArray();
+            Assert.True(modelRequests.Length <= 1 && modelRequests.All(r => r.PointName == DecisionRegistry.PlanRank),
+                "only plan.rank may be new after the build: " + string.Join(" | ", modelRequests.Select(r => r.PointName)));
         }
 
         /// <summary>The same promise as above, said by which REQUESTS exist: the Plan's own run on the built model sends no request the decide did not
@@ -527,10 +536,13 @@ namespace Semanticus.Tests
             await rig.Engine.JevSettledForTest();
             await rig.Engine.GetModelPlanAsync();
 
-            var decided = new HashSet<string>(policy.Requests.Where(r => r.Phase == 1).Select(r => r.Digest), StringComparer.Ordinal);
+            var requests = policy.RequestLog;
+            var decided = new HashSet<string>(requests.Where(r => r.Phase == 1).Select(r => r.Digest), StringComparer.Ordinal);
             // The Plan's own ranking of its rows (plan.rank) is not a family and not a decision about the model: it orders what is on the page, and
-            // there is something on the page (the words row, the Save row). Every FAMILY request is a decided one.
-            var added = policy.Requests.Where(r => r.Phase == 2 && r.Point != DecisionRegistry.PlanRank && !decided.Contains(r.Digest)).ToList();
+            // there is something on the page (the words row, the Save row). Description scoring follows edits separately.
+            // Every FAMILY request must still be one the decide sent, including any future family point.
+            var added = requests.Where(r => r.Phase == 2 && r.Point != DecisionRegistry.PlanRank
+                && r.Point != DecisionRegistry.DescriptionMatch && !decided.Contains(r.Digest)).ToList();
             Assert.True(added.Count == 0, "requests the Plan made that the decide did not: "
                 + string.Join(" | ", added.Select(r => r.Point + " " + string.Join(",", r.QuestionNames))));
         }

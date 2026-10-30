@@ -264,17 +264,11 @@ assert.equal(model.unknownCellText({ actual: '1,204,112' }), null, 'a row with a
 // that describes a control the page does not have.
 // ===================================================================================================
 assert.doesNotMatch(page, /canTick|tickingIsPossible|savedChecksHint|tickedMenuNote/, 'the ticked menu item and the tick hint are gone with their helpers');
-// Validation A (1.6): Run checks always runs everything; "Choose checks..." in its arrow menu opens the list of checks that are on, and
-// the chosen ones run from there. A model with no check turned on says so instead of offering a dead run.
-assert.match(page, /onClick=\{onRunAll\}>\{busy \? 'Running…' : 'Run checks'\}/, 'the one button runs everything');
-assert.match(page, /onClick=\{\(\) => pick\(onChoose\)\}>Choose checks…/, 'the arrow menu offers Choose checks');
-assert.match(page, /No check is turned on\./, 'with nothing on, the chooser says so');
-assert.match(page, /onClick=\{\(\) => \{ closePanel\(\); onRunTicked\(\); \}\}/, 'the chosen checks run from the chooser');
-
-// The wiring: the tick box is a labelled control, and a key pressed inside the row's own controls does not reach the row.
-assert.match(page, /aria-label=\{`Tick \$\{r\.def\.title\} to run on its own`\}/, 'every tick box is labelled by the check it ticks');
-// Validation A (1.6): the tick box is a plain checkbox in the chooser's own list, and nothing around it takes Space.
-assert.match(page, /<input type="checkbox" checked=\{ticked\.has\(r\.def\.id\)\}/, 'the tick box is a real checkbox, so Space ticks it');
+// Layout A keeps the plan's Run, after its estimate. The header has no second run button.
+const checkedPage = readFileSync(resolve(root, 'webview/src/checks-page.tsx'), 'utf8');
+assert.match(checkedPage, /<RunPlan measures=/, 'the plan owns the run button and its estimate');
+assert.doesNotMatch(checkedPage, /data-testid="v-run"/, 'the header has no duplicate run button');
+assert.doesNotMatch(checkedPage, /What to run|Choose checks/);
 assert.doesNotMatch(page, /function CheckDetail[\s\S]{0,3000}role="button" tabIndex=\{0\}/, 'an opened check is not itself a button that a key could toggle');
 
 // ===================================================================================================

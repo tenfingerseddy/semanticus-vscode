@@ -11,6 +11,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BOX_CLASSES, LISTERS, MANIFEST, SRC, orphanListers, scanBoxes, scanScopePrefixes } from './helpers/box-inventory.mjs';
+import { makeDisk, makePage, find, settleAll } from './helpers/drafts-mount.mjs';
 
 const manifest = () => JSON.parse(readFileSync(MANIFEST, 'utf8'));
 
@@ -98,4 +99,87 @@ test('the debt stays visible: the unlisted prefixes and the outage-deferred boxe
   const deferred = Object.values(m.boxes).filter((b) => b.class === 'outage-deferred').length;
   console.log(`# inventory: ${Object.keys(m.boxes).length} boxes (${['held', 'search', 'parent', 'transient', 'outage-deferred'].map((c) => `${c} ${Object.values(m.boxes).filter((b) => b.class === c).length}`).join(', ')}); ${Object.keys(m.scopes).length} scope prefixes, ${unlisted.length} unlisted`);
   assert.ok(deferred > 0 && deferred < 60, `the deferred class should be the 30-odd plain boxes, found ${deferred}`);
+});
+
+test('a Description draft survives closing and reopening the same measure detail', async () => {
+  const disk = makeDisk();
+  const reference = 'measure:Sales/Amount';
+  const calls = [];
+  const saved = { ref: reference, description: 'Saved Description.', oneLine: 'Saved Description.',
+    provenance: 'person', match: { label: 'Not scored yet' }, proposal: null };
+  const host = {
+    rpc: async method => { calls.push(method); assert.equal(method, 'getMeasureDescription'); return saved; },
+    onChange: () => () => {}, open() {}, undo() {},
+  };
+  const page = makePage({
+    './bridge': { loadState: disk.loadState, saveState: disk.saveState, onDidChange: () => () => {}, rpc: host.rpc },
+    './marks-host': { useMarksHost: () => host },
+  });
+  const { DescriptionBlock } = page.load('marks-panel.tsx');
+  const mount = () => page.mount(() => DescriptionBlock({ reference }));
+  const first = mount();
+  await settleAll();
+  // d1: the Description is one line at rest; Edit is inside the full Description, one click away.
+  find(first.result, el => typeof el.props?.onOpen === 'function').props.onOpen();
+  const edit = find(first.result, el => el.type === 'button' && el.props.children === 'Edit');
+  assert.ok(edit, 'the real Description editor is available');
+  edit.props.onClick();
+  const words = 'Sales less returns, after approved discounts.';
+  find(first.result, el => el.type === 'textarea').props.onChange({ target: { value: words } });
+  assert.equal(find(first.result, el => el.type === 'textarea').props.value, words);
+  first.unmount();
+  const reopened = mount();
+  await settleAll();
+  const restored = find(reopened.result, el => el.type === 'textarea')?.props.value;
+  reopened.unmount();
+  assert.ok(!calls.includes('setDescription'), 'closing a detail must not save unreviewed words to the model');
+  assert.equal(restored, words,
+    'closing and reopening the mark detail must retain the unsaved Description; marks-panel.tsx currently holds it only in useState');
+});
+
+test('a Description save refuses a write that changes after its last read and keeps the draft', async () => {
+  const reference = 'measure:Sales/Contoso Amount';
+  const original = 'Contoso original Description.';
+  const other = 'Contoso other Description.';
+  const words = 'Contoso unsaved Description.';
+  let current = original;
+  let reads = 0;
+  const writes = [];
+  const host = {
+    rpc: async (method, ...args) => {
+      if (method === 'getMeasureDescription') {
+        const view = { ref: reference, description: current, oneLine: current,
+          provenance: 'person', match: { label: 'Not scored yet' }, proposal: null };
+        if (++reads === 2) current = other;
+        return view;
+      }
+      assert.equal(method, 'setDescription');
+      writes.push(args);
+      if (args[3] != null && args[3] !== current)
+        throw new Error('This Description changed in the model after you opened it. Nothing was written.');
+      current = args[1];
+      return { changed: true };
+    },
+    onChange: () => () => {}, open() {}, undo() {},
+  };
+  const disk = makeDisk();
+  const page = makePage({
+    './bridge': { loadState: disk.loadState, saveState: disk.saveState, onDidChange: () => () => {}, rpc: host.rpc },
+    './marks-host': { useMarksHost: () => host },
+  });
+  const { DescriptionBlock } = page.load('marks-panel.tsx');
+  const mounted = page.mount(() => DescriptionBlock({ reference }));
+  try {
+    await settleAll();
+    // d1 (fx23, SD-218): the Description is one line at rest; Edit is in the full Description behind a click on that line.
+    find(mounted.result, el => el.type?.name === 'DescriptionLine').props.onOpen();
+    find(mounted.result, el => el.type === 'button' && el.props.children === 'Edit').props.onClick();
+    find(mounted.result, el => el.type === 'textarea').props.onChange({ target: { value: words } });
+    await find(mounted.result, el => el.type === 'button' && el.props.children === 'Save').props.onClick();
+    await settleAll();
+    assert.equal(current, other, 'the concurrent Description must survive');
+    assert.equal(find(mounted.result, el => el.type === 'textarea')?.props.value, words);
+    assert.deepEqual(writes, [[reference, words, 'human', original]]);
+    assert.ok(find(mounted.result, el => String(el.props.children).includes('Nothing was written.')));
+  } finally { mounted.unmount(); }
 });

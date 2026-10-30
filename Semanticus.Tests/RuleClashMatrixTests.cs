@@ -67,6 +67,7 @@ namespace Semanticus.Tests
             ["apply_tmdl"] = "TMDL the caller wrote",
             ["apply_model_diff"] = "a diff the caller chose",
             ["apply_schema_update"] = "a source schema change the caller chose",
+            ["apply_standard"] = "the selected standard's explicit settings; preview_standard shows its changes, and finding-based synonym tasks exclude waived findings",
         };
 
         [Fact]

@@ -241,6 +241,55 @@ namespace Semanticus.Tests
             finally { Delete(root); }
         }
 
+        [Fact]
+        public async Task K27a_a_changed_bim_copy_survives_and_an_unchanged_copy_refreshes()
+        {
+            var root = Scratch("k27a-");
+            var copy = Path.Combine(root, "Sales backup.bim");
+            try
+            {
+                using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(copy, "BIM", false, "agent");
+                var refreshed = await engine.SaveAsync(copy, "BIM", false, "agent");
+                Assert.Equal(copy, refreshed.Path);
+                var changed = File.ReadAllText(copy) + " ";
+                File.WriteAllText(copy, changed);
+                var beside = await engine.SaveAsync(copy, "BIM", false, "agent");
+                Assert.Equal(changed, File.ReadAllText(copy));
+                Assert.NotEqual(copy, beside.Path);
+                Assert.EndsWith(".bim", beside.Path);
+                Assert.Contains(beside.Path, beside.Note);
+                Assert.True(beside.IsBackupCopy);
+                await engine.OpenAsync(beside.Path);
+            }
+            finally { Delete(root); }
+        }
+
+        [Fact]
+        public async Task K27d_a_file_added_during_the_folder_swap_is_kept_and_named()
+        {
+            var root = Scratch("k27d-");
+            var copy = Path.Combine(root, "Sales backup");
+            try
+            {
+                using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(copy, "TMDL", false, "agent");
+                engine.DirectoryMoveHookForTest = (from, to) =>
+                {
+                    if (from == copy) File.WriteAllText(Path.Combine(from, "late notes.txt"), "keep this work");
+                };
+                var result = await engine.SaveAsync(copy, "TMDL", false, "agent");
+                var kept = Directory.GetFiles(root, "late notes.txt", SearchOption.AllDirectories);
+                Assert.Single(kept);
+                Assert.Equal("keep this work", File.ReadAllText(kept[0]));
+                Assert.Contains(Path.GetDirectoryName(kept[0]), result.Note);
+                await engine.OpenAsync(result.Path);
+            }
+            finally { Delete(root); }
+        }
+
         // Verifier v-fix-codex402 (F-296 lost-work bar): a file the person adds to a copy folder after Semanticus wrote it is the person's
         // work. The next copy to that path may refresh what Semanticus wrote, or refuse, but it must never delete the person's file.
         [Fact]

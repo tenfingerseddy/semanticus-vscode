@@ -49,12 +49,12 @@ export function RowLine({ r, on, nb, running }: { r: Rec; on: boolean; nb: Noteb
       <span className={`qn-line-n qn-num ${r.headline === 'No rows' || r.headline === 'Blank' ? 'qn-faint' : ''}`} title={r.headline ?? undefined}>{running || on || !r.headline ? '' : <>{fig.label && <span className="qn-line-lab">{fig.label}</span>}<span className="qn-line-val">{fig.value}</span></>}</span>
       <span className={`qn-line-t qn-num ${t.slow ? 'qn-slow' : 'qn-faint'}`} data-testid="row-time">{running ? '' : t.text}</span>
     </button>
-    {live ? <span className="qn-row-acts" />
+    {live ? <span className="qn-row-acts"></span>
       : <span className="qn-row-acts">
+
         <button type="button" className={`qn-icon qn-icon-sm ${r.pinned ? 'qn-pinned' : 'qn-quiet-act'}`} title={r.pinned ? 'Unpin' : 'Pin to the top'} aria-label={r.pinned ? `Unpin: ${rowText(r)}` : `Pin: ${rowText(r)}`} aria-pressed={!!r.pinned}
           onClick={() => void nb.act(r.pinned ? 'unpin' : 'pin', r.id)} data-testid="row-pin">{r.pinned ? Icon.pin : Icon.pinOff}</button>
         <button type="button" className="qn-icon qn-icon-sm qn-quiet-act" title="Close. It stays in the history." aria-label={`Close: ${rowText(r)}`} onClick={() => void nb.act('close', r.id)} data-testid="row-close">{Icon.close}</button>
       </span>}
   </div>;
 }
-

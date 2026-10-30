@@ -26,6 +26,9 @@ namespace Semanticus.Engine
         public string Label { get; set; }
         /// <summary>What changed, with before and after capped at <see cref="ChangeValues.LedgerCap"/> characters.</summary>
         public ChangeDelta[] Deltas { get; set; }
+
+        internal EditLedgerEntry ForDisk() => this;
+
         /// <summary>TE2's undo step count right after the commit: this entry is step <c>StepIndex</c> on the stack.
         /// Zero for a commit that changed the model but put no step on the stack, which can never be undone.</summary>
         public int StepIndex { get; set; }
@@ -437,7 +440,7 @@ namespace Semanticus.Engine
                 try { onDisk = models[home.Identity]?["entries"]?.Deserialize<EditLedgerEntry[]>(Json); }
                 catch { onDisk = null; }
                 var merged = Merge(entries, onDisk ?? Array.Empty<EditLedgerEntry>(), ownSessions, dropped);
-                models[home.Identity] = new JsonObject { ["entries"] = JsonSerializer.SerializeToNode(merged, Json) };
+                models[home.Identity] = new JsonObject { ["entries"] = JsonSerializer.SerializeToNode(merged.Select(e => e.ForDisk()).ToArray(), Json) };
                 var dir = System.IO.Path.GetDirectoryName(home.File);
                 if (!string.IsNullOrEmpty(dir)) System.IO.Directory.CreateDirectory(dir);
                 // Keep the file out of the model's git repository (LayoutStore.EnsureRuntimeIgnore says why).

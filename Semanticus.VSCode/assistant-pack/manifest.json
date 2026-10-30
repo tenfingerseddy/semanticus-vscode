@@ -1,10 +1,10 @@
 {
-  "version": "1.6.0",
+  "version": "1.7.0",
   "skills": [
     {
       "name": "semanticus",
       "path": "plugins/semanticus/skills/semanticus/SKILL.md",
-      "sha256": "eea8a1c24244f6375706b0d28578d4262d533787584d6d3f950065dda2ea7019"
+      "sha256": "c8ab5daec7dd9daf5711ff961aa5d4f6cab84902f8ca43594f6b1c25e9a25d7d"
     },
     {
       "name": "semanticus-optimize-dax",
