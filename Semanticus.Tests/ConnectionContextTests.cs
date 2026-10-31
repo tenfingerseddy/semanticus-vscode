@@ -335,10 +335,9 @@ namespace Semanticus.Tests
             Assert.Equal("Contoso Fabric Monitoring", context.Publishing.ModelName);
         }
 
-        // Round 2 UAT N22: opening Contoso, a read-only demo, made the footer say "Publish: Contoso Sales" by itself. A model opened
-        // live still publishes back to where it came from, so the target resolves, but it is only IMPLIED until a publish is made.
+        // Publish uses the open service model by default. Implied records its provenance, not a missing destination.
         [Fact]
-        public async Task Opening_a_live_model_does_not_set_a_publish_target_until_the_first_publish()
+        public async Task Opening_a_live_model_has_an_implied_publish_destination_before_the_first_publish()
         {
             var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions);
@@ -348,7 +347,9 @@ namespace Semanticus.Tests
 
             var opened = (await engine.ConnectionContextAsync()).Publishing;
             Assert.True(opened.Available, "a publish still goes back to where the model came from");
-            Assert.True(opened.Implied, "but nothing was chosen, so the footer must not name it as a target");
+            Assert.True(opened.Implied, "the origin supplies the destination until an explicit choice is saved");
+            Assert.Equal(record.Id, opened.ConnectionId);
+            Assert.Equal("Sales", opened.ModelName);
 
             LocalEngine.ConfirmPublishTarget(sessions.Current);   // what a landed publish does
             Assert.False((await engine.ConnectionContextAsync()).Publishing.Implied);

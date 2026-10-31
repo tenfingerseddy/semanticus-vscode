@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
@@ -145,10 +146,13 @@ namespace Semanticus.Engine
         // are both recorded rather than vanishing. This method is the single chokepoint every builder ends in, which is
         // why one hook covers them all. Null in production, same idiom as DeviceCodePromptForTests / SavedAccountForTests.
         internal static Action<string> CredentialBuiltForTests;
+        // Test seam (fx171): the tenant each credential is built for, so a test proves where a sign-in goes without one.
+        internal static Action<string, string> CredentialTenantForTests;
 
         private static TokenCredential BuildCredentialWith(string mode, string tenant, AuthenticationRecord savedRecord, bool disableInteractive = false, string loginHint = null)
         {
             CredentialBuiltForTests?.Invoke(mode);
+            CredentialTenantForTests?.Invoke(mode, tenant);
             return mode switch
             {
                 "serviceprincipal" or "sp" => ClientSecret(tenant),
@@ -657,6 +661,9 @@ namespace Semanticus.Engine
             /// <summary>The STABLE identity (MSAL home account id) this credential was constructed with — what the
             /// live-auth cache keys on. <see cref="Account"/> is the display form and must not be keyed on.</summary>
             public string HomeAccountId => CanonicalHomeAccountId(ResolvedRecord?.HomeAccountId);
+            /// <summary>The tenant this sign-in is in, from its record. With no tenant named, that is the account's own
+            /// tenant, which the caller did not know. Null for azcli / sp / token (no record).</summary>
+            public string SignedInTenant => string.IsNullOrWhiteSpace(ResolvedRecord?.TenantId) ? null : ResolvedRecord.TenantId.Trim().ToLowerInvariant();
         }
 
         /// <summary>Like <see cref="BuildCredential"/>, but for the interactive / device-code families it also
@@ -761,13 +768,31 @@ namespace Semanticus.Engine
             if (path == null || forceReauth) return null;
             var rec = LoadRecord(path);
             if (rec != null) return rec;
-            // Tenant omitted (an endpoint-only remembered workspace): pin the family's signed-in default so the
-            // account a named-model open already saved is the one this open uses, instead of reporting unknown.
-            if (!string.IsNullOrWhiteSpace(tenant)) return null;
+            // A NAMED tenant with no saved sign-in of its own (fx171, Kane 30 Oct): a sign-in made with no tenant named
+            // lands in the account's own tenant but is saved under the tenantless slot. Pin a saved sign-in whose record
+            // IS in this tenant, so a model that remembers its tenant reuses that account silently instead of opening the
+            // browser again. The path stays this tenant's slot, so a forced sign-in still saves here. Never another tenant.
+            if (!string.IsNullOrWhiteSpace(tenant)) return FindRecordInTenant(family, tenant);
             var fallback = FindDefaultFamilyPath(family);
             if (fallback == null) return null;
             path = fallback;
             return LoadRecord(path);
+        }
+
+        // A saved sign-in of this family whose record is IN the named tenant: the tenantless default first (the person's
+        // own account when the tenant is theirs), then the saved accounts, most recently used first. Null when none is.
+        private static AuthenticationRecord FindRecordInTenant(string family, string tenant)
+        {
+            bool InTenant(AuthenticationRecord r) => r != null && string.Equals((r.TenantId ?? "").Trim(), tenant.Trim(), StringComparison.OrdinalIgnoreCase);
+            var tenantless = LoadRecord(RecordPath(family, null));
+            if (InTenant(tenantless)) return tenantless;
+            foreach (var e in ReadProfilesForDisplay().OrderByDescending(p => p.LastUseUtc ?? p.LastSignInUtc ?? ""))
+            {
+                if (!string.Equals(e.Family, family, StringComparison.Ordinal)) continue;
+                var r = LoadRecordFromJson(e.RecordJson);
+                if (InTenant(r)) return r;
+            }
+            return null;
         }
 
         // The default-slot file for this family's signed-in default profile, or any signed-in profile of the family.
@@ -878,6 +903,12 @@ namespace Semanticus.Engine
             catch (AuthenticationRequiredException ex) when (cred is PressGatedBrowserCredential && !SignInPress.Pressed)
             {
                 throw new InvalidOperationException(SignInPress.NotPressedText, ex);
+            }
+            catch (AuthenticationFailedException ex) when (XmlaAuthHint.HasNoFailureDetail(ex))
+            {
+                // A wrong tenant or secret can reach here as "<Credential> authentication failed:" with nothing after the
+                // colon. Say what failed and what to do; the original stays as the inner exception for the engine's own checks.
+                throw new InvalidOperationException(XmlaAuthHint.SignInFailedNoDetail(cred is ClientSecretCredential || ex.Message.StartsWith("ClientSecretCredential", StringComparison.Ordinal)), ex);
             }
         }
 

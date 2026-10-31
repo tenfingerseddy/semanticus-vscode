@@ -610,6 +610,7 @@ namespace Semanticus.Engine
         public Task<SqlSourceRecord> SaveSqlSourceAsync(string id, string name, string server, string database, string authMode, string tenantId, string origin = "agent", string expectedJson = null) => _rpc.InvokeAsync<SqlSourceRecord>("saveSqlSource", id, name, server, database, authMode, tenantId, origin, expectedJson);
         public Task<SqlSourceDeleteResult> DeleteSqlSourceAsync(string id, string origin = "agent") => _rpc.InvokeAsync<SqlSourceDeleteResult>("deleteSqlSource", id, origin);
         public Task<SqlSourceTestResult> TestSqlSourceAsync(string id, string origin = "agent") => _rpc.InvokeAsync<SqlSourceTestResult>("testSqlSource", id, origin);
+        public Task<bool> CancelSqlSourceTestAsync(string id) => _rpc.InvokeAsync<bool>("cancelSqlSourceTest", id);
         public Task<TableSourceMappingInfo> SetTableSourceMappingAsync(string table, string sqlSourceId, string schema, string entity, string origin = "agent", string expectedJson = null) => _rpc.InvokeAsync<TableSourceMappingInfo>("setTableSourceMapping", table, sqlSourceId, schema, entity, origin, expectedJson);
         public Task<bool> ClearTableSourceMappingAsync(string table, string origin = "agent") => _rpc.InvokeAsync<bool>("clearTableSourceMapping", table, origin);
         public Task<TableSourceMappingList> ListTableSourceMappingsAsync() => _rpc.InvokeAsync<TableSourceMappingList>("listTableMappings");

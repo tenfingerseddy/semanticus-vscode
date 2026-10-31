@@ -63,9 +63,14 @@ namespace Semanticus.Engine
             try
             {
                 token = TokenForTests != null
-                    ? await TokenForTests(source.AuthMode, source.TenantId, ct).ConfigureAwait(false)
+                    ? await TokenForTests(source.AuthMode, source.TenantId, ct).WaitAsync(ct).ConfigureAwait(false)
                     // The source's OWN mode and tenant, never a default.
-                    : await EntraToken.AcquireSqlAsync(source.AuthMode, null, ct, source.TenantId, disableInteractive).ConfigureAwait(false);
+                    : await EntraToken.AcquireSqlAsync(source.AuthMode, null, ct, source.TenantId, disableInteractive).WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                result.Note = "The test was cancelled.";
+                return result;
             }
             catch (Exception ex)
             {
@@ -77,8 +82,13 @@ namespace Semanticus.Engine
             try
             {
                 rs = QueryForTests != null
-                    ? await QueryForTests(source, token, ct).ConfigureAwait(false)
-                    : await FabricSqlQuery.ExecuteAsync(source.Server, source.Database, token, ProbeSql, 1, 30, ct).ConfigureAwait(false);
+                    ? await QueryForTests(source, token, ct).WaitAsync(ct).ConfigureAwait(false)
+                    : await FabricSqlQuery.ExecuteAsync(source.Server, source.Database, token, ProbeSql, 1, 30, ct).WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                result.Note = "The test was cancelled.";
+                return result;
             }
             catch (Exception ex)
             {

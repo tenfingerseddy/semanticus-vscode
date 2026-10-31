@@ -1113,9 +1113,9 @@ namespace Semanticus.Engine
                     replay = replayForCommit?.Invoke() ?? replay;
                     _descriptionAuthor = null;
                     var deltas = replay == null ? WithAdds(_pending, sizeBefore, builtHere: true) : _pending;
-                    // A raw metadata step can restore the model without emitting any property events.
-                    // A no-op undo/redo does not move the stack and needs no invalidation.
-                    if (replay != null && deltas.Count == 0 && _model.Undo.UndoSteps != stepsBefore)
+                    // Raw calendar edits and their replay emit no wrapper property events. Their undo step still
+                    // changes, so notify observers and both doors. A no-op moves neither stack nor structure.
+                    if (deltas.Count == 0 && (replay != null ? _model.Undo.UndoSteps != stepsBefore : _model.Undo.UndoSize != sizeBefore))
                         deltas.Add(new ChangeDelta { Kind = "structure", Ref = "model" });
                     _pending = null;
                     _deleting.Clear();

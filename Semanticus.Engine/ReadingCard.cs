@@ -53,10 +53,10 @@ namespace Semanticus.Engine
         /// <summary>True while the card should show: at least one of the top three is open and is not only for the person to decide.</summary>
         public bool Show { get; set; }
         public string Grade { get; set; }
-        public int Score { get; set; }
+        public double Score { get; set; }
         /// <summary>The grade the safe fixes reach, from the same rehearsal the Plan uses. Null while it is not worked out (or not asked for).</summary>
         public string GradeAfter { get; set; }
-        public int? ScoreAfter { get; set; }
+        public double? ScoreAfter { get; set; }
         /// <summary>The first sentence says what is wrong (the grade is held down by).</summary>
         public string[] HeldBy { get; set; } = Array.Empty<string>();
         public int SafeFixCount { get; set; }
@@ -199,7 +199,7 @@ namespace Semanticus.Engine
             var view = new ReadingCardView
             {
                 Grade = card.Grade,
-                Score = (int)Math.Round(card.Overall, MidpointRounding.AwayFromZero),
+                Score = card.Overall,
                 HeldBy = card.GatedBy ?? Array.Empty<string>(),
                 SafeFixCount = card.SafeFixCount,
                 WritingJobs = jobs,

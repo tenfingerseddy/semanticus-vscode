@@ -24,8 +24,8 @@ namespace Semanticus.Engine
         public bool Live { get; set; }
         public bool SourceControlled { get; set; }
         public string RepositoryRoot { get; set; }
-        /// <summary>Publishing side only: the model was opened live, so a publish goes back to where it came from, but the person
-        /// has not chosen or made one yet. The footer says "not set yet" rather than naming a target nobody picked.</summary>
+        /// <summary>Publishing side only: the open service model supplies the destination until an explicit choice is saved.
+        /// Both doors name this destination, because Publish already uses it.</summary>
         public bool Implied { get; set; }
     }
 

@@ -115,7 +115,8 @@ assert.match(listView, /Open your first model/, 'the first visit shows one sente
 assert.doesNotMatch(listView, /max-h-\[336px\]/, 'the list is never capped at a fixed height');
 
 // ---- honest identity + fail-closed governance -----------------------------------------------------------------
-assert.match(hub, /as \$\{account\} \(was \$\{was\}\)/, 'per-row identity must show "as bob@ (was alice@)" provenance');
+// fx171 (Kane A1, 30 Oct): "as bob@ (was alice@)" did not say which account is in use; the line now says both plainly.
+assert.match(hub, /opens as \$\{account\}, last opened as \$\{was\}/, 'per-row identity must show "opens as bob@, last opened as alice@" provenance');
 assert.match(hub, /account unknown/, 'an unknown next-open account must read honestly as "account unknown"');
 assert.match(hub, /text: 'Not set \(treated as Development\)'/, 'an unlabelled cloud model must read "Not set (treated as Development)", never "Production"');
 assert.match(hub, /if \(l\) return \{ text: 'Production', tone: 'warn' \}/, 'a hand-edited label the engine does not know ("Production", "staging") must read Production, because the engine applies prod to it');
@@ -450,6 +451,8 @@ assert.match(hub, /openModel\(\{ id: 'new:' \+ c\.endpoint[^\n]*\n\s*c\.accountP
   const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); };
   assert.equal(view().askingAccount, true, 'while the new sign-in runs, the header asks for the account instead of naming the saved one');
   assert.equal(view().account, null);
+  assert.equal(calls.filter((c) => c[0] === 'listWorkspaces').length, 0, 'FX174: a tenantless page waits for List workspaces');
+  view().onRetry();
   await settle();
   const lists = calls.filter((c) => c[0] === 'listWorkspaces');
   assert.equal(lists.length, 1);
@@ -469,11 +472,15 @@ assert.match(hub, /openModel\(\{ id: 'new:' \+ c\.endpoint[^\n]*\n\s*c\.accountP
   // The plain picker reads as the saved account, and offers "Use another account" beside it.
   calls.length = 0;
   const plain = mount(() => WorkspacePicker({ ...props, anotherAccount: false, initialAuthMode: 'interactive' }));
+  assert.equal(calls.filter((c) => c[0] === 'listWorkspaces').length, 0, 'FX174: the saved-account page also waits when no tenant is known');
+  plain.result.props.onRetry();
   await settle();
   assert.equal(plain.result.props.account, 'alex@contoso.com');
   assert.deepEqual(calls.filter((c) => c[0] === 'listWorkspaces').at(-1).slice(4), [false, null], 'the plain picker lists as the saved account');
   assert.equal(typeof plain.result.props.onAnotherAccount, 'function', 'the plain picker offers "Use another account"');
   plain.result.props.onAnotherAccount(); await settle();
+  assert.equal(calls.filter((c) => c[0] === 'listWorkspaces').at(-1)[4], false, 'FX174: another account also waits for a tenant or List workspaces');
+  plain.result.props.onRetry(); await settle();
   assert.equal(calls.filter((c) => c[0] === 'listWorkspaces').at(-1)[4], true, '"Use another account" starts a new sign-in');
   assert.equal(plain.result.props.account, 'sam@fabrikam.com');
 }

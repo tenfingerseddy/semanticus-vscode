@@ -40,9 +40,12 @@ public sealed partial class LocalEngine
         return finished;
     }
 
+    // The plan run going on now, as every push carries it. Written under measureRunLock.
+    private MeasureRunActivity measureRunActivity = MeasureRunActivity.Idle;
+
     // Called under measureRunLock.
     private void PublishCheckStates(Session session, params MeasureCheckCache[] states) =>
-        _sessions.Bus.PublishChecks(new CheckStateChange { SessionId = session.Id, Version = checkVersion, States = states });
+        _sessions.Bus.PublishChecks(new CheckStateChange { SessionId = session.Id, Version = checkVersion, States = states, Run = measureRunActivity });
 
     // Called under measureRunLock: the person's Totals waiver and Filters word, as the last commit left them.
     private MeasureCheckCache FinishCheckState(MeasureCheckCache state) =>

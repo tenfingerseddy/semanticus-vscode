@@ -735,8 +735,11 @@ public sealed partial class LocalEngine
             foreach (var def in definitions.Where(d => string.Equals(d.Kind, kind, StringComparison.OrdinalIgnoreCase)))
             {
                 if (!MarkRunCurrent(run)) return;
-                try { outcomes.Add(await TryMarkDefinitionAsync(def, run).ConfigureAwait(false)); }
-                catch (Exception ex) { outcomes.Add(new ReconcileOutcome { Verdict = Verdict.NotVerifiable, Message = ex.Message }); }
+                ReconcileOutcome outcome;
+                try { outcome = await TryMarkDefinitionAsync(def, run).ConfigureAwait(false); }
+                catch (Exception ex) { outcome = new ReconcileOutcome { Verdict = Verdict.NotVerifiable, Message = ex.Message }; }
+                outcomes.Add(outcome);
+                if (MarkRunCurrent(run) && saved.Definitions.FirstOrDefault(d => d.Id == def.Id) is { } listed) RememberMarkCheck(run.Session, listed, outcome);
             }
             var mark = MeasureMarkJudge.Saved(name, outcomes.ToArray());
             if (outcomes.Count == 0) mark.ReasonCode = name == "SQL" ? "no_sql" : "no_trusted";

@@ -96,16 +96,21 @@ export const isAdvancedSignIn = (authMode: string): boolean => authMode === 'azc
  * published model opened most recently. A way the picker does not offer, or nothing known, starts at the browser.
  */
 export function signInToReuse(
-  records: ReadonlyArray<{ id: string; kind: string; authMode?: string | null; tenantId?: string | null; lastUsedUtc?: string | null }>,
+  records: ReadonlyArray<{ id: string; kind: string; authMode?: string | null; tenantId?: string | null; lastUsedUtc?: string | null; lastAccount?: string | null }>,
   liveConnId?: string | null,
+  profiles: ReadonlyArray<{ family?: string; username?: string; tenantId?: string | null; accountTenantId?: string | null; lastUseUtc?: string | null }> = [],
+  modeOverride?: string | null,
 ): { authMode: string; tenantId: string } {
   const published = records.filter((r) => r.kind === 'xmla');
   const live = liveConnId ? published.find((r) => r.id === liveConnId) : undefined;
   const recent = [...published].sort((x, y) => String(y.lastUsedUtc ?? '').localeCompare(String(x.lastUsedUtc ?? '')))[0];
   const pick = live ?? recent;
-  const mode = String(pick?.authMode ?? '').trim().toLowerCase();
+  const mode = String(modeOverride ?? pick?.authMode ?? '').trim().toLowerCase();
   const offered = SIGN_IN_WAYS.some((w) => w.value === mode);
-  return { authMode: offered ? mode : 'interactive', tenantId: offered && isAdvancedSignIn(mode) ? (pick?.tenantId ?? '') : '' };
+  const saved = [...profiles].filter((p) => p.family === 'interactive' && (p.tenantId || p.accountTenantId))
+    .sort((a, b) => Number(b.username === pick?.lastAccount) - Number(a.username === pick?.lastAccount)
+      || String(b.lastUseUtc ?? '').localeCompare(String(a.lastUseUtc ?? '')))[0];
+  return { authMode: offered ? mode : 'interactive', tenantId: pick?.tenantId || (!offered || mode === 'interactive' ? saved?.tenantId || saved?.accountTenantId || '' : '') };
 }
 
 // Power BI Desktop's own folder for a running copy is named AnalysisServicesWorkspace_<id>. That is what the engine
@@ -154,8 +159,9 @@ export function workspaceChoice(w: FabricWorkspace, m: WorkspaceModel, label: st
     workspaceName: workspaceName(w),
     modelName: m.displayName,
     authMode,
-    // A browser sign-in picks its tenant itself; a tenant typed for an advanced attempt must not ride along hidden.
-    tenantId: isAdvancedSignIn(authMode) ? (tenant.trim() || null) : null,
+    // The tenant the list was read in, for every sign-in way: the open must sign in where the workspace is (cx1 blocker 1).
+    // The picker shows it in the box and on the header line, so it never rides along hidden.
+    tenantId: tenant.trim() || null,
     label,
     ...(accountProfileId ? { accountProfileId } : {}),
   };
@@ -183,3 +189,11 @@ export const COPY = {
   noModels: (ws: string) => `${ws} has no models you can open.`,
   envLabel: 'Environment. It sets what your assistant may change.',
 };
+
+/** Where Publish goes, shared by the footer and Jobs. The service model that was opened is also the default
+ *  publish destination, as connection_context reports. An explicit choice can replace it. */
+export function publishWords(p?: { available?: boolean; implied?: boolean; modelName?: string | null; database?: string | null } | null): { main: string; set: boolean; detail: string } {
+  const name = p?.modelName || p?.database || 'Published model';
+  if (p?.available) return { main: name, set: true, detail: `Publish goes to ${name}.` };
+  return { main: 'Not linked', set: false, detail: 'No published model to publish to yet.' };
+}

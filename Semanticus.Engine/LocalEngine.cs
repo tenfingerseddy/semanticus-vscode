@@ -193,6 +193,7 @@ namespace Semanticus.Engine
             ResetDescriptions();
             StopMeasureRuns();
             StopMeasureMarks();
+            StopSqlSourceTests();
             LiveConnection old;
             lock (_liveGate)
             {
@@ -1106,12 +1107,14 @@ namespace Semanticus.Engine
             // last-known one is a "switch" (item 9), a forced same-account re-sign is a "signin", else a plain "connect".
             // Read the prior account BEFORE RememberConnection overwrites it.
             var priorAccount = ConnectionRegistry.FindByEndpoint(endpoint, conn.Database)?.LastAccount;
-            var record = RememberConnection("xmla", endpoint, conn.Database, conn.Database, tenant, mode, account);   // resolved identity, only after the swap won
+            var signedInTenant = RecordTenantForOpen(tenant, mode, prepared);   // the tenant this sign-in landed in (fx171)
+            conn.TenantId = signedInTenant;
+            var record = RememberConnection("xmla", endpoint, conn.Database, conn.Database, signedInTenant, mode, account);   // resolved identity, only after the swap won
             var accountChanged = !string.Equals(priorAccount, account, StringComparison.OrdinalIgnoreCase);
             var connectKind = forceReauth ? (accountChanged ? "switch" : "signin")
                 : (!string.IsNullOrWhiteSpace(accountProfileId) && accountChanged ? "switch" : "connect");
-            RecordConnectionHistory(record, connectKind, account, endpoint, conn.Database, tenant, ok: true);
-            status.Database = conn.Database; status.ConnectionId = record?.Id; status.Account = account;
+            RecordConnectionHistory(record, connectKind, account, endpoint, conn.Database, signedInTenant, ok: true);
+            status.Database = conn.Database; status.ConnectionId = record?.Id; status.Account = account; status.TenantId = signedInTenant;
             await SafeRebroadcastWorkflowLibraryAsync();   // connection.* changed — activation may re-curate the menu (§10.6)
             return status;
         }
@@ -1233,12 +1236,25 @@ namespace Semanticus.Engine
                 return $"That saved account signs in a different way: {SignInWay(profile.Family)}. This connection uses {SignInWay(reqFamily)}. Pick an account with the same sign-in method.";
             var reqTenant = (tenantId ?? "").Trim();
             var profTenant = (profile.TenantId ?? "").Trim();
+            // A saved account signed in with no tenant named is IN its own tenant (its record says which). A connection
+            // that remembers that tenant may use it (fx171).
+            if (reqTenant.Length > 0 && string.Equals((profile.AccountTenantId ?? "").Trim(), reqTenant, StringComparison.OrdinalIgnoreCase)) return null;
             // A TENANTLESS request adopts the profile's tenant (the pickers offer same-family profiles for a tenantless
             // target, and the engine records the profile's tenant as the actual — round-3 MEDIUM). Only a GENUINE mismatch,
             // where the request names a tenant that DIFFERS from the profile's, is refused (the audit-honesty guard).
             if (reqTenant.Length > 0 && !string.Equals(profTenant, reqTenant, StringComparison.OrdinalIgnoreCase))
                 return $"That saved account belongs to a different tenant ({(string.IsNullOrEmpty(profTenant) ? "none recorded" : profTenant)}) than this connection ({reqTenant}). Open it as an account on this connection's tenant.";
             return null;
+        }
+
+        // The tenant a saved connection remembers after an open (fx171, Kane 30 Oct): the tenant the person named, else the
+        // tenant the browser or device-code sign-in actually landed in. Without it a model opened in a client's tenant
+        // kept no tenant, so the next open, the account line and the SQL endpoint sign-in all went to the home tenant.
+        // Only the saved connection and its history get it: the sign-in slot and the live auth keys stay as requested.
+        internal static string RecordTenantForOpen(string requestTenant, string mode, EntraToken.PreparedCredential prepared)
+        {
+            if (!string.IsNullOrWhiteSpace(requestTenant)) return requestTenant;
+            return EntraToken.FamilyOf(mode) == null ? null : prepared?.SignedInTenant;
         }
 
         private static string SignInWay(string mode) => mode switch
@@ -1273,6 +1289,13 @@ namespace Semanticus.Engine
                 else if (!string.IsNullOrWhiteSpace(accountProfileId))
                 {
                     EntraToken.TouchProfileUse(accountProfileId);
+                }
+                else if (prepared?.ResolvedRecord != null && EntraToken.FindProfileIdByHome(family, prepared.ResolvedRecord.HomeAccountId) is string known
+                    && !string.IsNullOrWhiteSpace(tenant))
+                {
+                    // A named tenant pinned a saved account through that tenant (fx171): touch its entry, never add a
+                    // second entry for the same account under the tenant's name.
+                    EntraToken.TouchProfileUse(known);
                 }
                 else if (prepared?.ResolvedRecord != null)
                 {
@@ -1342,7 +1365,8 @@ namespace Semanticus.Engine
             {
                 Id = record?.Id, Kind = kind, Account = account,
                 Endpoint = record?.Endpoint ?? endpoint, Database = record?.Database ?? database,
-                TenantId = tenantId, Ok = ok, Detail = detail, Throwaway = throwaway ? true : null,
+                ModelName = record?.ModelName ?? record?.Database ?? database,
+                TenantId = tenantId ?? record?.TenantId, Ok = ok, Detail = detail, Throwaway = throwaway ? true : null,
             });
         }
 
@@ -1766,6 +1790,8 @@ namespace Semanticus.Engine
             {
                 using (GuardRegistry(nameof(ForgetConnectionAsync), "connections", ConnectionRegistry.StatePath()))
                     forgotten = ConnectionRegistry.Forget(id, origin);
+                // Its History rows go with it: a forgotten connection must not linger in the timeline or connection-history.json.
+                if (forgotten) ConnectionHistory.RemoveForConnection(record?.Id ?? id);
             }
             catch (Exception ex)
             {
@@ -3542,8 +3568,9 @@ namespace Semanticus.Engine
             PublishModelSwapped(session, "Opened " + open.ModelName);
             // Record the dataset actually resolved, not the caller's possibly-empty argument — the registry is keyed on
             // it, so an empty `database` must not mint a second record for the same model on the next open.
-            var record = RememberConnection("xmla", endpoint, snap.DatabaseName, snap.DatabaseName, tenant, authMode, account);
-            RecordConnectionHistory(record, ConnectHistoryKind(forceReauth, priorAccount, account, explicitSelection: !string.IsNullOrWhiteSpace(accountProfileId)), account, endpoint, snap.DatabaseName, tenant, ok: true);
+            var signedInTenant = RecordTenantForOpen(tenant, mode, prepared);   // the tenant this sign-in landed in (fx171)
+            var record = RememberConnection("xmla", endpoint, snap.DatabaseName, snap.DatabaseName, signedInTenant, authMode, account);
+            RecordConnectionHistory(record, ConnectHistoryKind(forceReauth, priorAccount, account, explicitSelection: !string.IsNullOrWhiteSpace(accountProfileId)), account, endpoint, snap.DatabaseName, signedInTenant, ok: true);
             open.Account = account;
             // Seed the session's live-auth cache with the credential + token we just used, so the first deploy /
             // refresh reuses them with no second prompt and no re-acquisition.
@@ -5341,7 +5368,7 @@ namespace Semanticus.Engine
             var queryRec = live == null ? null : ConnectionRegistry.FindByEndpoint(live.DataSource, live.Database);
             string currentAccount, currentTenant;
             if (live != null) { currentAccount = live.Account; currentTenant = queryRec?.TenantId; }
-            else { currentAccount = origin?.Account; currentTenant = origin?.TenantId; }
+            else { currentAccount = origin?.Account; currentTenant = origin?.TenantId ?? (origin == null ? null : ConnectionRegistry.FindByEndpoint(origin.Endpoint, origin.Database)?.TenantId); }   // a tenant the sign-in landed in (fx171)
             var diskDiverged = !_restoringModelFiles && _loadedDiskStamp != null && ModelDiskChanged(_loadedDiskStamp);
             return s.ReadAsync(m => read(new SessionInfo
             {
@@ -8813,12 +8840,24 @@ namespace Semanticus.Engine
         // the reliable headless path). No live write. Errors (incl. permission gates) surface scrubbed via FabricRest.
         public async Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default, bool anotherAccount = false, string accountProfileId = null)
         {
+            // A browser picker reuses the last model's tenant before building any credential, including a forced
+            // account choice. With no saved tenant, an explicit List workspaces can still use the home account.
+            if (!DeployGuard.IsAgent(origin) && string.Equals(authMode, "interactive", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(tenantId) && string.IsNullOrWhiteSpace(accountProfileId))
+            {
+                var recent = ConnectionRegistry.List().Where(r => r.Kind == "xmla").OrderByDescending(r => r.LastUsedUtc).FirstOrDefault();
+                var profiles = EntraToken.ListProfiles();
+                tenantId = recent?.TenantId
+                    ?? profiles.FirstOrDefault(p => p.Username == recent?.LastAccount)?.AccountTenantId
+                    ?? EntraToken.ReadSavedAccount("interactive", null)?.TenantId
+                    ?? profiles.Where(p => p.Family == "interactive").OrderByDescending(p => p.LastUseUtc).FirstOrDefault()?.AccountTenantId;
+            }
             if (!anotherAccount && string.IsNullOrWhiteSpace(accountProfileId))
             {
                 var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
                 return await FabricRest.ListWorkspacesAsync(token, cancellationToken);
             }
-            var (asToken, profileId, account) = await AcquireFabricTokenAsAccountAsync(authMode, origin, anotherAccount, accountProfileId, cancellationToken);
+            var (asToken, profileId, account) = await AcquireFabricTokenAsAccountAsync(authMode, origin, anotherAccount, accountProfileId, cancellationToken, tenantId);
             var list = await FabricRest.ListWorkspacesAsync(asToken, cancellationToken);
             foreach (var w in list) { w.AccountProfileId = profileId; w.Account = account; }
             return list;
@@ -8843,8 +8882,10 @@ namespace Semanticus.Engine
         // "organizations" with the account list and reaches a client's tenant. The account is saved as a profile and the
         // default stays where it was; on a device with no default yet, the first account becomes it, as a first sign-in
         // always has. accountProfileId lists as that saved profile. The person's only: an agent never picks an account.
+        // tenantId (fx171, cx1 blocker 1): a tenant the person typed makes the new sign-in land THERE, so a client's tenant is
+        // reached; with none it stays "organizations", the account's own tenant.
         private async Task<(string Token, string ProfileId, string Account)> AcquireFabricTokenAsAccountAsync(string authMode, string origin,
-            bool anotherAccount, string accountProfileId, System.Threading.CancellationToken cancellationToken)
+            bool anotherAccount, string accountProfileId, System.Threading.CancellationToken cancellationToken, string tenantId = null)
         {
             if (DeployGuard.IsAgent(origin)) throw new InvalidOperationException(AnotherAccountForAssistant);
             var mode = string.IsNullOrWhiteSpace(authMode) ? "interactive" : authMode.Trim().ToLowerInvariant();
@@ -8858,12 +8899,13 @@ namespace Semanticus.Engine
                 EntraToken.TouchProfileUse(accountProfileId);
                 return (token, accountProfileId, pinned.Account);
             }
-            var hadDefault = EntraToken.ReadSavedAccount(mode, null) != null;
-            var prepared = await EntraToken.BuildCredentialAsync(mode, null, cancellationToken, forceReauth: true);
+            var tenant = string.IsNullOrWhiteSpace(tenantId) ? null : XmlaAuthHint.RequireTenant(tenantId);
+            var hadDefault = EntraToken.ReadSavedAccount(mode, tenant) != null;
+            var prepared = await EntraToken.BuildCredentialAsync(mode, tenant, cancellationToken, forceReauth: true);
             var fresh = await EntraToken.FabricTokenFromAsync(prepared.Credential, cancellationToken);
             var rec = prepared.PendingRecord ?? prepared.ResolvedRecord;
             if (rec == null) return (fresh, null, null);
-            var id = EntraToken.CommitProfile(family, null, rec.HomeAccountId, rec.Username, EntraToken.SerializeRecord(rec), markSignIn: true);
+            var id = EntraToken.CommitProfile(family, tenant, rec.HomeAccountId, rec.Username, EntraToken.SerializeRecord(rec), markSignIn: true);
             if (!hadDefault && id != null) EntraToken.SetDefaultProfile(id);
             return (fresh, id, rec.Username);
         }

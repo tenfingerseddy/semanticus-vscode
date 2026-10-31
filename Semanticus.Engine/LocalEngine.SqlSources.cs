@@ -121,6 +121,27 @@ namespace Semanticus.Engine
     // ============================================================================================
     public sealed partial class LocalEngine
     {
+        private readonly object sqlSourceTestLock = new();
+        private readonly Dictionary<string, HashSet<CancellationTokenSource>> sqlSourceTests = new(StringComparer.Ordinal);
+
+        public Task<bool> CancelSqlSourceTestAsync(string id)
+        {
+            lock (sqlSourceTestLock)
+            {
+                if (id == null || !sqlSourceTests.TryGetValue(id, out var tests)) return Task.FromResult(false);
+                var running = tests.Count > 0;
+                foreach (var test in tests.ToArray()) test.Cancel();
+                return Task.FromResult(running);
+            }
+        }
+
+        private void StopSqlSourceTests()
+        {
+            lock (sqlSourceTestLock)
+                foreach (var tests in sqlSourceTests.Values.ToArray())
+                    foreach (var test in tests.ToArray()) test.Cancel();
+        }
+
         /// <summary>
         /// Every table in the model, where its row count is read from, and how the last count went. This is the ONE
         /// home for a table-count check (Astra's point 5): the row IS the check, "New check, Table row count" and
@@ -454,7 +475,24 @@ namespace Semanticus.Engine
                     Ok = false, Note = gate,
                 };
 
-            return await SqlSourceProbe.TestAsync(rec, DeployGuard.IsAgent(origin), CancellationToken.None).ConfigureAwait(false);
+            using var stop = new CancellationTokenSource();
+            lock (sqlSourceTestLock)
+            {
+                if (!sqlSourceTests.TryGetValue(id, out var tests)) sqlSourceTests[id] = tests = new();
+                tests.Add(stop);
+            }
+            try { return await SqlSourceProbe.TestAsync(rec, DeployGuard.IsAgent(origin), stop.Token).ConfigureAwait(false); }
+            finally
+            {
+                lock (sqlSourceTestLock)
+                {
+                    if (sqlSourceTests.TryGetValue(id, out var tests))
+                    {
+                        tests.Remove(stop);
+                        if (tests.Count == 0) sqlSourceTests.Remove(id);
+                    }
+                }
+            }
         }
 
         /// <summary>Point one model table at a named SQL source and the table inside it. Replaces any mapping that

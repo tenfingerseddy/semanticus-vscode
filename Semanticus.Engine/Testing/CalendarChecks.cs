@@ -136,17 +136,38 @@ namespace Semanticus.Engine
         public static IEnumerable<CalendarDataFinding> JudgeRange(CalendarCheckInput i, CalendarRange r)
         {
             var name = i.Table;
-            if (r.DataFrom == null || r.DataTo == null)
-            {
-                if (i.FactColumns.Length > 0)
-                    yield return new CalendarDataFinding { Calendar = name, Check = "covers-facts", Level = "note", Sentence = "The fact tables have no dates to compare, so coverage was not checked." };
-                yield break;
-            }
             if (r.CalendarFrom == null || r.CalendarTo == null)
-            {
                 yield return new CalendarDataFinding { Calendar = name, Check = "covers-facts", Level = "problem", Sentence = "The calendar table '" + name + "' holds no dates." };
+            else
+            {
+                // The calendar's own dates can be checked even without related facts or dates in those facts.
+                var span = (long)(r.CalendarTo.Value.Date - r.CalendarFrom.Value.Date).TotalDays + 1;
+                if (r.Days > 0 && r.Days < span)
+                    yield return new CalendarDataFinding
+                    {
+                        Calendar = name, Check = "gap-in-calendar", Level = "problem",
+                        Sentence = "The calendar runs from " + Day(r.CalendarFrom.Value) + " to " + Day(r.CalendarTo.Value) + " but holds " + r.Days + " of its " + span + " days, so " + (span - r.Days) + (span - r.Days == 1 ? " day is" : " days are") + " missing in between. Facts on a missing day get no year or month.",
+                        Examples = new[] { "Calendar from " + Day(r.CalendarFrom.Value), "Calendar to " + Day(r.CalendarTo.Value) },
+                    };
+                if (r.Rows > 0 && r.Days > 0 && r.Rows != r.Days)
+                    yield return new CalendarDataFinding
+                    {
+                        Calendar = name, Check = "duplicate-dates", Level = "problem",
+                        Sentence = "The calendar table has " + r.Rows + " rows but " + r.Days + " different dates, so some dates are there twice and sums over it will count them twice.",
+                    };
+            }
+            if (i.FactColumns.Length == 0 || r.DataFrom == null || r.DataTo == null)
+            {
+                yield return new CalendarDataFinding
+                {
+                    Calendar = name, Check = "covers-facts", Level = "note",
+                    Sentence = i.FactColumns.Length == 0
+                        ? "No fact date columns are related to this calendar, so coverage was not checked."
+                        : "The fact tables have no dates to compare, so coverage was not checked.",
+                };
                 yield break;
             }
+            if (r.CalendarFrom == null || r.CalendarTo == null) yield break;
             if (r.DataFrom.Value.Date < r.CalendarFrom.Value.Date)
                 yield return new CalendarDataFinding
                 {
@@ -169,21 +190,6 @@ namespace Semanticus.Engine
                     Calendar = name, Check = "past-the-data", Level = "note",
                     Sentence = "The calendar runs to " + Day(r.CalendarTo.Value) + ", " + Months(endOfDataMonth, r.CalendarTo.Value) + " past the last date with data (" + Day(r.DataTo.Value) + "). A measure that starts from the last date of the calendar reads empty months. The rolling measures Semanticus makes start from the last date with data.",
                     Examples = new[] { "Calendar to " + Day(r.CalendarTo.Value), "Data to " + Day(r.DataTo.Value) },
-                };
-            // The facts' first and last dates can sit inside the calendar while a day between them is missing: that day's rows get no year or month.
-            var span = (long)(r.CalendarTo.Value.Date - r.CalendarFrom.Value.Date).TotalDays + 1;
-            if (r.Days > 0 && r.Days < span)
-                yield return new CalendarDataFinding
-                {
-                    Calendar = name, Check = "gap-in-calendar", Level = "problem",
-                    Sentence = "The calendar runs from " + Day(r.CalendarFrom.Value) + " to " + Day(r.CalendarTo.Value) + " but holds " + r.Days + " of its " + span + " days, so " + (span - r.Days) + (span - r.Days == 1 ? " day is" : " days are") + " missing in between. Facts on a missing day get no year or month.",
-                    Examples = new[] { "Calendar from " + Day(r.CalendarFrom.Value), "Calendar to " + Day(r.CalendarTo.Value) },
-                };
-            if (r.Rows > 0 && r.Days > 0 && r.Rows != r.Days)
-                yield return new CalendarDataFinding
-                {
-                    Calendar = name, Check = "duplicate-dates", Level = "problem",
-                    Sentence = "The calendar table has " + r.Rows + " rows but " + r.Days + " different dates, so some dates are there twice and sums over it will count them twice.",
                 };
         }
 
@@ -225,7 +231,9 @@ namespace Semanticus.Engine
         {
             var problems = findings.Count(f => f.Level == "problem"); var notes = findings.Count(f => f.Level == "note");
             if (findings.Length == 0) return "The calendar dates cover the data and the calendar is sound (" + tables + (tables == 1 ? " date table" : " date tables") + " checked).";
-            return problems + (problems == 1 ? " problem" : " problems") + (notes > 0 ? " and " + notes + (notes == 1 ? " note" : " notes") : "") + " in the calendar data.";
+            var uncheckedCoverage = findings.Count(f => f.Check == "covers-facts" && f.Level == "note");
+            return problems + (problems == 1 ? " problem" : " problems") + (notes > 0 ? " and " + notes + (notes == 1 ? " note" : " notes") : "") + " in the calendar data."
+                + (uncheckedCoverage == 0 ? "" : " Coverage was not checked for " + uncheckedCoverage + (uncheckedCoverage == 1 ? " date table." : " date tables."));
         }
 
         private static string Day(DateTime d) => d.ToString("d MMM yyyy", CultureInfo.InvariantCulture);

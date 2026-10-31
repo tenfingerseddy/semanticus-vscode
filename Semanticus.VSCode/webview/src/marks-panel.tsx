@@ -163,11 +163,13 @@ export function CardFace({ verdict, actionable, onTurnOn, description, marks, op
   onMark: (name: string) => void; onVerdict: () => void; detail?: ReactNode; checked: string; running?: boolean; onCheck: () => void; add?: ReactNode; notes?: ReactNode;
 }) {
   const rest = verdict.state ? verdict.line.slice(verdict.glyph.length + 1) : verdict.line;
+  // An empty line: the marks are still loading. It keeps its height, so nothing moves when they arrive.
+  const reading = !verdict.line;
   return <>
     <button type="button" className={`mk-verdict mk-v-${verdict.state ?? 'none'}`} data-testid="mk-verdict" disabled={!verdict.worst} onClick={onVerdict}
-      role={running ? 'status' : undefined}>
+      role={running ? 'status' : undefined} aria-busy={reading || undefined}>
       {verdict.glyph && <span className="mk-vglyph" aria-hidden="true">{verdict.glyph}</span>}
-      <span className="mk-vtext">{verdict.state ? <><b>{verdict.word}</b>{rest.slice(verdict.word.length)}</> : rest}</span>
+      <span className="mk-vtext">{verdict.state ? <><b>{verdict.word}</b>{rest.slice(verdict.word.length)}</> : rest || '\u00a0'}</span>
     </button>
     {actionable && <p className="mk-faint mk-actionable" data-testid="mk-actionable">{actionable}
       {actionable === ADVICE_OFF && onTurnOn && <> <button type="button" className="mk-link" data-testid="mk-turn-on" onClick={onTurnOn}>Turn on</button></>}</p>}
@@ -180,7 +182,7 @@ export function CardFace({ verdict, actionable, onTurnOn, description, marks, op
     {notes}
     <div className="mk-foot">
       {checked && <span className="mk-faint" data-testid="mk-last">{checked}</span>}
-      <button type="button" className={verdict.state || running ? 'mk-link' : 'sem-btn sem-btn-sm sem-btn-primary'} disabled={running} onClick={onCheck}>Check now</button>
+      <button type="button" className={verdict.state || running || reading ? 'mk-link' : 'sem-btn sem-btn-sm sem-btn-primary'} disabled={running || reading} onClick={onCheck}>Check now</button>
       {add}
     </div>
   </>;
@@ -252,7 +254,9 @@ export function MeasureMarksPanel({ reference, name, now, requestedMark }: {
   const marks = orderMarks(view.marks);
   const checked = !!view.lastChecked;
   const shown = shownMarks(marks, checked);
-  const verdict = cardVerdict(marks, match, { running: view.running, checked });
+  // Until a first read answers, nothing is known about this measure: the card says it is reading (spec 4.4).
+  const reading = !loaded && !error;
+  const verdict = cardVerdict(marks, match, { running: view.running, checked, reading });
   const latest = view.lastChecked ?? marks.map(m => m.lastRan).filter((x): x is string => !!x).sort().pop();
   const timing = marks.find(m => m.name === 'Performance' && m.progress)?.progress;
   const actionable = cardActionable(host.unscored !== undefined ? host.unscored : scoring, marks, match);
@@ -276,7 +280,7 @@ export function MeasureMarksPanel({ reference, name, now, requestedMark }: {
       notes={<>{timing && <p className="mk-note" role="status" data-testid="mk-timing">{timingLine(timing)}</p>}
         {error && <p className="mk-note mk-bad" role="alert">{error}</p>}
         {note && !error && <p className="mk-note" role="status" data-testid="mk-note">{note}</p>}</>}
-      add={<AddCheck reference={reference} marks={marks} onRecheck={recheck} />} />
+      add={<AddCheck reference={reference} marks={marks} running={view.running} onRecheck={recheck} />} />
   </div>;
 }
 
@@ -372,8 +376,9 @@ function MarkAction({ reference, mark, state, onRecheck, onKeep, onPropose, look
   return <><div className="mk-acts">{check}{where}</div>{status}</>;
 }
 
+const SAVED_CHECKING = 'Saved. Checking it now.';
 /** Add a check: the set-up of the three marks a person turns on, only for the ones that do not apply yet. */
-export function AddCheck({ reference, marks, onRecheck }: { reference: string; marks: Mark[]; onRecheck: (includePerformance?: boolean) => void }) {
+export function AddCheck({ reference, marks, running = false, onRecheck }: { reference: string; marks: Mark[]; running?: boolean; onRecheck: (includePerformance?: boolean) => void }) {
   const host = useMarksHost();
   const [menu, setMenu] = useState(false);
   const [form, setForm] = useState(false);
@@ -381,6 +386,16 @@ export function AddCheck({ reference, marks, onRecheck }: { reference: string; m
   const [busy, setBusy] = useState(false);
   const grand = marks.flatMap(m => m.cells ?? []).find(c => /grand total/i.test(c.context ?? ''))?.after ?? '';
   const [value, setValue] = useState(grand && grand !== 'BLANK' ? grand : '');
+  // "Saved. Checking it now." lasts as long as that check: it goes when the check ran the number, or when the card stops
+  // checking (rc34 tester Next 4: it stayed 30 minutes and more). `saved` holds the Trusted number result seen at the save.
+  const saved = useRef<{ ran: string | null; running: boolean } | null>(null);
+  const trustedRan = marks.find(m => m.name === 'Trusted number')?.lastRan ?? null;
+  useEffect(() => {
+    const at = saved.current;
+    if (!at) return;
+    if (running) { at.running = true; return; }
+    if (at.running || trustedRan !== at.ran) { saved.current = null; setNote(n => n === SAVED_CHECKING ? '' : n); }
+  }, [running, trustedRan]);
   const missing = ['SQL', 'Trusted number', 'Performance'].filter(n => { const m = marks.find(x => x.name === n); return !m || !applies(m); });
   if (!missing.length && !form) return null;
   const sql = () => {
@@ -401,7 +416,8 @@ export function AddCheck({ reference, marks, onRecheck }: { reference: string; m
     try {
       await host.rpc('saveTest', { id: '', kind: 'measureValue', title: `${reference.split('/').pop()}: All rows`, targetRef: reference, enabled: true,
         paramsJson: JSON.stringify({ measureRef: reference, expectedValue: value.trim(), provenance: 'person' }) });
-      setNote('Saved. Checking it now.'); setForm(false); onRecheck();
+      saved.current = { ran: trustedRan, running: false };
+      setNote(SAVED_CHECKING); setForm(false); onRecheck();
     } catch (error) { setNote(errorText(error, 'The number was not saved.')); }
     finally { setBusy(false); }
   };

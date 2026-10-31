@@ -93,8 +93,10 @@ const draw = (C, props) => renderToStaticMarkup(h(C, props));
     workspaceName: 'Contoso Finance', modelName: 'Contoso Budget', authMode: 'interactive', tenantId: null, label: 'prod' });
   assert.equal(M.workspaceChoice({ id: 'w', displayName: 'W' }, { id: 'm', displayName: 'M' }, '', 'azcli', ' contoso.com ').tenantId, 'contoso.com',
     'a tenant is carried only for the advanced sign-ins, trimmed');
-  assert.equal(M.workspaceChoice({ id: 'w', displayName: 'W' }, { id: 'm', displayName: 'M' }, '', 'interactive', 'stale.com').tenantId, null,
-    'a browser sign-in never carries a tenant left over from an advanced attempt');
+  // fx171 (cx1 blocker 1): a browser sign-in carries the tenant too, or a client's tenant cannot be reached. The tenant is in the
+  // box and on the picker's header line, so it never rides along hidden.
+  assert.equal(M.workspaceChoice({ id: 'w', displayName: 'W' }, { id: 'm', displayName: 'M' }, '', 'interactive', ' contoso.com ').tenantId, 'contoso.com',
+    'a browser sign-in carries the tenant the person typed, trimmed');
 }
 
 // ===================================================================================================
@@ -198,7 +200,8 @@ const wsView = (extra = {}) => draw(V.WorkspacePickerView, {
   assert.ok(testids(other).includes('pick-tenant'), 'a service identity names its tenant');
   assert.ok(testids(other).includes('pick-paste-address'), 'the pasted address stays, behind Other ways to sign in');
   assert.ok(testids(other).includes('pick-signin-check'), 'the service identity setup check stays, behind Other ways to sign in');
-  assert.ok(!testids(wsView({ otherOpen: true, authMode: 'interactive' })).includes('pick-tenant'), 'a browser sign-in picks its own tenant');
+  // fx171 (cx1 blocker 1): with no tenant a browser sign-in lands in the account's own tenant, so it takes one too.
+  assert.ok(testids(wsView({ otherOpen: true, authMode: 'interactive' })).includes('pick-tenant'), 'a browser sign-in can name a client\'s tenant');
 }
 
 // ===================================================================================================

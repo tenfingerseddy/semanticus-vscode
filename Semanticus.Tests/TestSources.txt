@@ -41,6 +41,7 @@ CompareAuthFallbackTests.cs
 CompatibilityRaiseUndoTests.cs
 ComposedChangeTests.cs
 ConnectionAccountHistoryTests.cs
+ConnectionFx171Tests.cs
 ConnectionContextTests.cs
 ConnectionPublicDoorTests.cs
 ConnectionRegistryTests.cs
@@ -784,8 +785,10 @@ CheckedFx31Tests.cs
 CheckedFx33Tests.cs
 CheckedFx34Tests.cs
 CheckedFx35Tests.cs
+CheckedN171Tests.cs
 CheckedFx29cTests.cs
 CheckedJ29Tests.cs
 CheckedVFx29bTests.cs
 CheckedFx30eTests.cs
 SignInAnotherAccountTests.cs
+GuestTenantSignInTests.cs

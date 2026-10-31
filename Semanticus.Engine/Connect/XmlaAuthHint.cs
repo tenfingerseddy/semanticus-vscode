@@ -287,6 +287,21 @@ namespace Semanticus.Engine
             return false;
         }
 
+        /// <summary>True for an Azure.Identity sign-in failure whose FIRST line ends at the colon ("ClientSecretCredential
+        /// authentication failed:"). The screen shows the first line only, so a reason on a later line (a wrong tenant's
+        /// AADSTS text, cx3 Q2) still reads as no reason at all.</summary>
+        public static bool HasNoFailureDetail(Exception ex)
+        {
+            if (ex == null) return false;
+            var m = (ex.Message ?? "").Split('\n')[0].Trim();
+            return m.Length == 0 || m.EndsWith(":", StringComparison.Ordinal) && m.Contains("authentication failed", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>Plain words for a sign-in that failed with no detail: what failed and what to do. No engine type names.</summary>
+        public static string SignInFailedNoDetail(bool serviceIdentity) => serviceIdentity
+            ? "The service identity could not sign in. Check the tenant and that the app is registered there. Check the client ID and client secret, then try again."
+            : "The sign-in did not work. Check the account and the tenant, then try again.";
+
         /// <summary>A short, SAFE category for a sign-in that failed before an account was chosen but was NOT a user
         /// cancellation (MED 4) — surfaced in the failed-open detail so a wrong-tenant / expired-code failure is not
         /// mislabeled a cancellation. Derived from fixed buckets (never the raw exception text), so it carries no secret.</summary>

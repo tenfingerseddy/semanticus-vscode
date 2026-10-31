@@ -27,6 +27,63 @@ namespace Semanticus.Tests
             return db.Model;
         }
 
+        [Theory]
+        [InlineData("matched")]
+        [InlineData("newMeasure")]
+        public void Fx173_check_annotations_publish_reopen_update_and_clear_without_touching_foreign_notes(string shape)
+        {
+            var src = NewModel(); var live = NewModel();
+            var names = new[] { "Semanticus.Filters.OnPurpose", "Semanticus.Totals.Expected", "Semanticus.Description.Provenance" };
+            var measure = src.Tables["Sales"].Measures["Total"];
+            src.Annotations.Add(new TOM.Annotation { Name = "Semanticus.Totals", Value = "{\"SumPassAtLeast\":0.8}" });
+            foreach (var name in names) measure.Annotations.Add(new TOM.Annotation { Name = name, Value = name.EndsWith("Provenance") ? "ai" : "true" });
+            if (shape == "newMeasure") live.Tables["Sales"].Measures.Remove(live.Tables["Sales"].Measures["Total"]);
+            live.Annotations.Add(new TOM.Annotation { Name = "OtherTool", Value = "keep" });
+
+            var dry = LiveDeploy.SyncModels(src, live, apply: false);
+            Assert.Equal(4, dry.Annotations);
+            Assert.False(live.Annotations.Contains("Semanticus.Totals"));
+            if (shape == "matched") Assert.Empty(live.Tables["Sales"].Measures["Total"].Annotations);
+            var saved = 0;
+            var published = LiveDeploy.SyncAndApply(src, live, commit: true, "ep", "db", null, () => saved++, _ => { });
+            Assert.True(published.Committed); Assert.Equal(1, saved);
+            Assert.Equal(4, published.Annotations);
+            Assert.Empty(published.Unmatched ?? System.Array.Empty<string>());
+            Assert.Contains("model", published.SyncedRefs);
+            Assert.Contains("measure:Sales/Total", published.SyncedRefs);
+            TOM.Model Reopen() => TOM.JsonSerializer.DeserializeDatabase(TOM.JsonSerializer.SerializeDatabase((TOM.Database)live.Database), null,
+                Microsoft.AnalysisServices.CompatibilityMode.PowerBI).Model;
+            var reopened = Reopen();
+            Assert.Equal(src.Annotations["Semanticus.Totals"].Value, reopened.Annotations["Semanticus.Totals"].Value);
+            Assert.Equal(.8, TotalsSettings.Read(reopened.Annotations["Semanticus.Totals"].Value).SumPassAtLeast);
+            foreach (var name in names) Assert.Equal(measure.Annotations[name].Value, reopened.Tables["Sales"].Measures["Total"].Annotations[name].Value);
+            Assert.Equal(0, LiveDeploy.SyncModels(src, live, apply: false).Annotations);
+
+            src.Annotations["Semanticus.Totals"].Value = "{\"SumPassAtLeast\":0.9}";
+            measure.Annotations["Semanticus.Description.Provenance"].Value = "human";
+            Assert.Equal(2, LiveDeploy.SyncModels(src, live, apply: true).Annotations);
+            Assert.Equal(.9, TotalsSettings.Read(Reopen().Annotations["Semanticus.Totals"].Value).SumPassAtLeast);
+            Assert.Equal("human", Reopen().Tables["Sales"].Measures["Total"].Annotations["Semanticus.Description.Provenance"].Value);
+
+            // Clearing a setting in the working model must clear the service copy. Older additive notes stay additive.
+            src.Annotations.Remove(src.Annotations["Semanticus.Totals"]);
+            foreach (var name in names) measure.Annotations.Remove(measure.Annotations[name]);
+            live.Annotations.Add(new TOM.Annotation { Name = "Semanticus_Waivers", Value = "keep old waiver" });
+            live.Tables["Sales"].Measures["Total"].Annotations.Add(new TOM.Annotation { Name = "Semanticus.Foreign", Value = "keep measure note" });
+            Assert.Equal(4, LiveDeploy.SyncModels(src, live, apply: false).Annotations);
+            Assert.True(live.Annotations.Contains("Semanticus.Totals"));
+            Assert.True(live.Tables["Sales"].Measures["Total"].Annotations.Contains(names[0]));
+            var cleared = LiveDeploy.SyncAndApply(src, live, commit: true, "ep", "db", null, () => saved++, _ => { });
+            Assert.True(cleared.Committed); Assert.Equal(2, saved); Assert.Equal(4, cleared.Annotations);
+            reopened = Reopen();
+            Assert.False(reopened.Annotations.Contains("Semanticus.Totals"));
+            foreach (var name in names) Assert.False(reopened.Tables["Sales"].Measures["Total"].Annotations.Contains(name));
+            Assert.Equal("keep", reopened.Annotations["OtherTool"].Value);
+            Assert.Equal("keep old waiver", reopened.Annotations["Semanticus_Waivers"].Value);
+            Assert.Equal("keep measure note", reopened.Tables["Sales"].Measures["Total"].Annotations["Semanticus.Foreign"].Value);
+            Assert.Equal(0, LiveDeploy.SyncModels(src, live, apply: false).Annotations);
+        }
+
         // Kane, 13 Oct: publishing a model raised to 1701 with the Plan's calendar failed on the Date table, and nothing could push the level.
         // The level goes up first and the calendar follows; a lower source level changes nothing.
         private static TOM.Model WithCalendar(TOM.Model m, int level)

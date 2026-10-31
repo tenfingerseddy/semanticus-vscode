@@ -17,7 +17,12 @@ const BTN_QUIET = 'sem-btn sem-btn-sm sem-btn-quiet';
 export function JobPicker({ job, current, options, open, onToggle, onChoose, extra, busy }:
   { job: Job; current: string; options: JobOption[]; open: boolean; onToggle: () => void; onChoose: (id: string) => void; extra?: ReactNode; busy?: boolean }) {
   return (
-    <div className="hub-job-pick">
+    <div className="hub-job-pick" onKeyDown={(e) => {
+      // The toggle reports aria-expanded while its list is open, so the hub's Escape treats it as a list that closes itself and
+      // stays put. Nothing closed it. Close it here, and keep the key from the hub so the hub stays open too.
+      if (e.key !== 'Escape' || !open) return;
+      e.stopPropagation(); e.nativeEvent?.stopPropagation?.(); onToggle();
+    }}>
       <button type="button" className="sem-field hub-job-current" data-testid={`hub-job-${job}`} aria-haspopup="listbox" aria-expanded={open} disabled={busy} onClick={onToggle}>
         <span className="min-w-0 truncate">{current}</span><span aria-hidden className="hub-job-caret">{'▾'}</span>
       </button>

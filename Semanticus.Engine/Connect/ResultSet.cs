@@ -92,6 +92,9 @@ namespace Semanticus.Engine
         // The account (UPN) this connect signed in as, when known — so the MCP door sees the identity in play, not just
         // the endpoint. Null for azcli/serviceprincipal/token (no named account) — honestly "account unknown".
         public string Account { get; set; }
+        // The tenant this connection signed in to, when known: the one named, else the one the sign-in landed in (fx171).
+        // Null for a local model and when nothing names it.
+        public string TenantId { get; set; }
     }
 
     public sealed class LocalInstance

@@ -11,11 +11,12 @@ import { DraftMark, EditMovedBanner, sameValue, useEditBase } from './editbase';
 import { draftModel, draftStore, heldDraft, useHeldDrafts } from './drafts';
 import { setPageModelIdentity } from './pagemodel';
 import { DesktopPicker, WorkspacePicker, type WorkspaceChoice } from './connectpickers';
-import { COPY as PICKER_COPY, ENV_OPTIONS, OPTION_STYLE, SIGN_IN_WAYS, signInSentence, signInToReuse, signInStopped, waitForSignIn } from './connectpickers-model';
+import { COPY as PICKER_COPY, ENV_OPTIONS, OPTION_STYLE, SIGN_IN_WAYS, publishWords, signInSentence, signInToReuse, signInStopped, waitForSignIn } from './connectpickers-model';
 import {
   type HubRecord, type HubContext, type HubPanel, type Job, type ModelEndpointList, type NotLinkedSource, type SqlEndpointInfo,
   SEARCH_FROM, defaultMoveCount, defaultMoveSentence, endpointFor, jobOptions, kindWord, pickerStillPressed, removeConfirmSentence, routeSection, rowJobs, rowSecondLine, sideId, startFormStaysOpen, testsTargetToKeep,
 } from './connectionshub-model';
+import { historyKindLabel, historySubLine, shortWhen, type HistoryEvent } from './historyrow';
 import { BTN, BTN_COMPACT, BTN_PRIMARY, BTN_QUIET, ChangePanel, DefaultConfirm, JobPicker, NotLinkedList } from './connectionshub-parts';
 
 // The Connections HUB, one page (slice C, lane C2; contract 19.1; design connections-minimal.html, Kane 24 Sep).
@@ -42,7 +43,7 @@ interface AccountProbe { id: string; account?: string; previousAccount?: string;
 // A saved Microsoft identity on this device (mirrors Engine AccountProfile) — the Phase 2 multi-account store. Holds no
 // credential: `family` is the sign-in method, `isDefault` marks the account an unqualified open of that tenant uses, and
 // `signedIn` is whether a usable saved sign-in still exists (a signed-out profile needs an interactive re-sign).
-interface AccountProfile { id: string; username: string; tenantId?: string; family?: string; lastSignInUtc?: string; lastUseUtc?: string; isDefault?: boolean; signedIn?: boolean; }
+interface AccountProfile { id: string; username: string; tenantId?: string; accountTenantId?: string; family?: string; lastSignInUtc?: string; lastUseUtc?: string; isDefault?: boolean; signedIn?: boolean; }
 interface FailedAuthAttempt { targetId: string; purpose: 'open' | 'query'; profileId?: string; username?: string; }
 
 // The live auth-prerequisite probe for an advanced sign-in method (mirrors Engine AuthPrerequisites). Presence + NAMES
@@ -52,31 +53,7 @@ interface FailedAuthAttempt { targetId: string; purpose: 'open' | 'query'; profi
 interface AuthPreqRequirement { label: string; envNames: string[]; present: boolean; }
 interface AuthPrerequisites { mode: string; ready: boolean; requirements: AuthPreqRequirement[]; cliAccount?: string; cliTenant?: string; detail?: string; keyVaultSupported: boolean; }
 
-// One device-local connection-timeline event (mirrors Engine ConnectionHistoryEvent). Holds no credential.
-interface HistoryEvent { id?: string; kind: string; account?: string; endpoint?: string; database?: string; tenantId?: string; ok: boolean; detail?: string; whenUtc?: string; }
-const historyKindLabel = (e: HistoryEvent): string => {
-  switch (e.kind) {
-    case 'connect': return e.ok ? 'Connected for queries' : 'Connect failed';
-    case 'open': return e.ok ? 'Opened' : 'Open failed';
-    case 'switch': return e.ok ? 'Switched account' : 'Account switch failed';
-    case 'signin': return e.ok ? 'Signed in' : 'Sign-in failed';
-    case 'role': return e.detail ? e.detail.charAt(0).toUpperCase() + e.detail.slice(1) : 'Role changed';
-    default: return e.ok ? e.kind : `${e.kind} failed`;
-  }
-};
-
-/** The History row's second line: who, what it was about, when. The "what" is left out when it only repeats the title. */
-const historySubLine = (e: HistoryEvent): string => {
-  const kind = historyKindLabel(e).trim().toLowerCase();
-  const about = e.detail || e.database || short(e.endpoint);
-  return [e.account, about && about.trim().toLowerCase() !== kind ? about : null, shortWhen(e.whenUtc)].filter(Boolean).join(' · ');
-};
-const shortWhen = (iso?: string): string => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-};
+// The History row words live in historyrow.ts (a test runs them).
 
 // The credential family a tenant-wide account switch acts on: only interactive / device-code sign-ins keep a switchable
 // record. azcli / serviceprincipal / token have no account picker, so account actions on them would be a false promise.
@@ -383,7 +360,7 @@ function environment(r: ConnectionRecord): { text: string; tone: 'accent' | 'war
 // Who the NEXT open of a target signs in as — ONLY a live sign-in record (probe.account); undefined when unknown. The
 // per-target lastAccount is never the prediction, only provenance ("last opened as <x>") (HIGH 3).
 function rowIdentity(account?: string, was?: string, authMode?: string | null): string {
-  if (account) return was && was !== account ? `as ${account} (was ${was})` : `as ${account}`;
+  if (account) return was && was !== account ? `opens as ${account}, last opened as ${was}` : `as ${account}`;
   if (was) return `last opened as ${was}`;
   // No account was read, but the sign-in the row uses is known: name it (a service identity has no account to show).
   return SIGN_IN_WAYS.find((w) => w.value === authMode)?.label ?? 'account unknown';
@@ -467,6 +444,15 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   const sqlNow = useRef({ row: sqlRow, form: sqlForm }); sqlNow.current = { row: sqlRow, form: sqlForm };
   const [sqlFormError, setSqlFormError] = useState<string | null>(null);
   const [sqlBusy, setSqlBusy] = useState<string | null>(null);
+  const sqlTestAttempt = useRef<{ id: string | null; stopped: boolean; cancel: () => void } | null>(null);
+  const cancelSqlTest = () => {
+    const attempt = sqlTestAttempt.current;
+    if (!attempt) return;
+    sqlTestAttempt.current = null;
+    attempt.stopped = true; attempt.cancel();
+    if (attempt.id) void rpc('cancelSqlSourceTest', attempt.id).catch(() => undefined);
+    setSqlBusy(null);
+  };
   // The saved source behind an open form can be changed from the other door (save_sql_source) while the form is open. The form
   // follows it while nothing is typed, and Save reads the source again and asks before writing an older copy over it.
   const sqlFields = (rec: SqlSourceRecord) => ({ name: rec.name || '', server: rec.server || '', database: rec.database || '', authMode: defaultSignInMode(rec), tenantId: rec.tenantId || '' });
@@ -498,14 +484,17 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   const [nlRefused, setNlRefused] = useState<SqlSourceDeleteResult | null>(null);      // a Remove the engine refused, with names
 
   const shown = open || standalone;
+  useEffect(() => { if (!shown) cancelSqlTest(); return () => cancelSqlTest(); }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
   // One way to move between the page and its few full views; the old section names land through routeSection.
   const setView = (v: MainView) => { setViewState(v); setMenuId(null); setJobPick(null); if (v !== 'open') setPanel('none'); };
   // True only when a button opened the workspace picker; a deep link (goTo) leaves it false, so that first list read stays automatic.
   const pickerPressed = useRef(false);
   // anotherAccount: the picker starts with a new sign-in for another account, not a list as the saved one (si2). A new key
   // each time, so a press while the picker is already up starts it again in the mode asked for.
-  const [pickerAsk, setPickerAsk] = useState({ another: false, key: 0 });
-  const openPicker = (anotherAccount = false) => { pickerPressed.current = true; setPickerAsk((p) => ({ another: anotherAccount, key: p.key + 1 })); setView('workspace'); };
+  const [pickerAsk, setPickerAsk] = useState<{ another: boolean; key: number; mode?: string }>({ another: false, key: 0 });
+  // `mode` names the sign-in way the list is read with; absent, the way of the model in play is reused. The account menu's
+  // Sign in asks for a browser sign-in, so it never lists as a service identity that is in use (cx1 blocker 4).
+  const openPicker = (anotherAccount = false, mode?: string) => { pickerPressed.current = true; setPickerAsk((p) => ({ another: anotherAccount, key: p.key + 1, mode })); setView('workspace'); };
   // The press belongs to the picker the button drew. It is spent when the hub closes or the person leaves the picker, so reopening the hub on this view reads automatically.
   useEffect(() => { pickerPressed.current = pickerStillPressed(pickerPressed.current, shown, view); }, [shown, view]);
   const goTo = (section: string) => { pickerPressed.current = false; const r = routeSection(section); setViewState(r.view); setPanel(r.panel); setMenuId(null); setJobPick(null); };
@@ -654,6 +643,9 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   // the same as the workspace picker's (waitForSignIn). The engine keeps a sign-in that finishes later, so Try again then needs no window.
   const [addSignIn, setAddSignIn] = useState<'waiting' | null>(null);
   const cancelAdd = useRef<() => void>(() => {});
+  // The account choice's sign-in, counted (cx1 blocker 2): Cancel moves the count on, so the sign-in the person left no longer
+  // holds every Open button. Its late answer is not shown; a model it did open still shows in the list.
+  const signInAttempt = useRef(0);
 
   if (!shown) return null;
 
@@ -670,6 +662,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   // target signed in via a switchable family (a local model uses Windows auth; azcli / service principal have no picker).
   const liveConnId = (editing?.live && editing?.kind !== 'localDesktop' ? editing?.connectionId : null) || querying?.connectionId;
   const switchable = records.find((r) => r.kind === 'xmla' && r.id === liveConnId && credentialFamily(r.authMode) != null);
+  const liveRecord = records.find((r) => r.id === liveConnId);
   // A working sign-in that keeps no saved account (a service identity, the Azure command line) still shows in the menu and
   // on the header button, so the person sees they are in (round 2 UAT N13).
   const workingWay = (() => {
@@ -691,6 +684,8 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   // picked from a list (id 'new:...') has no row yet, so its failure is returned for the form or picker to say, not drawn twice.
   const openModel = async (r: ConnectionRecord, opts?: { forceReauth?: boolean; accountProfileId?: string; makeDefault?: boolean; loginHint?: string }, purpose: 'open' | 'query' = 'open'): Promise<string | null> => {
     setBusyId('open:' + r.id); setError(null); setRowError(null); setMenuId(null); setJobPick(null);
+    const attempt = ++signInAttempt.current;
+    const left = () => attempt !== signInAttempt.current;   // the person pressed Cancel while it waited
     try {
       const s = await rpc<SessionInfo>('sessionInfo').catch(() => null);
       if (s?.hasUnsavedChanges && !openConfirm) { setPendingOpen(r); setOpenSaveFormat(s.source ? (/\.bim$/i.test(s.source) ? 'BIM' : 'TMDL') : null); setOpenConfirm(true); setBusyId(null); return null; }
@@ -699,12 +694,14 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       else if (r.kind === 'file') await rpc('open', r.endpoint, discard);
       else await rpc('openLive', r.endpoint, r.database || null, r.authMode || 'interactive', null, r.tenantId || null,
         opts?.forceReauth ?? false, opts?.accountProfileId ?? null, opts?.makeDefault ?? false, opts?.loginHint ?? null, 'human', discard);
+      if (left()) { await refresh(); await load(); await reloadHistory(); return null; }
       setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null); setOpenConfirm(false); setPendingOpen(null);
       await refresh(); await load(); await reloadHistory();
       onClose();
       return null;
     } catch (e) {
       const failure = String((e as Error).message ?? e);
+      if (left()) { await reloadHistory(); return null; }
       await reloadHistory();   // a FAILED open also appends a timeline event (a cancelled sign-in / superseded open)
       if (r.id.startsWith('new:')) return failure;
       if (isSwitchableXmla(r) && isAuthRequiredFailure(failure)) {
@@ -716,7 +713,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       } else setError(failure);
       return failure;
     }
-    finally { setBusyId(null); }
+    finally { if (!left()) setBusyId(null); }
   };
   // The person's own save, then the open: the work they were asked about is kept and nothing is thrown away. A save that fails stays on the question and says why.
   const saveThenOpen = async (r: ConnectionRecord) => {
@@ -736,28 +733,35 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     const asQuery = switchPurpose ? switchPurpose === 'query' : isQueryRole(r);   // honour explicit intent; else infer from role
     if (!asQuery) { await openModel(r, opts, 'open'); return; }
     setBusyId('open:' + r.id); setError(null); setMenuId(null);
+    const attempt = ++signInAttempt.current;
+    const left = () => attempt !== signInAttempt.current;
     try {
       await rpc('connectXmla', r.endpoint, r.database || null, r.authMode || 'interactive', null, r.tenantId || null,
         opts?.forceReauth ?? false, opts?.accountProfileId ?? null, opts?.makeDefault ?? false, opts?.loginHint ?? null);
+      if (left()) { await refresh(); await load(); await reloadHistory(); return; }
       setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null);   // the query account switch succeeded — dismiss the dialog
       await refresh(); await load(); await reloadHistory();
       announceConnectionChange();
       setNotice(`Tests and queries now run on ${nameOf(r)}.`);
     } catch (e) {
       const failure = String((e as Error).message ?? e);
+      if (left()) { await reloadHistory(); return; }
       setError(failure);
       await reloadHistory();
       if (isSwitchableXmla(r) && isAuthRequiredFailure(failure)) markFailedAuthAttempt(r, 'query', opts?.accountProfileId, opts?.loginHint);
       else setFailedAuthAttempt(null);
       recoverAccountChoice(r, 'query');   // the saved target + query purpose stay available for an explicit retry
-    } finally { setBusyId(null); }
+    } finally { if (!left()) setBusyId(null); }
   };
   // The saved accounts that can open a given target: matched by sign-in family, and by tenant when the target records
   // one (a per-tenant default is what an unqualified open uses). Newest-used first (the store already sorts them).
   const profilesFor = (r: ConnectionRecord): AccountProfile[] => {
     const family = credentialFamily(r.authMode);
     const tenant = (r.tenantId || '').toLowerCase();
-    return profiles.filter((p) => credentialFamily(p.family) === family && (!tenant || (p.tenantId || '').toLowerCase() === tenant));
+    // A saved account matches by the tenant it signed in to (its record), not only the slot it was saved under: a
+    // sign-in made with no tenant named is in the account's own tenant (fx171).
+    return profiles.filter((p) => credentialFamily(p.family) === family
+      && (!tenant || [p.tenantId, p.accountTenantId].some((t) => (t || '').toLowerCase() === tenant)));
   };
 
   // Tests and queries: the model that answers them. Whether a model CAN is the engine's call: the pickers strike out
@@ -989,13 +993,18 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
 
   // ---- SQL endpoints: one per model, set from its row ------------------------------------------------------------
   const endpointOf = (r: ConnectionRecord): SqlEndpointInfo | null => endpointFor(endpoints, r.id);
+  // Where the model lives (Kane, 30 Oct): its saved tenant, else the tenant of the saved account that last opened it. A new SQL
+  // endpoint signs in there by default, so a model in a client's tenant does not send the browser to the home tenant.
+  const modelTenantOf = (r: ConnectionRecord): string => r.tenantId
+    || profiles.find((p) => r.lastAccount && p.username.toLowerCase() === r.lastAccount.toLowerCase() && credentialFamily(p.family) === credentialFamily(r.authMode))?.accountTenantId
+    || '';
   const openEndpointForm = (r: ConnectionRecord) => {
     setMenuId(null); setSqlFormError(null); setSqlTest(null); setSqlRow(r.id);
     const ep = endpointOf(r);
     const rec = ep ? sqlSources.find((s) => s.id === ep.sourceId) : undefined;
     const fresh: SqlSourceForm = rec
       ? { id: rec.id, name: rec.name || '', server: rec.server || '', database: rec.database || '', authMode: defaultSignInMode(rec), tenantId: rec.tenantId || '' }
-      : { id: null, name: '', server: '', database: '', authMode: r.kind === 'xmla' ? (r.authMode || 'interactive') : 'interactive', tenantId: r.kind === 'xmla' ? (r.tenantId || '') : '' };
+      : { id: null, name: '', server: '', database: '', authMode: r.kind === 'xmla' ? (r.authMode || 'interactive') : 'interactive', tenantId: r.kind === 'xmla' ? modelTenantOf(r) : '' };
     // Words left on this row's form open again (the source it points at first, else any other the person typed for it).
     const held = heldSqlForm(r.id, fresh.id);
     sqlNewSeed.current = held ? (held.form.id ? null : held.base) : (fresh.id ? null : sqlFieldsOfForm(fresh));
@@ -1003,6 +1012,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   };
   // Cancel, and the end of a save or a remove: the form closes and what was typed in it is done with.
   const closeEndpointForm = () => {
+    cancelSqlTest();
     const { row, form } = sqlNow.current;
     if (form) endSqlDraft(row, form.id);
     setSqlRow(null); setSqlForm(null); setSqlFormError(null); setSqlTest(null);
@@ -1064,19 +1074,31 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   // Test signs in with the record's own way and asks for one constant; an unsaved record cannot be probed, so the
   // form saves first and says so on the button.
   const testEndpoint = async () => {
+    const attempt = { id: null as string | null, stopped: false, cancel: () => {} };
+    sqlTestAttempt.current = attempt;
     setSqlBusy('test'); setSqlFormError(null); setSqlTest(null);
     try {
       const saved = await saveRecord();
-      if (!saved?.id) return;
+      if (!saved?.id || attempt.stopped) return;
       // Save and test is a save: the source is linked to the model whose row this form is on, as Save does. Without it the same source
       // read "Connected" above and "Not linked to a model" below (UAT P33).
       const row = records.find((x) => x.id === sqlRow);
       if (row) await rpc('setModelSqlEndpoint', saved.id, row.id, 'human');
-      const result = await rpc<SqlSourceTestResult>('testSqlSource', saved.id, 'human');
-      setSqlTest(result ?? { ok: false, note: 'The test finished without saying anything.' });
+      if (attempt.stopped) return;
+      attempt.id = saved.id;
+      const wait = waitForSignIn(rpc<SqlSourceTestResult>('testSqlSource', saved.id, 'human'));
+      attempt.cancel = wait.cancel;
+      const result = await wait.done;
+      if (attempt.stopped || sqlTestAttempt.current !== attempt) return;
+      if (result.kind === 'unfinished') {
+        void rpc('cancelSqlSourceTest', saved.id).catch(() => undefined);
+        setSqlTest({ ok: false, note: 'The check did not finish. Try again.' });
+      } else setSqlTest(result.value ?? { ok: false, note: 'The test finished without saying anything.' });
     }
-    catch (e) { setSqlFormError(String((e as Error).message ?? e)); }
-    finally { setSqlBusy(null); await loadEndpoints(); }
+    catch (e) { if (!attempt.stopped) setSqlFormError(String((e as Error).message ?? e)); }
+    finally {
+      if (sqlTestAttempt.current === attempt) { sqlTestAttempt.current = null; setSqlBusy(null); await loadEndpoints(); }
+    }
   };
   const removeEndpoint = async (r: ConnectionRecord) => {
     setSqlBusy('remove'); setSqlFormError(null);
@@ -1284,12 +1306,20 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
               <span className="sem-text-meta block truncate">{[workingWay.tenant, `in use for ${workingWay.name}`].filter(Boolean).join(' · ')}</span></span>
           </div>
         )}
-        {profiles.length === 0 && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-first" disabled={busy} onClick={() => openPicker()}>Sign in</button>}
+        {/* Which account and tenant the model in play uses, in one line (cx1 gap 6): the saved accounts below can be in other tenants. */}
+        {!workingWay && currentAccount && (
+          <div className="hub-pop-item" data-testid="hub-in-use">
+            <span className="note-dot note-dot-ok" aria-hidden />
+            <span className="min-w-0 flex-1"><b className="block truncate">{currentAccount}</b>
+              <span className="sem-text-meta block truncate">{[session?.currentTenant ? `tenant ${session.currentTenant}` : 'tenant unknown', liveRecord ? `in use for ${nameOf(liveRecord)}` : 'in use'].join(' · ')}</span></span>
+          </div>
+        )}
+        {profiles.length === 0 && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-first" disabled={busy} onClick={() => openPicker(false, 'interactive')}>Sign in</button>}
         {profiles.map((p) => (
           <div key={p.id} className="hub-pop-item" data-testid="hub-profile-row">
             <span className={`note-dot ${p.signedIn ? 'note-dot-ok' : ''}`} aria-hidden />
             <span className="min-w-0 flex-1"><b className="block truncate">{p.username}</b>
-              <span className="sem-text-meta block truncate">{[p.tenantId || 'tenant unknown', methodLabel(p.family)].join(' · ')}</span></span>
+              <span className="sem-text-meta block truncate">{[p.accountTenantId || p.tenantId ? `tenant ${p.accountTenantId || p.tenantId}` : 'tenant unknown', methodLabel(p.family)].join(' · ')}</span></span>
             {!p.signedIn
               ? <button className={BTN_QUIET} data-testid="hub-profile-resignin" disabled={busy} onClick={() => { const m = records.find((rec) => rec.kind === 'xmla' && profilesFor(rec).some((pp) => pp.id === p.id)); if (m) openAccountChoice(m); else openPicker(); }}>Sign in</button>
               : p.isDefault ? <span className="sem-chip sem-chip-dot">Default</span>
@@ -1300,7 +1330,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         <div className="hub-pop-rule" />
         {switchable && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-switch-account" disabled={busy} onClick={() => openAccountChoice(switchable)}>Use another account for {nameOf(switchable)}</button>}
         {profiles.length > 0 && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-another-top" disabled={busy} onClick={() => openPicker(true)}>Sign in another account</button>}
-        <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-other-sign-in" onClick={() => openAddView()}>Other ways to sign in</button>
+        <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-other-sign-in" onClick={() => openAddView()}>Add a model by its address</button>
         <div className="hub-pop-item"><button className={BTN_QUIET} onClick={() => viewHistoryFor(null)}>History</button></div>
       </div>
     );
@@ -1313,7 +1343,9 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   function AccountDialog({ r }: { r: ConnectionRecord }) {
     const list = profilesFor(r);
     const def = defaultProfileFor(r);
-    const defName = def?.username || accountOf(r) || signedInAccount;
+    // Only an account saved for this model's tenant: the account in use elsewhere can be in another tenant (cx1 gap 5).
+    const defName = def?.username || accountOf(r);
+    const tenantWords = modelTenantOf(r);
     const purpose = switchPurpose === 'query' ? 'query' : 'open';
     const role = purpose === 'query' ? 'tests and queries' : 'opening';
     const authRequired = isAuthRequiredFailure(error || undefined);
@@ -1328,7 +1360,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     // The row the PRIMARY button acts on: an explicit pick, else the row that just failed, else the signed-in default.
     const picked = list.find((p) => p.id === pickedProfileId) || failedProfile || (def?.signedIn ? def : undefined) || list.find((p) => p.signedIn);
     const needsSignIn = !!picked && (picked.id === failedProfile?.id || !picked.signedIn);
-    const legacyPrimary = defName ? `${purpose === 'query' ? 'Query with' : 'Open with'} ${defName}` : `${purpose === 'query' ? 'Query with' : 'Open with'} the default account`;
+    const legacyPrimary = defName ? `${purpose === 'query' ? 'Query with' : 'Open with'} ${defName}` : `Sign in and ${purpose === 'query' ? 'query' : 'open'}`;
     const primaryLabel = !picked
       ? (list.length === 0 ? legacyPrimary : 'Select an account above')
       : picked.id === failedProfile?.id ? `Sign in again as ${picked.username}`
@@ -1344,7 +1376,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     return (
       <div data-testid="hub-account-dialog" data-purpose={purpose} className="sem-card mb-3">
         <div className="sem-card-title">Which account should {nameOf(r)} use for {role}?</div>
-        <div className="sem-text-meta mt-1">For this {purpose} only.</div>
+        <div className="sem-text-meta mt-1" data-testid="hub-account-where">For this {purpose} only. {tenantWords ? `Signs in at tenant ${tenantWords}.` : 'Signs in at the tenant of the account you choose.'}</div>
         {error && <div data-testid="hub-account-error" className="sem-inset mt-2 text-xs leading-4 break-words">
           <div className={`text-xs font-semibold note-line ${authRequired ? 'note-warn' : 'note-bad'}`}>{plainCause || `The last attempt failed: ${error}`}</div>
           {authRequired
@@ -1367,7 +1399,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
               {/* Selecting a row is what the primary button follows, so the identity itself is the selector. */}
               <button type="button" data-testid="hub-account-select" aria-pressed={picked?.id === p.id} className="min-w-0 flex-1 text-left" onClick={() => setPickedProfileId(p.id)}>
                 <div className="truncate text-xs font-semibold" style={{ color: 'var(--sem-fg)' }}>{p.username}</div>
-                <div className="truncate text-xs" style={{ color: 'var(--sem-muted)' }}>{[p.tenantId ? `${p.tenantId} tenant` : 'tenant unknown', failedProfile?.id === p.id ? 'sign-in needed for this connection' : p.signedIn ? 'signed in' : 'signed out', p.lastUseUtc ? `last used ${shortWhen(p.lastUseUtc)}` : null].filter(Boolean).join(' · ')}</div>
+                <div className="truncate text-xs" style={{ color: 'var(--sem-muted)' }}>{[p.accountTenantId || p.tenantId ? `tenant ${p.accountTenantId || p.tenantId}` : 'tenant unknown', failedProfile?.id === p.id ? 'sign-in needed for this connection' : p.signedIn ? 'signed in' : 'signed out', p.lastUseUtc ? `last used ${shortWhen(p.lastUseUtc)}` : null].filter(Boolean).join(' · ')}</div>
               </button>
               <div className="flex shrink-0 items-center gap-2">
                 {/* Signed-out is checked BEFORE default (MED, sol): a DEFAULT profile that is signed out must still get a
@@ -1391,7 +1423,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         </div>
         {panel !== 'account' && defaultConfirm}
         <div className="mt-3 flex justify-end gap-2">
-          <button className={BTN} onClick={() => { setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null); setError(null); }}>Cancel</button>
+          <button className={BTN} onClick={() => { signInAttempt.current++; setBusyId(null); setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null); setError(null); }}>Cancel</button>
           <button className={BTN_PRIMARY} data-testid="hub-open-default" disabled={busy || (!picked && list.length > 0)} onClick={runPrimary}>{primaryLabel}</button>
         </div>
       </div>
@@ -1413,7 +1445,8 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       { job: 'edit' as Job, current: roleValue(editing, 'None'), picker: pick('edit', roleValue(editing, 'None'), sideId(editing), (r) => void openModel(r), addLine) },
       { job: 'tests' as Job, current: roleValue(querying, 'None'), picker: pick('tests', roleValue(querying, 'None'), sideId(querying), (r) => void attachTests(r),
         <>{addLine}{querying?.available && <button type="button" className="hub-job-opt hub-job-add" data-testid="hub-job-tests-off" onClick={() => void disconnectTests()}><span>None: turn tests and queries off</span></button>}</>) },
-      { job: 'publish' as Job, current: roleValue(publishing, 'Not set'), picker: pick('publish', roleValue(publishing, 'Not set'), sideId(publishing), (r) => void setPublish(r),
+      // The footer and Jobs name the same destination, including the open service model used by default.
+      { job: 'publish' as Job, current: publishWords(publishing).main, picker: pick('publish', publishWords(publishing).main, sideId(publishing), (r) => void setPublish(r),
         <>{addLine}{publishing?.available && <button type="button" className="hub-job-opt hub-job-add" data-testid="hub-job-publish-clear" onClick={() => void clearPublish()}><span>Not set</span></button>}</>) },
     ];
     return <ChangePanel rows={rows} note={notice} onDone={() => { setPanel('none'); setJobPick(null); }} />;
@@ -1508,13 +1541,15 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   // previews whether Connect will work. It says plainly that secrets live in the environment and Key Vault is not read.
   function AuthPreflight() {
     const sp = authMode === 'serviceprincipal';
+    // The inputs being found says nothing once the sign-in itself has failed, so the chip must not keep saying Ready.
+    const signInFailedNow = !!error && (isAuthRequiredFailure(error) || /could not sign in|sign-in did not work/i.test(error));
     const names = prereq?.requirements.map((req) => `${req.label}: ${req.envNames.join(' or ')}`) ?? [];
     return (
       <div data-testid="hub-auth-preflight" className="text-xs border-t pt-3" style={{ borderColor: 'var(--sem-rule)' }}>
         <div className="flex items-center gap-2">
           <span className="sem-label">{sp ? 'Service identity setup' : 'Azure command line'}</span>
           {prereqLoading && <span className="text-xs" style={{ color: 'var(--sem-muted)' }}>Checking...</span>}
-          {!prereqLoading && prereq && <span className={`sem-chip ml-auto ${prereq.ready ? 'sem-chip-ok' : 'sem-chip-warn'}`}>{prereq.ready ? 'Ready' : 'Not ready'}</span>}
+          {!prereqLoading && prereq && <span className={`sem-chip ml-auto ${prereq.ready && !signInFailedNow ? 'sem-chip-ok' : 'sem-chip-warn'}`}>{!prereq.ready ? 'Not ready' : signInFailedNow ? 'Sign-in failed' : 'Ready'}</span>}
         </div>
         {sp ? (
           <>
@@ -1647,7 +1682,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           onClick={() => { setMenuId(null); setJobPick(null); setView('open'); setPanel(panel === 'change' ? 'none' : 'change'); }}>Jobs</button>
         <div className="hub-acct">
           <button className="sem-btn max-w-[260px]" data-testid="hub-account-button" aria-haspopup="dialog" aria-expanded={panel === 'account'}
-            onClick={() => { setMenuId(null); setPanel(panel === 'account' ? 'none' : 'account'); }} title="Your accounts">
+            onClick={() => { setMenuId(null); setPanel(panel === 'account' ? 'none' : 'account'); }} title={session?.currentTenant ? `Your accounts. In use: tenant ${session.currentTenant}` : 'Your accounts'}>
             {(signedInAccount || workingWay) && <span className="note-dot note-dot-ok" aria-hidden />}
             <span className="min-w-0 truncate">{signedInAccount || workingWay?.label || 'Sign in'}</span><span aria-hidden>{'▾'}</span>
           </button>
@@ -1699,7 +1734,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           {view === 'add' && AddView()}
           {view === 'work' && WorkView()}
           {view === 'desktop' && <DesktopPicker onBack={() => setView('open')} onUseForTests={useDesktopForTests} onOpen={openDesktop} />}
-          {view === 'workspace' && <WorkspacePicker key={pickerAsk.key} anotherAccount={pickerAsk.another} account={signedInAccount || workingWay?.label} {...(({ authMode, tenantId }) => ({ initialAuthMode: authMode, initialTenant: tenantId }))(signInToReuse(records, liveConnId))} pressedFirst={pickerPressed.current} onBack={() => setView('open')}
+          {view === 'workspace' && <WorkspacePicker key={pickerAsk.key} anotherAccount={pickerAsk.another} account={signedInAccount || workingWay?.label} {...(({ authMode, tenantId }) => ({ initialAuthMode: authMode, initialTenant: tenantId }))(signInToReuse(records, liveConnId, profiles, pickerAsk.another ? 'interactive' : pickerAsk.mode))} pressedFirst={pickerPressed.current} onBack={() => setView('open')}
             onPasteAddress={() => openAddView()} onConnect={connectPicked} />}
       </div>
       {error && !switchTarget && <div className="hub-error" role="alert">{error}</div>}

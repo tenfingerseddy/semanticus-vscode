@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "sourceHash": "19f98669c986ed04e330051745f760ef28274d969ca9208cc709fba9e4af90a2",
+  "sourceHash": "0fc98d11a3f8d7cf11a128cf85cf73a8e06895c50a354b09e23db550791fdced",
   "sources": [
     "Semanticus.Engine/McpTools.BulkMore.cs",
     "Semanticus.Engine/McpTools.CalendarChecks.cs",
@@ -41,9 +41,9 @@
     "Semanticus.VSCode/webview/src/route.ts"
   ],
   "summary": {
-    "mcpOperations": 438,
-    "rpcActions": 471,
-    "engineMethods": 463,
+    "mcpOperations": 439,
+    "rpcActions": 472,
+    "engineMethods": 464,
     "studioDestinations": 25,
     "groupedStudioDestinations": 17,
     "trackedEvidenceFiles": [
@@ -162,6 +162,7 @@
       "Semanticus.Tests/CheckedJ29Tests.cs",
       "Semanticus.Tests/CheckedL2Tests.cs",
       "Semanticus.Tests/CheckedMeasureContextTests.cs",
+      "Semanticus.Tests/CheckedN171Tests.cs",
       "Semanticus.Tests/CheckedNoSalesTests.cs",
       "Semanticus.Tests/CheckedPerformanceTests.cs",
       "Semanticus.Tests/CheckedRunPlanDoorTests.cs",
@@ -195,6 +196,7 @@
       "Semanticus.Tests/ComposerFinishLineTests.cs",
       "Semanticus.Tests/ConnectionAccountHistoryTests.cs",
       "Semanticus.Tests/ConnectionContextTests.cs",
+      "Semanticus.Tests/ConnectionFx171Tests.cs",
       "Semanticus.Tests/ConnectionJobsTests.cs",
       "Semanticus.Tests/ConnectionPublicDoorTests.cs",
       "Semanticus.Tests/ConnectionRegistryTests.cs",
@@ -290,6 +292,7 @@
       "Semanticus.Tests/Fx5TotalsTests.cs",
       "Semanticus.Tests/Fx7DisclosureTests.cs",
       "Semanticus.Tests/GitPublicOperationTests.cs",
+      "Semanticus.Tests/GuestTenantSignInTests.cs",
       "Semanticus.Tests/HandsOffRowsTests.cs",
       "Semanticus.Tests/HardMeasureWorkflowTests.cs",
       "Semanticus.Tests/HarnessFixTests.cs",
@@ -879,6 +882,7 @@
       "Semanticus.VSCode/test/composer-draft.test.mjs",
       "Semanticus.VSCode/test/connect-assistants.test.mjs",
       "Semanticus.VSCode/test/connect-pickers.test.mjs",
+      "Semanticus.VSCode/test/connections-fx171.test.mjs",
       "Semanticus.VSCode/test/connections-hub.test.mjs",
       "Semanticus.VSCode/test/connections-one-page.test.mjs",
       "Semanticus.VSCode/test/consent-card.test.mjs",
@@ -958,6 +962,8 @@
       "Semanticus.VSCode/test/free-sends-no-jev.test.mjs",
       "Semanticus.VSCode/test/fresh-connect.test.mjs",
       "Semanticus.VSCode/test/full-width-layout.test.mjs",
+      "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
+      "Semanticus.VSCode/test/fx172-performance-run-ui.test.mjs",
       "Semanticus.VSCode/test/fx29-card.test.mjs",
       "Semanticus.VSCode/test/fx29b-advice.test.mjs",
       "Semanticus.VSCode/test/fx30w.test.mjs",
@@ -1012,6 +1018,7 @@
       "Semanticus.VSCode/test/mirror-release-tools.test.mjs",
       "Semanticus.VSCode/test/model-fence-action.test.mjs",
       "Semanticus.VSCode/test/model-fence-wire.test.mjs",
+      "Semanticus.VSCode/test/n171-small-faults-ui.test.mjs",
       "Semanticus.VSCode/test/navigation.test.mjs",
       "Semanticus.VSCode/test/next-line.test.mjs",
       "Semanticus.VSCode/test/open-note.test.mjs",
@@ -2508,6 +2515,18 @@
       ]
     },
     {
+      "operation": "cancel_sql_source_test",
+      "family": "connections",
+      "releaseClass": "supported",
+      "risk": "standard",
+      "referenceEvidence": [
+        "Semanticus.Tests/OpTaxonomyTests.cs",
+        "Semanticus.Tests/SqlSourceProbeTests.cs",
+        "Semanticus.Tests/ToolMergeTests.cs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs"
+      ]
+    },
+    {
       "operation": "capture_baseline",
       "family": "change-plan-and-verified-edits",
       "releaseClass": "supported",
@@ -2910,6 +2929,7 @@
         "Semanticus.Tests/TestSuiteCoverageTests.cs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/incremental-refresh.test.mjs"
       ]
     },
@@ -2937,6 +2957,7 @@
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
         "Semanticus.VSCode/test/first-start.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/incremental-refresh.test.mjs",
         "Semanticus.VSCode/test/publish-surface.test.mjs"
       ]
@@ -2971,6 +2992,7 @@
       "referenceEvidence": [
         "Semanticus.AirSmoke/Program.cs",
         "Semanticus.Tests/ExpectedValuesVerifyTests.cs",
+        "Semanticus.Tests/GuestTenantSignInTests.cs",
         "Semanticus.Tests/KrcReconnectTests.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
         "Semanticus.Tests/SessionLifecycleTests.cs"
@@ -3208,6 +3230,7 @@
         "Semanticus.Tests/CheckedContextQueryTests.cs",
         "Semanticus.Tests/CheckedFx29aTests.cs",
         "Semanticus.Tests/CheckedFx29cTests.cs",
+        "Semanticus.Tests/CheckedFx31Tests.cs",
         "Semanticus.Tests/CheckedMeasureContextTests.cs",
         "Semanticus.Tests/CheckedPerformanceTests.cs",
         "Semanticus.Tests/CheckedRunPlanDoorTests.cs",
@@ -3761,6 +3784,7 @@
         "Semanticus.Tests/ChangeValuesTests.cs",
         "Semanticus.Tests/CheckedContextQueryTests.cs",
         "Semanticus.Tests/CheckedFx29Tests.cs",
+        "Semanticus.Tests/CheckedFx31Tests.cs",
         "Semanticus.Tests/CheckedMeasureContextTests.cs",
         "Semanticus.Tests/CheckedNoSalesTests.cs",
         "Semanticus.Tests/CheckedTimeContextTests.cs",
@@ -4139,6 +4163,7 @@
         "Semanticus.Tests/CheckedFx12Tests.cs",
         "Semanticus.Tests/CheckedFx29aTests.cs",
         "Semanticus.Tests/CheckedFx29cTests.cs",
+        "Semanticus.Tests/CheckedFx31Tests.cs",
         "Semanticus.Tests/CheckedFx8Tests.cs",
         "Semanticus.Tests/CheckedMeasureContextTests.cs",
         "Semanticus.Tests/CheckedNoSalesTests.cs",
@@ -4769,6 +4794,7 @@
         "Semanticus.Tests/CheckedContextQueryTests.cs",
         "Semanticus.Tests/CheckedFx29aTests.cs",
         "Semanticus.Tests/CheckedFx29cTests.cs",
+        "Semanticus.Tests/CheckedFx31Tests.cs",
         "Semanticus.Tests/CheckedMeasureContextTests.cs",
         "Semanticus.Tests/CheckedPerformanceTests.cs",
         "Semanticus.Tests/CheckedRunPlanDoorTests.cs",
@@ -5130,6 +5156,7 @@
         "Semanticus.Tests/CalendarChecksTests.cs",
         "Semanticus.Tests/CalendarTests.cs",
         "Semanticus.Tests/CalendarWrapperCharacterizationTests.cs",
+        "Semanticus.Tests/CheckedFx31Tests.cs",
         "Semanticus.Tests/DateTableNoTiRowTests.cs",
         "Semanticus.Tests/DryRunTests.cs",
         "Semanticus.Tests/FormulaReferenceTruthTests.cs",
@@ -5173,7 +5200,8 @@
       "referenceEvidence": [
         "Semanticus.Tests/AssistantGateStoreWriteSweepTests.cs",
         "Semanticus.Tests/AssistantGateWitnessTests.cs",
-        "Semanticus.Tests/CalendarTests.cs"
+        "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/CheckedFx31Tests.cs"
       ]
     },
     {
@@ -5227,6 +5255,7 @@
         "Semanticus.Tests/AssistantGateStoreWriteSweepTests.cs",
         "Semanticus.Tests/AssistantGateWitnessTests.cs",
         "Semanticus.Tests/BatchToolsTests.cs",
+        "Semanticus.Tests/CalendarChecksTests.cs",
         "Semanticus.Tests/ChangePlanDeleteTests.cs",
         "Semanticus.Tests/ChangeValuesTests.cs",
         "Semanticus.Tests/CheckedFx31Tests.cs",
@@ -5634,6 +5663,7 @@
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
         "Semanticus.VSCode/test/drafts-spec.test.mjs",
         "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/join13-words-after-press.test.mjs",
         "Semanticus.VSCode/test/mcp-update.integration.mjs",
         "Semanticus.VSCode/test/rpc-auth.test.mjs",
@@ -6110,6 +6140,7 @@
         "Semanticus.Tests/AssistantGateSinkTests.cs",
         "Semanticus.Tests/AssistantGateStoreWriteSweepTests.cs",
         "Semanticus.Tests/AssistantGateWitnessTests.cs",
+        "Semanticus.Tests/ConnectionFx171Tests.cs",
         "Semanticus.Tests/ConnectionPublicDoorTests.cs",
         "Semanticus.Tests/ConnectionRegistryTests.cs",
         "Semanticus.Tests/VerifyUatUndoGate2Tests.cs",
@@ -6205,6 +6236,7 @@
       "referenceEvidence": [
         "Semanticus.Tests/CheckedFx11Tests.cs",
         "Semanticus.Tests/CheckedFx29cTests.cs",
+        "Semanticus.Tests/CheckedN171Tests.cs",
         "Semanticus.Tests/DescriptionTests.cs",
         "Semanticus.Tests/MeaningRemovalSurfaceTests.cs",
         "Semanticus.VSCode/test/bridge-timeouts.test.mjs",
@@ -6228,6 +6260,7 @@
         "Semanticus.Tests/CheckedFx29cTests.cs",
         "Semanticus.Tests/CheckedFx30eTests.cs",
         "Semanticus.Tests/CheckedJ29Tests.cs",
+        "Semanticus.Tests/CheckedN171Tests.cs",
         "Semanticus.Tests/CheckedVFx29bTests.cs",
         "Semanticus.Tests/CheckedVFx29Tests.cs",
         "Semanticus.Tests/CheckVisualPickTests.cs",
@@ -6572,6 +6605,7 @@
       "releaseClass": "supported",
       "risk": "standard",
       "referenceEvidence": [
+        "Semanticus.Tests/CalendarChecksTests.cs",
         "Semanticus.Tests/DriveFinishTests.cs",
         "Semanticus.Tests/FreeMcpSurfaceTests.cs",
         "Semanticus.Tests/HandsOffRowsTests.cs",
@@ -6600,6 +6634,7 @@
         "Semanticus.Tests/CheckedFx35Tests.cs",
         "Semanticus.Tests/CheckedFx8Tests.cs",
         "Semanticus.Tests/CheckedJ29Tests.cs",
+        "Semanticus.Tests/CheckedN171Tests.cs",
         "Semanticus.Tests/CheckedPerformanceTests.cs",
         "Semanticus.Tests/CheckedRunPlanDoorTests.cs",
         "Semanticus.Tests/CheckedRunPlanTests.cs",
@@ -6613,10 +6648,12 @@
         "Semanticus.Tests/DescriptionTests.cs",
         "Semanticus.Tests/MeasureMarksDoorTests.cs",
         "Semanticus.VSCode/test/attacks-v-fx26.test.mjs",
+        "Semanticus.VSCode/test/fx172-performance-run-ui.test.mjs",
         "Semanticus.VSCode/test/fx33-cold-start-tree-marks.test.mjs",
         "Semanticus.VSCode/test/l1-check-state.test.mjs",
         "Semanticus.VSCode/test/marks-ui.test.mjs",
         "Semanticus.VSCode/test/meaning-removal.test.mjs",
+        "Semanticus.VSCode/test/n171-small-faults-ui.test.mjs",
         "Semanticus.VSCode/test/review-fx11.test.mjs",
         "Semanticus.VSCode/test/v-fx24.test.mjs",
         "Semanticus.VSCode/test/v-fx25.test.mjs",
@@ -6659,6 +6696,7 @@
         "Semanticus.Tests/CheckedFx35Tests.cs",
         "Semanticus.Tests/CheckedG1Tests.cs",
         "Semanticus.Tests/CheckedJ29Tests.cs",
+        "Semanticus.Tests/CheckedN171Tests.cs",
         "Semanticus.Tests/CheckedPerformanceTests.cs",
         "Semanticus.Tests/CheckedRunPlanDoorTests.cs",
         "Semanticus.Tests/CheckedTotalsTests.cs",
@@ -6673,7 +6711,9 @@
         "Semanticus.Tests/MeasureMarksDoorTests.cs",
         "Semanticus.Tests/MeasureMarksTests.cs",
         "Semanticus.VSCode/test/attacks-v-fx26.test.mjs",
+        "Semanticus.VSCode/test/fx172-performance-run-ui.test.mjs",
         "Semanticus.VSCode/test/marks-ui.test.mjs",
+        "Semanticus.VSCode/test/n171-small-faults-ui.test.mjs",
         "Semanticus.VSCode/test/review-fx9.test.mjs",
         "Semanticus.VSCode/test/v-fx24.test.mjs",
         "Semanticus.VSCode/test/v-fx25.test.mjs"
@@ -6962,6 +7002,7 @@
         "Semanticus.Tests/McpOwnerLossTests.cs",
         "Semanticus.Tests/OrientationTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
+        "Semanticus.Tests/StoryFiguresTests.cs",
         "Semanticus.Tests/StudioWireTests.cs",
         "Semanticus.Tests/TrialTests.cs",
         "Semanticus.VSCode/test/personality-link.test.mjs"
@@ -7996,7 +8037,8 @@
         "Semanticus.Tests/PersistentSignInTests.cs",
         "Semanticus.Tests/StateHomeTests.cs",
         "Semanticus.Tests/StateHomeVerifyTests.cs",
-        "Semanticus.VSCode/test/connections-hub.test.mjs"
+        "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs"
       ]
     },
     {
@@ -8135,6 +8177,7 @@
         "Semanticus.VSCode/test/dax-editor-live-identity.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
         "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/mcp-update.integration.mjs",
         "Semanticus.VSCode/test/reopen-behaviour.mjs",
         "Semanticus.VSCode/test/sidebar-identity.test.mjs"
@@ -8415,6 +8458,7 @@
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/connections-one-page.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/pro-feature-line.test.mjs"
       ]
     },
@@ -8633,6 +8677,7 @@
         "Semanticus.VSCode/test/drafts-spec.test.mjs",
         "Semanticus.VSCode/test/drafts-startplan-rename.test.mjs",
         "Semanticus.VSCode/test/drafts-tests-authoring.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/join8-keeps.test.mjs",
         "Semanticus.VSCode/test/marks-ui.test.mjs",
         "Semanticus.VSCode/test/psc3-fixes.test.mjs",
@@ -8861,6 +8906,7 @@
       "referenceEvidence": [
         "Semanticus.CicdSmoke/Program.cs",
         "Semanticus.RpcSmoke/Program.cs",
+        "Semanticus.Tests/GuestTenantSignInTests.cs",
         "Semanticus.Tests/NewModelPublishVerifierProbeTests.cs",
         "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/ResultContractTests.cs",
@@ -8870,6 +8916,7 @@
         "Semanticus.Tests/WorkspaceSqlEndpointListTests.cs",
         "Semanticus.VSCode/test/connect-pickers.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/publish-signin-press.test.mjs",
         "Semanticus.VSCode/test/publish-surface.test.mjs",
         "Semanticus.VSCode/test/sign-in-another-account.test.mjs",
@@ -9147,6 +9194,7 @@
         "Semanticus.Tests/CompareAuthFallbackTests.cs",
         "Semanticus.Tests/ConnectionAccountHistoryTests.cs",
         "Semanticus.Tests/ConnectionContextTests.cs",
+        "Semanticus.Tests/ConnectionFx171Tests.cs",
         "Semanticus.Tests/ConnectionRegistryTests.cs",
         "Semanticus.Tests/DecisionSwitchScopeTests.cs",
         "Semanticus.Tests/DraftModelIdentityTests.cs",
@@ -9170,6 +9218,7 @@
         "Semanticus.VSCode/test/dax-editor-live-identity.test.mjs",
         "Semanticus.VSCode/test/drafts-live-key.test.mjs",
         "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/reopen-behaviour.mjs",
         "Semanticus.VSCode/test/saved-copy-offer-wiring.test.mjs",
         "Semanticus.VSCode/test/verify-drafts-check-2.test.mjs",
@@ -9203,6 +9252,7 @@
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
         "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/join11-relay-scope.test.mjs",
         "Semanticus.VSCode/test/reopen-behaviour.mjs",
         "Semanticus.VSCode/test/solui-page-stamp.test.mjs",
@@ -9356,6 +9406,7 @@
         "Semanticus.Tests/CheckedFx35Tests.cs",
         "Semanticus.Tests/CheckedFx8Tests.cs",
         "Semanticus.Tests/CheckedJ29Tests.cs",
+        "Semanticus.Tests/CheckedN171Tests.cs",
         "Semanticus.Tests/CheckedPerformanceTests.cs",
         "Semanticus.Tests/CheckedRunPlanDoorTests.cs",
         "Semanticus.Tests/CheckedRunPlanTests.cs",
@@ -9366,8 +9417,10 @@
         "Semanticus.Tests/CheckedVRc28Tests.cs",
         "Semanticus.Tests/CheckStateTests.cs",
         "Semanticus.Tests/DescriptionTests.cs",
+        "Semanticus.VSCode/test/fx172-performance-run-ui.test.mjs",
         "Semanticus.VSCode/test/fx8-rpc.test.mjs",
         "Semanticus.VSCode/test/marks-ui.test.mjs",
+        "Semanticus.VSCode/test/n171-small-faults-ui.test.mjs",
         "Semanticus.VSCode/test/review-fx11.test.mjs",
         "Semanticus.VSCode/test/rpc-argument-parity.test.mjs"
       ]
@@ -9494,8 +9547,10 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.Tests/ConnectionAccountHistoryTests.cs",
+        "Semanticus.Tests/GuestTenantSignInTests.cs",
         "Semanticus.Tests/PersistentSignInTests.cs",
-        "Semanticus.VSCode/test/connections-hub.test.mjs"
+        "Semanticus.VSCode/test/connections-hub.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs"
       ]
     },
     {
@@ -10359,6 +10414,7 @@
         "Semanticus.Tests/CheckedFx35Tests.cs",
         "Semanticus.Tests/CheckedFx8Tests.cs",
         "Semanticus.Tests/CheckedJ29Tests.cs",
+        "Semanticus.Tests/CheckedN171Tests.cs",
         "Semanticus.Tests/CheckedPerformanceTests.cs",
         "Semanticus.Tests/CheckedRunPlanDoorTests.cs",
         "Semanticus.Tests/CheckedRunPlanTests.cs",
@@ -10369,6 +10425,7 @@
         "Semanticus.Tests/CheckedVRc28Tests.cs",
         "Semanticus.Tests/CheckStateTests.cs",
         "Semanticus.Tests/DescriptionTests.cs",
+        "Semanticus.VSCode/test/fx172-performance-run-ui.test.mjs",
         "Semanticus.VSCode/test/fx8-rpc.test.mjs",
         "Semanticus.VSCode/test/marks-ui.test.mjs",
         "Semanticus.VSCode/test/review-fx11.test.mjs",
@@ -10557,6 +10614,7 @@
         "Semanticus.Tests/VerifyUatUndoGate2Tests.cs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/rpc-name-parity.test.mjs",
         "Semanticus.VSCode/test/save-class-expected-values.test.mjs",
         "Semanticus.VSCode/test/sql-token-host-card.test.mjs",
@@ -10580,6 +10638,7 @@
         "Semanticus.Tests/CheckedFx33Tests.cs",
         "Semanticus.Tests/CheckedFx34Tests.cs",
         "Semanticus.Tests/CheckedFx35Tests.cs",
+        "Semanticus.Tests/CheckedN171Tests.cs",
         "Semanticus.Tests/CheckedVfx23Tests.cs",
         "Semanticus.Tests/CheckedVFx27Tests.cs",
         "Semanticus.Tests/CheckedVFx28Tests.cs",
@@ -10973,6 +11032,7 @@
         "Semanticus.Tests/CheckedFx29cTests.cs",
         "Semanticus.Tests/CheckedFx30eTests.cs",
         "Semanticus.Tests/CheckedJ29Tests.cs",
+        "Semanticus.Tests/CheckedN171Tests.cs",
         "Semanticus.Tests/CheckedTotalsTests.cs",
         "Semanticus.Tests/CheckedVFx29bTests.cs",
         "Semanticus.Tests/CheckedVFx29Tests.cs",
@@ -11545,6 +11605,7 @@
         "Semanticus.Tests/CheckedPerformanceTests.cs",
         "Semanticus.Tests/CheckedRunPlanDoorTests.cs",
         "Semanticus.Tests/CheckStateTests.cs",
+        "Semanticus.VSCode/test/fx172-performance-run-ui.test.mjs",
         "Semanticus.VSCode/test/marks-ui.test.mjs",
         "Semanticus.VSCode/test/save-class-expected-values.test.mjs",
         "Semanticus.VSCode/test/stale-editors-round2.test.mjs"
@@ -11602,6 +11663,7 @@
         "Semanticus.VSCode/test/connections-one-page.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
         "Semanticus.VSCode/test/first-start.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/save-class-expected-values.test.mjs",
         "Semanticus.VSCode/test/stale-editors-round2.test.mjs"
       ]
@@ -12608,7 +12670,8 @@
         "Semanticus.Tests/CheckStateTests.cs",
         "Semanticus.Tests/EngineBuildIdentityTests.cs",
         "Semanticus.Tests/OpTaxonomyTests.cs",
-        "Semanticus.Tests/ToolMergeTests.cs"
+        "Semanticus.Tests/ToolMergeTests.cs",
+        "Semanticus.VSCode/test/fx172-performance-run-ui.test.mjs"
       ]
     },
     {
@@ -12690,6 +12753,7 @@
         "Semanticus.Tests/AssistantGateWitnessTests.cs",
         "Semanticus.Tests/CalendarAssociationTests.cs",
         "Semanticus.Tests/CalendarTests.cs",
+        "Semanticus.Tests/CheckedFx31Tests.cs",
         "Semanticus.VSCode/test/calendars-page.test.mjs"
       ]
     },
@@ -12700,8 +12764,10 @@
       "risk": "standard",
       "referenceEvidence": [
         "Semanticus.Tests/SqlSourceDoorTests.cs",
+        "Semanticus.Tests/SqlSourceProbeTests.cs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/first-start.test.mjs",
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/studio-wire.test.mjs"
       ]
     },

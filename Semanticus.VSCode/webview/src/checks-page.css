@@ -2,7 +2,11 @@
 .cp-head { margin-bottom: var(--sem-space-4); }
 .cp-head h1 { font-size: var(--sem-text-page); line-height: var(--sem-lh-page); font-weight: 600; margin: 0; }
 .cp-head .va-of { font-size: var(--sem-text-body); margin-left: var(--sem-space-1); }
-.cp-list { border: var(--sem-hairline) solid var(--sem-rule); border-radius: var(--sem-radius-control); background: var(--sem-surface); overflow: hidden; }
+/* No overflow clip: a row's More menu opens past the list's edge (rc34 tester Next 2: Turn off and Delete were cut off). The first
+   and last rows round their own corners instead. */
+.cp-list { border: var(--sem-hairline) solid var(--sem-rule); border-radius: var(--sem-radius-control); background: var(--sem-surface); }
+.cp-rowwrap:first-child > .cp-row { border-top-left-radius: var(--sem-radius-control); border-top-right-radius: var(--sem-radius-control); }
+.cp-rowwrap:last-child > .cp-row:last-child { border-bottom-left-radius: var(--sem-radius-control); border-bottom-right-radius: var(--sem-radius-control); }
 .cp-list:empty { display: none; }
 .cp-rowwrap + .cp-rowwrap { border-top: var(--sem-hairline) solid var(--sem-rule); }
 .cp-row { display: flex; align-items: center; position: relative; min-height: var(--sem-row); }

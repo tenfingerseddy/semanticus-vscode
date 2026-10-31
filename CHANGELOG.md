@@ -7,7 +7,37 @@ All notable changes to Semanticus are recorded here. The format follows
 > with what verification. [`PLAN.md`](docs/PLAN.md) is the forward roadmap (what's next, not what shipped);
 > the per-commit narrative that used to live in PLAN's "Shipped & verified" section now lives here.
 
-## [Unreleased]
+## [1.7.1] - 2026-10-31
+
+### Fixed
+
+- The footer, Jobs and the assistant name the same publish destination for an open service model.
+- Cancel or closing Connections ends a SQL endpoint test and restores Save and Remove without a reload.
+- The Plan and the assistant show the same AI readiness letter and exact score.
+- A failed service identity sign-in gives a plain reason, also when the reason came on a second line, and shows Sign-in failed.
+- Workspace sign-in uses the saved tenant, or waits for a tenant or List workspaces before opening the browser.
+- Calendar edits now keep every reader mark Unknown until publish, including direct edits and Undo or Redo.
+- On purpose, Totals settings and Description source now stay with a live publish, including cleared settings.
+- Calendar checks find empty calendars, missing days and duplicate dates without fact dates, and say when coverage was not checked.
+
+### Fixed: signing in to a client tenant
+
+- A saved connection now keeps its tenant. The next open, the account line and a new SQL endpoint no longer fall back to your home account.
+- A new SQL endpoint signs in to the tenant of its model, or of the account that last opened it.
+- The account line says which account opens the model. A row reads "opens as" one account and "last opened as" another when they differ.
+- The menu and the account choice name the account and the tenant in use. The choice says "Sign in and open" when no saved account fits.
+- Cancel ends the wait, so Open is no longer greyed out. Sign in in the menu now starts a browser sign-in.
+- A sign-in that fails gives a plain reason, and the setup chip says "Sign-in failed".
+- History rows name the model, the account and the tenant. Forget removes the History rows of that connection.
+- Escape closes the Jobs menu.
+
+### Fixed: small faults in Checks
+
+- The measure card holds its layout while the marks load.
+- The More menu on a check (Edit, Turn off, Delete) can be pressed again.
+- A Trusted number or SQL result from a measure run also shows on the Checks page, with its time.
+- "Saved. Checking it now." goes when the check ends.
+- A run that another screen started shows on every screen as "Checking N of M", with Stop.
 
 ## [1.7.0] - 2026-10-30
 

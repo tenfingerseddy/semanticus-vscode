@@ -17,6 +17,14 @@ public sealed class CheckStateChange
     public string SessionId { get; set; }
     public long Version { get; set; }
     public MeasureCheckCache[] States { get; set; } = Array.Empty<MeasureCheckCache>();
+    /// <summary>Whether a run is going on as this push leaves, with its count: every run plan shows a run another screen started
+    /// (rc34 tester Next 5). Never null, so the wire always carries it.</summary>
+    public MeasureRunActivity Run { get; set; } = MeasureRunActivity.Idle;
+}
+
+public sealed record MeasureRunActivity(bool Active, int Done, int Total)
+{
+    public static readonly MeasureRunActivity Idle = new(false, 0, 0);
 }
 
 /// <summary>The one place a mark gets its verdict. Every copy that leaves the engine passes through Finish, so the

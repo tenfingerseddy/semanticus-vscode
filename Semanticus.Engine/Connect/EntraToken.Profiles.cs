@@ -28,6 +28,10 @@ namespace Semanticus.Engine
         // a fresh Microsoft prompt (their action); an AGENT gets an honest AuthenticationRequiredException, never a prompt
         // (DisableAutomaticAuthentication). So governance never claims more than "a sign-in is saved here".
         public bool SignedIn { get; set; }
+        /// <summary>The tenant this account's saved sign-in is in, read from the sign-in record itself. A sign-in made with
+        /// no tenant named lands in the account's own tenant, and <see cref="TenantId"/> (the slot it was saved under) is
+        /// then empty, so this is what a screen shows and what matches the account to a model in that tenant.</summary>
+        public string AccountTenantId { get; set; }
     }
 
     public static partial class EntraToken
@@ -188,6 +192,7 @@ namespace Semanticus.Engine
                     LastUseUtc = e.LastUseUtc,
                     IsDefault = defaultHome != null && string.Equals(NormHome(defaultHome), NormHome(e.HomeAccountId), StringComparison.Ordinal),
                     SignedIn = LoadRecordFromJson(e.RecordJson) != null,
+                    AccountTenantId = LoadRecordFromJson(e.RecordJson)?.TenantId ?? e.TenantId,
                 });
             }
             // Newest use first — the picker's most-likely choice sits at the top.
@@ -205,6 +210,16 @@ namespace Semanticus.Engine
                 return rec?.HomeAccountId;
             }
             catch { return null; }
+        }
+
+        // The saved account with this identity in this family, whatever slot it was saved under: an open that pinned it
+        // through its tenant touches that entry instead of adding a second one for the same account.
+        internal static string FindProfileIdByHome(string family, string homeAccountId)
+        {
+            if (!PersistenceSupported || string.IsNullOrWhiteSpace(homeAccountId)) return null;
+            var home = NormHome(homeAccountId);
+            return ReadProfilesForDisplay().FirstOrDefault(p => string.Equals(p.Family, family, StringComparison.Ordinal)
+                && string.Equals(NormHome(p.HomeAccountId), home, StringComparison.Ordinal))?.Id;
         }
 
         internal static AccountProfile FindProfile(string id)

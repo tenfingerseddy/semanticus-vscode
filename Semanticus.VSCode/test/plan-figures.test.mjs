@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeLoader, webview } from './helpers/webview-load.mjs';
+import { makeLoader, makeHookRuntime, webview, req } from './helpers/webview-load.mjs';
 
 const load = makeLoader();
 const F = load('plan-figures-model.ts');
@@ -19,6 +19,47 @@ async function check(name, fn) {
   try { await fn(); console.log(`ok - ${name}`); } catch (e) { failures++; console.error(`not ok - ${name}\n${e.stack}`); }
 }
 const strip = { bestPractice: 'D', bestPracticeScore: 64, tasksDone: 8, tasksAll: 20, tracks: [] };
+
+await check('FX174: the first grade frame uses the confirmed letter beside the exact score', () => {
+  let shown;
+  const React = req('react');
+  const { renderToStaticMarkup } = req('react-dom/server');
+  const { PlanFigures } = makeLoader({
+    './personality/motion': { GradeFlip: (p) => { shown = p; return p.grade; } },
+    './personality/settings': { usePersonalitySettings: () => ({ reducedMotion: true }) },
+  })('plan-figures.tsx');
+  const html = renderToStaticMarkup(React.createElement(PlanFigures, { grade: { letter: 'F', score: 56.9 }, strip: null }));
+  assert.equal(shown.from, 'F', 'a confirmed F must never start from an invented D');
+  assert.match(html, /56\.9/);
+});
+
+await check('FX174: a new AI grade shows its exact score before any animation frame', () => {
+  const runtime = makeHookRuntime();
+  const react = { ...runtime.React, useId: () => 'grade-test' };
+  const { PlanFigures } = makeLoader({
+    './personality/motion': { GradeFlip: (p) => p.grade },
+    './personality/settings': { usePersonalitySettings: () => ({ reducedMotion: false }) },
+  }, react)('plan-figures.tsx');
+  const oldRequest = globalThis.requestAnimationFrame, oldCancel = globalThis.cancelAnimationFrame;
+  globalThis.requestAnimationFrame = () => 1;
+  globalThis.cancelAnimationFrame = () => {};
+  let grade = { letter: 'F', score: 56.9 };
+  try {
+    const h = runtime.renderHook(() => {
+      const figures = PlanFigures({ grade, strip: null });
+      const figure = figures.props.children[0];
+      const view = figure.type(figure.props);
+      const value = view.props.children.find((c) => c?.type?.name === 'GradeValue');
+      return value.type(value.props);
+    });
+    grade = { letter: 'B', score: 80.1 }; h.rerender();
+    const score = h.result.props.children.find((c) => c?.props?.['data-testid'] === 'fig-ai-score');
+    assert.equal(score.props.children, 80.1, 'the new letter must not stand beside the old or an invented score');
+  } finally {
+    runtime.unmount();
+    globalThis.requestAnimationFrame = oldRequest; globalThis.cancelAnimationFrame = oldCancel;
+  }
+});
 
 await check('three figures, in order, each from its own source', () => {
   const f = F.figuresOf({ letter: 'A', score: 91 }, strip);

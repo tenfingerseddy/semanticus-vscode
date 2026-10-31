@@ -5936,7 +5936,7 @@ async function quickOpenModelCommand(tree: ModelTreeProvider) {
         // Who the next open will actually sign in as. When that's unknown (no live sign-in record) we say so — and only
         // name the last-used account as provenance ("last opened as <x>"), never as the prediction (HIGH 3).
         const identity = account
-            ? (was && was !== account ? `as ${account} (was ${was})` : `as ${account}`)
+            ? (was && was !== account ? `opens as ${account}, last opened as ${was}` : `as ${account}`)
             : (was ? `last opened as ${was}` : 'account unknown');
         // The account button only makes sense for a switchable sign-in family (interactive / device-code); azcli /
         // service principal have no picker, so those rows carry only Query + Manage.

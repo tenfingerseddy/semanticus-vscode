@@ -175,7 +175,7 @@ interface AuthPrerequisites { mode: string; ready: boolean; requirements: AuthPr
 
 /** The setup check for the command-line and service identity sign-ins: what the engine can see before you connect.
  *  Names and presence only, never a secret. A probe that fails falls back to plain guidance, never a dead end. */
-export function SignInCheck({ authMode, tenant }: { authMode: string; tenant: string }) {
+export function SignInCheck({ authMode, tenant, failure }: { authMode: string; tenant: string; failure?: string | null }) {
   const [probe, setProbe] = useState<AuthPrerequisites | null>(null);
   const [checking, setChecking] = useState(true);
   useEffect(() => {
@@ -190,12 +190,13 @@ export function SignInCheck({ authMode, tenant }: { authMode: string; tenant: st
   }, [authMode, tenant]);
 
   const sp = authMode === 'serviceprincipal';
+  const failed = !!failure && /could not sign in|sign-in did not work|authentication failed|AADSTS/i.test(failure);
   return (
     <div className="sem-inset sem-stack sem-text-meta" data-testid="pick-signin-check">
       <div className="sem-inline">
         <span style={{ color: 'var(--sem-fg)' }}>{sp ? 'Service identity setup' : 'Azure command line'}</span>
         {checking ? <span className="sem-push">Checking...</span>
-          : probe && <span className={`sem-chip sem-push ${probe.ready ? 'sem-chip-ok' : 'sem-chip-warn'}`}>{probe.ready ? 'Ready' : 'Not ready'}</span>}
+          : probe && <span className={`sem-chip sem-push ${probe.ready && !failed ? 'sem-chip-ok' : 'sem-chip-warn'}`}>{failed ? 'Sign-in failed' : probe.ready ? 'Ready' : 'Not ready'}</span>}
       </div>
       {sp ? (
         probe && probe.requirements.length > 0
@@ -214,6 +215,7 @@ export function SignInCheck({ authMode, tenant }: { authMode: string; tenant: st
 }
 
 export interface WorkspacePickerViewProps {
+  waitingToList?: boolean;
   account?: string | null;
   /** A new sign-in for another account is under way: the header asks for the account, not "as" the saved one. */
   askingAccount?: boolean;
@@ -279,12 +281,14 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
     <section className="sem-grid" data-testid="pick-workspace">
       <Head title={COPY.workspaceTitle} onBack={p.onBack}>
         <span className="sem-push flex min-w-0 max-w-full flex-wrap items-center justify-end gap-x-2">
-          <span className="sem-text-meta min-w-0 truncate" data-testid="pick-as">{p.account ? `as ${p.account}` : p.askingAccount ? COPY.anotherAccountAsk : 'You may be asked to sign in'}</span>
+          <span className="sem-text-meta min-w-0 truncate" data-testid="pick-as">{[p.account ? `as ${p.account}` : p.askingAccount ? COPY.anotherAccountAsk : 'You may be asked to sign in', p.tenant.trim() ? `tenant ${p.tenant.trim()}` : ''].filter(Boolean).join(', ')}</span>
           {p.onAnotherAccount && <button type="button" className={BTN_QUIET} data-testid="pick-another-account" disabled={p.busy} onClick={p.onAnotherAccount}>{COPY.anotherAccount}</button>}
         </span>
       </Head>
 
-      {p.engine?.state === 'starting' ? (
+      {p.waitingToList ? (
+        <p className="sem-text-meta">Choose a tenant, or list workspaces for your account.</p>
+      ) : p.engine?.state === 'starting' ? (
         <div className="sem-list-row sem-text-meta" aria-live="polite" data-testid="pick-engine-starting">{COPY.engineStarting}</div>
       ) : p.engine?.state === 'failed' ? (
         <div className="sem-inline">
@@ -355,15 +359,14 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
                 {SIGN_IN_WAYS.map((o) => <option key={o.value} value={o.value} style={OPTION_STYLE}>{o.label}</option>)}
               </select>
             </label>
-            {advanced && (
-              <label className="sem-field-label">{p.authMode === 'serviceprincipal' ? 'Tenant' : 'Tenant (optional)'}
-                <input data-testid="pick-tenant" className="sem-field" value={p.tenant} autoComplete="off" placeholder="contoso.com"
-                  onChange={(e) => p.onTenant(e.target.value)} />
-              </label>
-            )}
-            {advanced && <button type="button" className={`${BTN_SM} sem-push`} data-testid="pick-ws-relist" onClick={p.onRetry}>List workspaces</button>}
+            {/* Every way, a browser sign-in too: the tenant is how a model in a client's tenant is reached (cx1 blocker 1). */}
+            <label className="sem-field-label">{p.authMode === 'serviceprincipal' ? 'Tenant' : 'Tenant (optional)'}
+              <input data-testid="pick-tenant" className="sem-field" value={p.tenant} autoComplete="off" placeholder="contoso.com"
+                onChange={(e) => p.onTenant(e.target.value)} />
+            </label>
+            <button type="button" className={`${BTN_SM} sem-push`} data-testid="pick-ws-relist" onClick={p.onRetry}>List workspaces</button>
           </div>
-          {advanced && <SignInCheck authMode={p.authMode} tenant={p.tenant} />}
+          {advanced && <SignInCheck authMode={p.authMode} tenant={p.tenant} failure={p.workspaces.kind === 'failed' ? p.workspaces.message : null} />}
           <div className="sem-inline">
             <span className="sem-text-meta">A workspace this list cannot show?</span>
             <button type="button" className={BTN_QUIET} data-testid="pick-paste-address" onClick={p.onPasteAddress}>Paste an address instead</button>
@@ -387,7 +390,8 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
   // Another account is a browser sign-in, whatever way the last model was opened.
   const startMode = anotherAccount ? 'interactive' : initialAuthMode;
   const [authMode, setAuthMode] = useState(startMode);
-  const [tenant, setTenant] = useState(isAdvancedSignIn(startMode) ? initialTenant : '');
+  const [tenant, setTenant] = useState(initialTenant);
+  const [waitingToList, setWaitingToList] = useState(!initialTenant.trim());
   const [accountPick, setAccountPickState] = useState<AccountPick>(anotherAccount ? { ...SAVED_ACCOUNT, mode: 'another' } : SAVED_ACCOUNT);
   const accountPickRef = useRef(accountPick);
   const setAccountPick = (v: AccountPick) => { accountPickRef.current = v; setAccountPickState(v); };
@@ -396,7 +400,7 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
   const [models, setModels] = useState<Load<WorkspaceModel> | null>(null);
   const [modelId, setModelId] = useState<string | null>(null);
   const [env, setEnv] = useState('');
-  const [otherOpen, setOtherOpen] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(!initialTenant.trim());
   const [busy, setBusy] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [engine, setEngine] = useState<EngineView>({ state: 'ok' });
@@ -408,9 +412,12 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
   const modelGen = useRef(0);
   const live = useRef(true);
   useEffect(() => () => { live.current = false; }, []);
-  const tenantArg = () => (isAdvancedSignIn(authMode) ? (tenant.trim() || null) : null);
+  // A tenant typed in the box is used by every sign-in way (cx1 blocker 1): a browser sign-in with no tenant lands in the
+  // account's own tenant, so a model in a client's tenant was out of reach. The box and the header line show it.
+  const tenantArg = () => (tenant.trim() || null);
 
   const loadWorkspaces = async (pressed = true) => {
+    setWaitingToList(false);
     const mine = ++wsGen.current;
     ++modelGen.current;
     lastPressed.current = pressed;
@@ -468,7 +475,7 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
   // "List workspaces", so a half-typed domain is never sent.
   // A page opened by a deep link reads with the saved sign-in only. One a person opened with a button (pressedFirst), or choosing another way to sign in, is the person's press.
   const firstRead = useRef(true);
-  useEffect(() => { const first = firstRead.current; firstRead.current = false; void loadWorkspaces(pressedFirst || !first); }, [authMode]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const first = firstRead.current; firstRead.current = false; if (tenant.trim()) void loadWorkspaces(pressedFirst || !first); else { setOtherOpen(true); setWaitingToList(true); } }, [authMode]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const pickWorkspace = async (id: string) => {
     const mine = ++modelGen.current;
@@ -498,11 +505,12 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
 
   return (
     <WorkspacePickerView account={accountPick.mode === 'saved' ? account : accountPick.account} askingAccount={accountPick.mode === 'another'}
-      onAnotherAccount={authMode === 'interactive' ? () => { setAccountPick({ ...SAVED_ACCOUNT, mode: 'another' }); void loadWorkspaces(); } : undefined}
+      onAnotherAccount={authMode === 'interactive' ? () => { setAccountPick({ ...SAVED_ACCOUNT, mode: 'another' }); if (tenant.trim()) void loadWorkspaces(); else { setOtherOpen(true); setWaitingToList(true); } } : undefined}
+      waitingToList={waitingToList}
       workspaces={workspaces} engine={engine} wsId={wsId} models={models} modelId={modelId} env={env}
       authMode={authMode} tenant={tenant} otherOpen={otherOpen} busy={busy} connectError={connectError}
       onBack={onBack} onRetry={() => void loadWorkspaces()} onPickWorkspace={(id) => void pickWorkspace(id)} onPickModel={setModelId}
-      onEnv={setEnv} onAuthMode={(m) => { setAuthMode(m); if (!isAdvancedSignIn(m)) setTenant(''); if (m !== 'interactive') setAccountPick(SAVED_ACCOUNT); }} onTenant={setTenant}
+      onEnv={setEnv} onAuthMode={(m) => { setAuthMode(m); if (m !== 'interactive') setAccountPick(SAVED_ACCOUNT); }} onTenant={setTenant}
       onToggleOther={() => setOtherOpen((v) => !v)} onPasteAddress={onPasteAddress} onConnect={() => void connect()}
       signIn={signIn} onCancelSignIn={cancelWorkspaces} onOpenOther={() => setOtherOpen(true)} />
   );

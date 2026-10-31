@@ -61,7 +61,7 @@ namespace Semanticus.Tests
         // 400 on 12 Oct 2026 (399 plus connect_assistant): connect_assistant (lane m15/connect-any, Connect another assistant) joined Connections and targets, 31 to 32.
         private static readonly Dictionary<string, Dictionary<string, int>> Ratified = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal)
         {
-            ["Open a model and connect"] = new Dictionary<string, int> { ["Connections and targets"] = 32 },
+            ["Open a model and connect"] = new Dictionary<string, int> { ["Connections and targets"] = 33 },
             ["See what is in the model"] = new Dictionary<string, int>
             {
                 ["Measures, DAX and queries"] = 13, ["Reports and what uses this model"] = 9, ["Speed and size"] = 7,
@@ -147,8 +147,8 @@ namespace Semanticus.Tests
                 Assert.False(string.IsNullOrWhiteSpace(o.Question), o.Name);
                 Assert.False(string.IsNullOrWhiteSpace(o.Shelf), o.Name);
             });
-            Assert.Equal(438, catalog.Length); // L2 (1.7) adds set_measure_filters_on_purpose, L1 (1.7) stop_measure_run and keep_measure_edit; exact membership remains checked above.
-            Assert.Equal(438, OpTaxonomy.Count);
+            Assert.Equal(439, catalog.Length); // FX174 adds cancel_sql_source_test beside its SQL source test; exact membership remains checked above.
+            Assert.Equal(439, OpTaxonomy.Count);
         }
 
         [Fact]
@@ -290,7 +290,7 @@ namespace Semanticus.Tests
             {
                 var e = new LocalEngine(new SessionManager(), new FreeTier(), ws);
                 var cat = await e.GetOpCatalogAsync();
-                Assert.Equal(438, cat.Length); // L2 (1.7) adds set_measure_filters_on_purpose, L1 (1.7) stop_measure_run and keep_measure_edit.
+                Assert.Equal(439, cat.Length); // FX174 adds cancel_sql_source_test beside its SQL source test.
                 Assert.All(cat, o => Assert.False(string.IsNullOrWhiteSpace(o.Question) || string.IsNullOrWhiteSpace(o.Shelf), o.Name));
                 var wf = cat.Single(o => o.Name == "start_workflow");
                 Assert.Equal("Set the rules of the work", wf.Question);

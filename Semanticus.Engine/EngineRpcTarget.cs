@@ -417,6 +417,7 @@ namespace Semanticus.Engine
         public Task<SqlSourceRecord> saveSqlSource(string id, string name, string server, string database, string authMode, string tenantId, string origin = "human", string expectedJson = null) => _engine.SaveSqlSourceAsync(id, name, server, database, authMode, tenantId, _origin, expectedJson);
         public Task<SqlSourceDeleteResult> deleteSqlSource(string id, string origin = "human") => _engine.DeleteSqlSourceAsync(id, _origin);
         public Task<SqlSourceTestResult> testSqlSource(string id, string origin = "human") => _engine.TestSqlSourceAsync(id, _origin);
+        public Task<bool> cancelSqlSourceTest(string id) => _engine.CancelSqlSourceTestAsync(id);
         public Task<TableSourceMappingInfo> setTableSourceMapping(string table, string sqlSourceId, string schema = null, string entity = null, string origin = "human", string expectedJson = null) => _engine.SetTableSourceMappingAsync(table, sqlSourceId, schema, entity, _origin, expectedJson);
         public Task<bool> clearTableSourceMapping(string table, string origin = "human") => _engine.ClearTableSourceMappingAsync(table, _origin);
         public Task<TableSourceMappingList> listTableMappings() => _engine.ListTableSourceMappingsAsync();

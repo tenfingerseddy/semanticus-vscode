@@ -23,7 +23,11 @@ namespace Semanticus.Tests
             var card = await f.Engine.ReadingCardAsync(withAfter: false);
 
             Assert.Equal(ai.Grade, card.Grade);
-            Assert.Equal((int)Math.Round(ai.Overall, MidpointRounding.AwayFromZero), card.Score);
+            // FX174: keep the exact scan value on both doors, including fractional scores near a grade boundary.
+            var summary = await McpTools.GetModelSummary(f.Engine);
+            Assert.Equal(ai.Overall, card.Score);
+            Assert.Equal(summary.Readiness.Overall, card.Score);
+            Assert.Equal(summary.Readiness.Grade, card.Grade);
 
             Assert.NotNull(plan.Strip);
             Assert.Equal(bpa.BestPractice, plan.Strip.BestPractice);

@@ -102,7 +102,7 @@ namespace Semanticus.Engine
                 "CaptureQueryPlanAsync", "ProbeMeasureAsync", "BlameValueAsync", "ListValueHistoryAsync",
                 "CompareBaselineAsync", "RunDmvAsync", "TryTestAsync", "GetMeasureMarksAsync", "RunMeasurePlanAsync", "SweepMeasureChecksAsync");
             NoPreview("Changes nothing in the model or its files, but it clears or stops something the engine keeps, which a rehearsal's rollback does not bring back.",
-                "CancelDaxAsync", "ClearCacheAsync", "ClearReferenceBindingAsync", "SetPlanItemAsync", "SetPlanItemsAsync", "ConfigureMeasureSweepAsync",
+                "CancelDaxAsync", "CancelSqlSourceTestAsync", "ClearCacheAsync", "ClearReferenceBindingAsync", "SetPlanItemAsync", "SetPlanItemsAsync", "ConfigureMeasureSweepAsync",
                 "StopMeasureRunAsync");
             NoPreview("A check that runs rehearsals of its own, so it cannot run inside one.", "ReplayCheckWorkflowAsync");
             Pass("A read of the sanctioned assistant queue.", "ListAssistantRequestsAsync");

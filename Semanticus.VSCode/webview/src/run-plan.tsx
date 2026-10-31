@@ -65,12 +65,29 @@ export function RunPlan({ measures, onRan, progress }: { measures: PlanMeasure[]
   const [note, setNote] = useState('');
   const [running, setRunning] = useState(false);
   const asked = useRef(0);
+  const planning = useRef<Promise<RunPlanView | null> | null>(null);
+  const waitingForPlan = useRef(false);
+  const runAttempt = useRef(0);
   const replan = (perf: boolean) => {
     const mine = ++asked.current;
-    host.rpc<RunPlanView>('planMeasureRun', { cap: 40, includePerformance: perf }).then(p => { if (mine === asked.current) setPlan(Array.isArray(p?.picks) ? p : null); })
-      .catch(error => { if (mine === asked.current) setNote(errorText(error, 'The run plan could not be made.')); });
+    planning.current = host.rpc<RunPlanView>('planMeasureRun', { cap: 40, includePerformance: perf }).then(p => {
+      const next = Array.isArray(p?.picks) ? p : null;
+      if (mine === asked.current) setPlan(next);
+      return next;
+    }).catch(error => { if (mine === asked.current) setNote(errorText(error, 'The run plan could not be made.')); return null; });
   };
   useEffect(() => { replan(include); const off = host.onChange(() => replan(include)); return off; }, [include]);
+  // A run another screen started: the engine's check-state push says a run is going on, with its count, so this plan shows it
+  // and offers no Run (rc34 tester Next 5: Properties kept an active Run while the Checks page ran). Its end makes the plan again.
+  const [elsewhere, setElsewhere] = useState<{ done: number; total: number } | null>(null);
+  const runSeen = useRef(false);
+  useEffect(() => host.onCheckState?.(change => {
+    if (!change || typeof change !== 'object' || Array.isArray(change) || !('run' in change)) return;
+    const next = (change as { run?: { active?: boolean; done?: number; total?: number } | null }).run;
+    if (next?.active) { runSeen.current = true; setElsewhere({ done: next.done ?? 0, total: next.total ?? 0 }); return; }
+    setElsewhere(null);
+    if (runSeen.current) { runSeen.current = false; replan(include); }
+  }), [include]);
   const tickedAsk = useRef(0);
   useEffect(() => {
     if (!ticked.length) { setTickedPlan(null); return; }
@@ -91,16 +108,32 @@ export function RunPlan({ measures, onRan, progress }: { measures: PlanMeasure[]
     };
     return host.onCheckState?.(count) ?? (() => {});
   };
-  const stop = () => { void host.rpc('stopMeasureRun').catch(error => setNote(errorText(error, 'The run could not be stopped.'))); };
+  const stop = () => {
+    // Stop also ends a Run that is still waiting for its selected plan. Its eventual reply must not start checks.
+    if (waitingForPlan.current) { waitingForPlan.current = false; runAttempt.current++; setRunning(false); }
+    void host.rpc('stopMeasureRun').catch(error => setNote(errorText(error, 'The run could not be stopped.')));
+  };
   const run = async (ask: RunPlanView | null) => {
     if (!ask) return;
-    setSelectedRun(null); setChoosing(false);
+    setSelectedRun(null); setChoosing(false); setDone(0);
     setRunning(true); setNote('');
-    const unwatch = watch(ask.picks.map(p => p.measureRef));
+    const mine = ++runAttempt.current;
+    waitingForPlan.current = true;
+    let unwatch = () => {};
     // The rows take the run's results before the done line shows (rc24 release 2, gap 3).
-    try { const result = await host.rpc<RunResult>('runMeasurePlan', ask.id); onRan?.(result?.results ?? []); setNote(ranWords(result)); }
+    try {
+      // Include performance and the refresh after Stop can still be planning when Run is pressed. Await that request,
+      // rather than execute the previous plan while the screen already shows the new choice (FX172).
+      const selected = await (planning.current ?? Promise.resolve(ask));
+      if (mine !== runAttempt.current) return;
+      if (!selected) throw new Error('The run plan could not be made.');
+      waitingForPlan.current = false;
+      unwatch = watch(selected.picks.map(p => p.measureRef));
+      const result = await host.rpc<RunResult>('runMeasurePlan', selected.id);
+      onRan?.(result?.results ?? []); setNote(ranWords(result));
+    }
     catch (error) { setNote(errorText(error, 'The run did not finish.')); }
-    finally { unwatch(); setRunning(false); }
+    finally { unwatch(); if (mine === runAttempt.current) { waitingForPlan.current = false; setRunning(false); } }
   };
   const checkSelected = async () => {
     // A fresh plan of exactly the ticked set, so the run cannot fall back to the default plan.
@@ -132,7 +165,8 @@ export function RunPlan({ measures, onRan, progress }: { measures: PlanMeasure[]
   };
   const tickedTime = tickedPlan ? planSummary(tickedPlan, include).time : null;
   const added = plan ? aboutTime(planSeconds(plan, true) - planSeconds(plan, false)).replace(/^About/, 'about') : '';
-  const shown = running && progress ? progress : { done, total: shownPlan?.picks.length ?? 0 };
+  const shown = running && progress ? progress : !running && elsewhere ? elsewhere : { done, total: shownPlan?.picks.length ?? 0 };
+  const busy = running || !!elsewhere;
   const choose: ReactNode = <div className="rp-choose" data-testid="plan-choose-panel">
     {!picking && <ChooseBody plan={plan} include={include} added={added} name={name} more={more}
       onInclude={on => { setSelectedRun(null); setInclude(on); }} onMore={g => setMore(s => { const n = new Set(s); n.has(g) ? n.delete(g) : n.add(g); return n; })}
@@ -166,9 +200,9 @@ export function RunPlan({ measures, onRan, progress }: { measures: PlanMeasure[]
     </div>}
   </div>;
   return <section className="rp" data-testid="run-plan" aria-label="Run plan">
-    <PlanLine sentence={summary ? summary.sentence : 'Making the plan.'} running={running} done={shown.done} total={shown.total} choosing={choosing} canRun={!!plan}
+    <PlanLine sentence={summary ? summary.sentence : 'Making the plan.'} running={busy} done={shown.done} total={shown.total} choosing={choosing} canRun={!!plan}
       onChoose={() => setChoosing(!choosing)} onRun={() => void run(plan)} onStop={stop} />
-    {choosing && !running && choose}
+    {choosing && !busy && choose}
     {note && <p className="mk-note" role="status" data-testid="plan-note">{note}</p>}
   </section>;
 }

@@ -817,8 +817,7 @@ namespace Semanticus.Engine
             NoteNextStepChecks(run);   // 1.5: a finished run moves the Next line on from "Run your checks"
             lock (_recentTestRuns)
             {
-                if (checksPageSession != sessionId) { checksPageResults.Clear(); checksPageDefinitionVersions.Clear(); checksPageResultTimes.Clear(); checksPageRelationships = null; checksPageRelationshipsWhen = null; checksPageWhen = null; }
-                checksPageSession = sessionId;
+                ChecksPageFor(sessionId);
                 if (run.Scope?.Partial != true) checksPageWhen = run.When;
                 foreach (var result in run.Reconciles.Where(r => !string.IsNullOrEmpty(r.DefId)))
                 {
@@ -830,6 +829,30 @@ namespace Semanticus.Engine
                 if (run.Scope?.Ran?.Contains("relationships") == true) { checksPageRelationships = run.Relationships; checksPageRelationshipsWhen = run.When; }
                 _recentTestRuns.Add(run);
                 while (_recentTestRuns.Count > RecentTestRunCap) _recentTestRuns.RemoveAt(0);
+            }
+            _sessions.Bus.PublishActivity(new ActivityEvent { Kind = "checks_page_changed", Origin = "system", Label = "Checks updated", Ok = true });
+        }
+
+        // Called under _recentTestRuns: the Checks page results belong to one model session.
+        private void ChecksPageFor(string sessionId)
+        {
+            if (checksPageSession != sessionId) { checksPageResults.Clear(); checksPageDefinitionVersions.Clear(); checksPageResultTimes.Clear(); checksPageRelationships = null; checksPageRelationshipsWhen = null; checksPageWhen = null; }
+            checksPageSession = sessionId;
+        }
+
+        /// <summary>A saved number or SQL check that a measure's run checked is the Checks page's answer for that check too: its row
+        /// read "Not run yet" while the card showed Trusted number passed (rc34 tester Next 3). Keyed by the saved definition as
+        /// the page lists it, so an edit of the check drops the answer, as for a Checks page run.</summary>
+        private void RememberMarkCheck(Session session, TestDefinition definition, ReconcileOutcome outcome)
+        {
+            if (string.IsNullOrEmpty(definition?.Id) || outcome == null) return;
+            outcome.DefId = definition.Id;
+            lock (_recentTestRuns)
+            {
+                ChecksPageFor(session.Id);
+                checksPageResults[definition.Id] = outcome;
+                checksPageResultTimes[definition.Id] = DateTimeOffset.UtcNow.ToString("o");
+                checksPageDefinitionVersions[definition.Id] = System.Text.Json.JsonSerializer.Serialize(definition);
             }
             _sessions.Bus.PublishActivity(new ActivityEvent { Kind = "checks_page_changed", Origin = "system", Label = "Checks updated", Ok = true });
         }

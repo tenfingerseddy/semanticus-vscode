@@ -294,6 +294,9 @@ public sealed partial class LocalEngine
         {
             if (measureRunsStopped || _sessions.Current != prepared.Session || prepared.Session.Revision != prepared.Revision) return new() { StoppedOnEdit = true };
             activeMeasureRun = stop;
+            // Every screen's run plan shows this run from the push, also the one that did not start it (rc34 tester Next 5).
+            measureRunActivity = new(true, 0, prepared.Plan.Picks.Length);
+            PublishCheckStates(prepared.Session);
         }
         var results = new Dictionary<string, MeasureCheckCache>(StringComparer.Ordinal);
         var token = stop.Token;
@@ -365,6 +368,7 @@ public sealed partial class LocalEngine
                 lock (marksLock) lock (measureRunLock)
                 {
                     EnsureMeasureRunCurrent(prepared, token);
+                    measureRunActivity = measureRunActivity with { Done = Math.Min(measureRunActivity.Total, measureRunActivity.Done + 1) };
                     // The row is readable before the whole run returns: the write pushes it. A check result is not a model edit.
                     results[pick.MeasureRef] = WriteCheckState(prepared.Session, pick.MeasureRef, previous =>
                     {
@@ -395,7 +399,13 @@ public sealed partial class LocalEngine
             SettleOpenRuns(token);
             lock (measureRunLock)
             {
-                if (activeMeasureRun == stop) activeMeasureRun = null;
+                if (activeMeasureRun == stop)
+                {
+                    activeMeasureRun = null;
+                    // The end of the run is pushed, so a screen that did not start it offers Run again.
+                    measureRunActivity = MeasureRunActivity.Idle;
+                    if (_sessions.Current == prepared.Session) PublishCheckStates(prepared.Session);
+                }
                 if (_sessions.Current == prepared.Session) SaveMeasureCache(prepared.Session);
             }
         }
@@ -464,10 +474,11 @@ public sealed partial class LocalEngine
             var reportUses = (reports?.Reports ?? Array.Empty<ReportUsage>()).SelectMany(r =>
                 (r.Visuals?.Length > 0 ? r.Visuals.SelectMany(v => v.UsedRefs) : r.UsedRefs ?? Array.Empty<string>()))
                 .GroupBy(r => r, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
-            // Structural inputs invalidate data checks after a relationship, source or column edit.
+            // Structural inputs invalidate data checks after a relationship, source, column or calendar edit.
             var structure = JsonSerializer.Serialize(new
             {
                 ContextColumns = markSnapshot.ContextModel.Columns,
+                Calendars = MarkStructure(model).Where(p => p.Value.Calendar != null).OrderBy(p => p.Key, StringComparer.Ordinal),
                 Tables = model.Tables.Select(t => new { t.Name, Formula = (t as CalculatedTable)?.Expression, Partitions = t.Partitions.Select(p => p.Expression),
                     Columns = t.Columns.Select(c => new { c.Name, Type = c.DataType.ToString(), Formula = (c as CalculatedColumn)?.Expression,
                         Source = (c as DataColumn)?.SourceColumn, SortBy = c.SortByColumn?.Name }) }),

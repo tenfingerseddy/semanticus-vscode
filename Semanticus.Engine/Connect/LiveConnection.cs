@@ -43,6 +43,8 @@ namespace Semanticus.Engine
         /// THIS, never a registry last-used hint (which can be stale after a tenant-wide account switch). Null for
         /// azcli / serviceprincipal / local (integrated Windows) / token — honestly "account unknown".</summary>
         public string Account { get; set; }
+        /// <summary>The tenant this connection signed in to, set on the open path with <see cref="Account"/> (fx171).</summary>
+        public string TenantId { get; set; }
         /// <summary>The resolved catalog (database) the connection is bound to — captured after Open (ADOMD
         /// resolves the real dataset even when open_live passed an empty Initial Catalog). Needed by ClearCache,
         /// whose XMLA command requires a &lt;DatabaseID&gt;. Empty until a successful open.</summary>
@@ -379,7 +381,8 @@ namespace Semanticus.Engine
             var record = ConnectionRegistry.FindByEndpoint(DataSource, Database);
             // Account is the identity THIS connection authenticated with (set on the open path) — not a registry hint,
             // which can name a stale account after a tenant-wide switch. Null reads honestly as "account unknown".
-            return new ConnectionStatus { Connected = true, Kind = Kind, DataSource = DataSource, Database = Database, ConnectionId = record?.Id, Account = Account };
+            return new ConnectionStatus { Connected = true, Kind = Kind, DataSource = DataSource, Database = Database, ConnectionId = record?.Id, Account = Account,
+                TenantId = TenantId ?? record?.TenantId };
         }
 
         /// <summary>

@@ -278,6 +278,7 @@
     "autogenerate_spec_from_model": "Builds or checks the model from files or a spec. The model tree shows the result.",
     "build_model_from_spec": "Builds or checks the model from files or a spec. The model tree shows the result.",
     "cancel_query": "A call about the assistant itself or a quick look. It stays where the screen is.",
+    "cancel_sql_source_test": "Stops the SQL endpoint check. The person stays on the page they are using.",
     "capture_baseline": "Notes, consent and saved points for the assistant. Nothing here needs a page.",
     "check_reports": "A read for the assistant. It gives the person nothing new to look at.",
     "check_workflow": "A read for the assistant. It gives the person nothing new to look at.",

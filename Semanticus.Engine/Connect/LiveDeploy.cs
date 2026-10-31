@@ -2159,18 +2159,27 @@ namespace Semanticus.Engine
             return false;
         }
 
-        // The annotation families Semanticus itself authors and must carry across a deploy — the finding-waiver store
-        // (Semanticus.Analysis.Waivers.Annotation) and TabularEditor's per-object BPA ignore list (+ its historical typo,
-        // which TE still reads). Deployed on a dedicated accounted channel; a FOREIGN annotation is never read or touched
+        // The annotation families Semanticus itself authors and must carry across a deploy: check settings, Description
+        // provenance, the finding-waiver store and TabularEditor's per-object BPA ignore list (including its old typo).
+        // Deployed on a dedicated accounted channel; a FOREIGN annotation is never read or touched
         // by it. (The Fabrikam model's waivers had silently never reached the service — an A/100 offline read as B/80.6 live.)
         internal static bool IsOwnedAnnotation(string name)
-            => name == "Semanticus_Waivers"
+            => IsCheckAnnotation(name)
+            || name == "Semanticus_Waivers"
             || name == "BestPracticeAnalyzer_IgnoreRules"
             || name == "BestPractizeAnalyzer_IgnoreRules";
 
+        // These settings describe the current working model. Absence means the person cleared the setting;
+        // unlike the older additive notes, a live-only value must go away too. Keep the list exact.
+        private static bool IsCheckAnnotation(string name)
+            => name == LocalEngine.FiltersOnPurposeAnnotation
+            || name == "Semanticus.Totals"
+            || name == "Semanticus.Totals.Expected"
+            || name == LocalEngine.DescriptionProvenanceAnnotation;
+
         // Deploy the OWNED annotations from one annotation-bearing object to its live counterpart: add or update each
-        // owned annotation the session carries; NEVER delete a live-only one (absence never deletes) and never read a
-        // foreign one. Returns the count applied (each counts once). On dry-run it counts + logs but mutates nothing.
+        // owned annotation the session carries, and remove cleared check settings. Older live-only notes stay additive.
+        // Never touch a foreign note. Returns the count applied (each counts once). Dry-run counts without mutation.
         // The collections are dynamic — the raw-TOM annotation collection type differs per owner (model/table/column/
         // measure); the strong-typed Annotation values flow through unchanged (mirrors ModelCompare.CopyAnnotations).
         private static int DeployOwnedAnnotations(dynamic src, dynamic live, bool apply, string objRef, List<string> changes, HashSet<string> synced)
@@ -2186,6 +2195,14 @@ namespace Semanticus.Engine
                     else live.Add(new TOM.Annotation { Name = sa.Name, Value = sa.Value });
                 }
                 n++; changes.Add("annotation " + objRef + ":" + sa.Name);
+                synced?.Add(objRef);
+            }
+            foreach (var la in ((System.Collections.IEnumerable)live).Cast<TOM.Annotation>()
+                .Where(a => a?.Name != null && IsCheckAnnotation(a.Name)).ToList())
+            {
+                if ((bool)src.Contains(la.Name)) continue;
+                if (apply) live.Remove(la);
+                n++; changes.Add("clear annotation " + objRef + ":" + la.Name);
                 synced?.Add(objRef);
             }
             return n;

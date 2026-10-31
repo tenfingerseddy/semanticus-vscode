@@ -2335,6 +2335,9 @@ namespace Semanticus.Engine
             [Description("Id from list_sql_sources to update an existing source; omit to create a new one")] string id = null)
             => await engine.SaveSqlSourceAsync(id, name, server, database, authMode, tenantId, "agent");
 
+        [McpServerTool(Name = "cancel_sql_source_test"), Description("Stop a pending SQL source test, including its sign-in, by source id. Returns whether a test was running. The saved source and its last completed result stay in place. FREE.")]
+        public static Task<bool> CancelSqlSourceTest(IEngine engine, string id) => engine.CancelSqlSourceTestAsync(id);
+
         [McpServerTool(Name = "test_sql_source"), Description("Open a connection to one saved SQL source using ITS OWN sign-in and run a single test query (SELECT 1). Returns ok plus a plain-words note, and records the outcome on the source so list_sql_sources can show it. A failure is recorded as a failure and is never rounded up to ok. This reads nothing from the user's data: one constant value, no table touched. Agent-origin calls go through the standard QueryData permission gate on that SQL target and can never trigger an interactive sign-in: a stale cached sign-in fails honestly instead of opening a browser on the user's machine. Use it before a check or a table mapping depends on the source. FREE.")]
         public static async Task<SqlSourceTestResult> TestSqlSource(
             IEngine engine,

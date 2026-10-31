@@ -71,6 +71,8 @@ namespace Semanticus.Engine
             { "set_model_sql_endpoint", ("Open a model and connect", "Connections and targets") },
             { "list_model_sql_endpoints", ("Open a model and connect", "Connections and targets") },
             { "test_sql_source", ("Open a model and connect", "Connections and targets") },
+            // The stop control stays beside its SQL endpoint test. Placement flagged for ratification.
+            { "cancel_sql_source_test", ("Open a model and connect", "Connections and targets") },
             // See what is in the model > Measures, DAX and queries (7)
             { "evaluate_and_log", ("See what is in the model", "Measures, DAX and queries") },
             { "get_dependencies", ("See what is in the model", "Measures, DAX and queries") },

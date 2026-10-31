@@ -101,7 +101,8 @@ const view = (extra = {}) => renderToStaticMarkup(h(V.WorkspacePickerView, {
   const menu = hub.slice(a, b);
   assert.doesNotMatch(menu, /Pick a workspace model to sign in/, 'no "pick a workspace model" line when there is nothing to pick');
   assert.match(menu, /data-testid="hub-sign-in-first"/, 'an empty menu has one Sign in');
-  assert.match(menu, /profiles\.length === 0[\s\S]{0,400}openPicker\(\)/, 'and it starts the sign-in at once, on the workspace page');
+  // fx171 (cx1 blocker 4): a browser sign-in, not a list read as the service identity in use.
+  assert.match(menu, /profiles\.length === 0[\s\S]{0,400}openPicker\(false, 'interactive'\)/, 'and it starts the browser sign-in at once, on the workspace page');
   assert.match(menu, /profiles\.length > 0 &&[\s\S]{0,200}hub-sign-in-another-top|profiles\.length === 0 \? null/, 'Sign in another account shows only when there is an account already');
 }
 console.log('fresh-connect ok');

@@ -17,6 +17,7 @@ namespace Semanticus.Engine
         public string Endpoint { get; set; }
         public string Database { get; set; }
         public string TenantId { get; set; }
+        public string ModelName { get; set; }      // the model's display name when known, so a failed row can name what it was about
         public bool Ok { get; set; }               // outcome — an attempt that failed is still worth remembering
         public string Detail { get; set; }         // short human note (e.g. why a switch happened); never a credential
         public string WhenUtc { get; set; }
@@ -83,6 +84,24 @@ namespace Semanticus.Engine
                 }
             }
             catch { /* a convenience log never fails the connection it is a log of */ }
+        }
+
+        /// <summary>Remove every row that belongs to one connection (Forget). Best-effort like Append: a failure leaves the
+        /// rows, never fails the forget it follows. Rows with no connection id are not touched.</summary>
+        public static void RemoveForConnection(string connectionId)
+        {
+            if (string.IsNullOrWhiteSpace(connectionId)) return;
+            try
+            {
+                lock (Gate)
+                using (AcquireLock())
+                {
+                    var all = ReadForWrite(out var unreadable);
+                    var kept = all.Where(e => !string.Equals(e.Id, connectionId, StringComparison.OrdinalIgnoreCase)).ToList();
+                    if (kept.Count != all.Count || unreadable) Save(kept, unreadable);
+                }
+            }
+            catch { /* a convenience log never fails the forget it is a log of */ }
         }
 
         /// <summary>The timeline newest-first, optionally filtered to one connection. Read-only; a parse failure just

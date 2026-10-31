@@ -266,6 +266,51 @@ namespace Semanticus.Tests
             Assert.Empty(r.Findings);
         }
 
+        [Theory]
+        [InlineData(false, "empty")]
+        [InlineData(true, "empty")]
+        [InlineData(false, "gap")]
+        [InlineData(true, "gap")]
+        [InlineData(false, "duplicate")]
+        [InlineData(true, "duplicate")]
+        [InlineData(false, "sound")]
+        [InlineData(true, "sound")]
+        public async Task Fx173_calendar_checks_run_without_fact_dates_and_never_claim_coverage(bool relatedFacts, string shape)
+        {
+            using var engine = await CalendarModelAsync();
+            if (!relatedFacts)
+            {
+                var relationship = Assert.Single((await engine.GetLineageAsync()).Edges.Where(e => e.Kind == "relationship"));
+                // Delete the fact table, which also removes its relationship. Keep the calendar and all its mappings.
+                Assert.Equal("column:Sales/OrderDate", relationship.From);
+                await engine.DeleteObjectAsync("table:Sales", "human");
+            }
+            var asked = new List<string>();
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "x", "db", q =>
+            {
+                asked.Add(q);
+                return q.Contains("calMin")
+                    ? Row(("calMin", shape == "empty" ? null : D(2024, 1, 1)),
+                        ("calMax", shape == "empty" ? null : D(2024, 1, 3)),
+                        ("rows", shape == "empty" ? 0L : shape == "duplicate" ? 4L : shape == "gap" ? 2L : 3L),
+                        ("days", shape == "empty" ? 0L : shape == "gap" ? 2L : 3L), ("f0min", null), ("f0max", null))
+                    : Row(("b0", 0L), ("b1", 0L), ("b2", 0L), ("b3", 0L), ("s0", 0L), ("s1", 0L), ("s2", 0L));
+            }));
+            var result = await engine.CheckCalendarDataAsync("table:Date");
+            Assert.Equal("found", result.Status);
+            var coverage = Assert.Single(result.Findings.Where(f => f.Check == "covers-facts" && f.Level == "note"));
+            Assert.Contains("coverage was not checked", coverage.Sentence);
+            Assert.Contains("Coverage was not checked", result.Sentence);
+            Assert.DoesNotContain("covers the data", result.Sentence);
+            Assert.DoesNotContain("cover the data", result.Sentence);
+            var problems = result.Findings.Where(f => f.Level == "problem").ToArray();
+            if (shape == "empty") Assert.Contains(problems, f => f.Sentence.Contains("holds no dates"));
+            if (shape == "gap") Assert.Contains(problems, f => f.Check == "gap-in-calendar");
+            if (shape == "duplicate") Assert.Contains(problems, f => f.Check == "duplicate-dates");
+            if (shape == "sound") Assert.Empty(problems);
+            Assert.Contains(asked, q => q.Contains("ISBLANK ( 'Date'[Year] )"));
+        }
+
         [Fact]
         public async Task The_data_check_reports_a_broken_calendar_as_problems()
         {

@@ -212,7 +212,7 @@ namespace Semanticus.Engine.Entitlement
             "set_display_folder", "set_measure_format", "set_measure_format_expression", "set_plan_item",
             "set_model_sql_endpoint", "publish_new_model", "set_properties", "set_property", "set_publish_destination", "set_relationship_active",
             "set_relationship_cardinality", "set_relationship_crossfilter", "set_report_scope", "set_sort_by_column",
-            "set_summarize_by", "set_synonyms", "set_verified_mode", "test_sql_source",
+            "set_summarize_by", "set_synonyms", "set_verified_mode", "test_sql_source", "cancel_sql_source_test",
             "undo_change", "unused_objects", "unwaive_finding", "update_measure",
             "validate_dax", "validate_rule", "verify_dax_equivalence", "vpaq_scan",
             "waive_finding",
@@ -339,7 +339,7 @@ namespace Semanticus.Engine.Entitlement
             "setDescription", "setDisplayFolder", "setMeasureFormat", "setMeasureFormatExpression",
             "setModelSqlEndpoint", "setObjectProperties", "setObjectProperty", "setPlanItem", "setPublishDestination",
             "setRelationship", "setRelationshipCardinality", "setReportScope", "setSynonyms",
-            "setVerifiedMode", "testSqlSource", "undo", "unusedObjects",
+            "setVerifiedMode", "testSqlSource", "cancelSqlSourceTest", "undo", "unusedObjects",
             "getPlanHistory",   // History inside the Plan (Plan-heart E4): free
             "unwaiveFinding", "validateDax", "validateRule", "verifyEquivalence",
             "vertiPaqScan", "waiveFinding",
@@ -470,7 +470,7 @@ namespace Semanticus.Engine.Entitlement
             "SetDescriptionAsync", "SetDisplayFolderAsync", "SetMeasureFormatAsync", "SetMeasureFormatExpressionAsync",
             "SetModelSqlEndpointAsync", "SetObjectPropertiesAsync", "SetObjectPropertyAsync", "SetPlanItemAsync", "SetPublishDestinationAsync",
             "SetRelationshipAsync", "SetRelationshipCardinalityAsync", "SetReportScopeAsync", "SetSynonymsAsync",
-            "SetVerifiedModeAsync", "TestSqlSourceAsync", "UndoAsync", "UnusedObjectsAsync",
+            "SetVerifiedModeAsync", "TestSqlSourceAsync", "CancelSqlSourceTestAsync", "UndoAsync", "UnusedObjectsAsync",
             "GetPlanHistoryAsync", "UndoToEntryAsync", "RedoToEntryAsync",   // Plan-heart E4: free, like undo
             "ResolveFileRecoveryAsync",
             "UnwaiveFindingAsync", "ValidateDaxAsync", "ValidateRuleAsync", "VerifyEquivalenceAsync",

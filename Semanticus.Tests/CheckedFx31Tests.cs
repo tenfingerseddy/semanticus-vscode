@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Semanticus.Engine;
+using TabularEditor.TOMWrapper.Utils;
 using Xunit;
 
 namespace Semanticus.Tests;
@@ -83,6 +84,100 @@ public sealed class CheckedFx31Tests : IDisposable
     {
         foreach (var state in states.Where(s => before.ContainsKey(s.MeasureRef)))
             Assert.True(state.Verdict == before[state.MeasureRef], $"{why}: {state.MeasureRef} was {before[state.MeasureRef]}: {Marks(state)}");
+    }
+
+    [Theory]
+    [InlineData("primary")]
+    [InlineData("associated")]
+    [InlineData("timeRelated")]
+    [InlineData("definition")]
+    [InlineData("delete")]
+    public async Task Fx173_calendar_changes_invalidate_inputs_and_hold_direct_and_transitive_marks_until_publish(string change)
+    {
+        using var f = new MeasureMarksDoorTests.Fixture(root);
+        await f.Engine.CreateModelAsync("Calendar marks", 1701);
+        await f.Engine.CreateTableAsync("Sales", "human");
+        await f.Engine.CreateColumnAsync("Sales", "Amount", "Decimal", "Amount", "human");
+        await f.Engine.CreateTableAsync("Date", "human");
+        await f.Engine.CreateColumnAsync("Date", "Date", "DateTime", "Date", "human");
+        await f.Engine.CreateColumnAsync("Date", "Year", "Int64", "Year", "human");
+        await f.Engine.CreateColumnAsync("Date", "Fiscal Year", "Int64", "FiscalYear", "human");
+        await f.Engine.CreateColumnAsync("Date", "Year Label", "String", "YearLabel", "human");
+        await f.Engine.CreateColumnAsync("Date", "Holiday", "Boolean", "Holiday", "human");
+        await f.Engine.DefineCalendarAsync("Date", "Gregorian", new[]
+        {
+            new CalendarMappingSpec { Column = "Date", TimeUnit = "Date" },
+            new CalendarMappingSpec { Column = "Year", TimeUnit = "Year" }
+        }, null, "human");
+        const string direct = "measure:Sales/YTD";
+        const string indirect = "measure:Sales/YTD copy";
+        const string unrelated = "measure:Sales/Total";
+        await f.Engine.CreateMeasureAsync("Sales", "Total", "SUM ( Sales[Amount] )", "human");
+        await f.Engine.CreateMeasureAsync("Sales", "YTD", "TOTALYTD ( [Total], 'Gregorian' )", "human");
+        await f.Engine.CreateMeasureAsync("Sales", "YTD copy", "[YTD]", "human");
+        f.Sessions.Current.LiveOrigin = new LiveOrigin("contoso", "Calendar marks", null);
+        f.Engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "contoso", "Calendar marks", f.Query));
+        foreach (var reference in new[] { direct, indirect })
+            await f.Engine.SaveTestDefinitionAsync(new TestDefinition
+            {
+                Kind = TestKinds.MeasureValue, Title = "Calendar total " + reference, TargetRef = reference,
+                ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest { MeasureRef = reference, ExpectedValue = "300" })
+            }, "human");
+        var refs = new[] { direct, indirect, unrelated };
+        var first = await CheckNow(f, refs);
+        foreach (var reference in new[] { direct, indirect })
+            Assert.Equal("verified", first.Single(s => s.MeasureRef == reference).Marks.Single(m => m.Name == "Trusted number").Verdict);
+        var inputs = (await f.Engine.PlanMeasureRunAsync(new MeasureRunRequest { Selection = new() { Measures = refs } })).Picks.ToDictionary(p => p.MeasureRef, p => p.Inputs);
+
+        async Task ChangeCalendar()
+        {
+            if (change == "delete") await f.Engine.DeleteCalendarAsync("Date", "Gregorian", "human");
+            else if (change == "definition")
+                await f.Sessions.Current.MutateAsync("human", "Calendar definition", m =>
+                    CalendarOps.Mutate(m, m.Tables["Date"], t => t.Calendars["Gregorian"].Description = "Financial dates"));
+            else await f.Engine.TagCalendarColumnAsync("Date", "Gregorian",
+                change == "primary" ? "Fiscal Year" : change == "associated" ? "Year Label" : "Holiday",
+                change == "timeRelated" ? "timeRelated" : "Year", change == "associated", false, "human");
+        }
+        await ChangeCalendar();
+        var changed = await f.Engine.PlanMeasureRunAsync(new MeasureRunRequest { Selection = new() { Measures = refs } });
+        foreach (var pick in changed.Picks.Where(p => p.MeasureRef != unrelated)) Assert.NotEqual(inputs[pick.MeasureRef], pick.Inputs);
+        async Task AssertHeld()
+        {
+            var states = await BothDoors(f.Engine);
+            AssertHeldUnknown(new[] { direct, indirect }, states, change);
+            foreach (var reference in new[] { direct, indirect })
+            {
+                var mark = states.Single(s => s.MeasureRef == reference).Marks.Single(m => m.Name == "Trusted number");
+                Assert.Equal("unknown", mark.Verdict); Assert.Equal(Hold, mark.Sentence);
+            }
+            Assert.DoesNotContain(unrelated, Held(states));
+        }
+        await AssertHeld();
+        await CheckNow(f, refs);
+        await AssertHeld();
+        await f.Engine.UndoAsync("human");
+        Assert.Empty(Held(await BothDoors(f.Engine)));
+        var undone = await f.Engine.PlanMeasureRunAsync(new MeasureRunRequest { Selection = new() { Measures = refs } });
+        foreach (var pick in undone.Picks) Assert.Equal(inputs[pick.MeasureRef], pick.Inputs);
+        await CheckNow(f, refs);
+        await f.Engine.RedoAsync("human");
+        await AssertHeld();
+
+        // Simulate only the successful publish callback, on the dispatcher. No service is contacted.
+        await f.Sessions.Current.ReadAsync(m =>
+        {
+            typeof(LocalEngine).GetMethod("MarksPublished", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .Invoke(f.Engine, new object[] { f.Sessions.Current });
+            return true;
+        });
+        Assert.Empty(Held(await BothDoors(f.Engine)));
+        if (change != "delete")
+        {
+            var published = await CheckNow(f, refs);
+            foreach (var reference in new[] { direct, indirect })
+                Assert.Equal("verified", published.Single(s => s.MeasureRef == reference).Marks.Single(m => m.Name == "Trusted number").Verdict);
+        }
     }
 
     [Theory]

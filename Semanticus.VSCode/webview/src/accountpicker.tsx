@@ -64,6 +64,8 @@ export function AccountPicker({ mode, onMode, tenantId, onTenantId, hint, tenant
         style={{ ...control, minWidth: 210 }}>
         {SIGN_IN_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
       </select>
+      {/* A filled box keeps its label (cx1 gap 10): the placeholder goes once a tenant is in it, and a bare tenant id says nothing. */}
+      {mode !== 'azcli' && tenantId.trim() && <span data-testid="account-picker-tenant-label" style={{ color: 'var(--sem-muted)', fontSize: 'var(--sem-control-font)' }}>Tenant, {tenantAria}</span>}
       {mode !== 'azcli' && (
         <input value={tenantId} onChange={(e) => onTenantId(e.target.value)}
           aria-label={tenantAria}

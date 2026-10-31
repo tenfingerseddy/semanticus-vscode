@@ -6,6 +6,7 @@ import type { ModelRef } from './compare';
 import type { HubView } from './connectionshub';
 import { LinkStatus } from './personality/link';
 import { PlanNotes } from './plan-notes';
+import { publishWords } from './connectpickers-model';
 
 // The Studio footer answers the roles users otherwise conflate:
 //   what am I EDITING · what answers TESTS/QUERIES · where will I PUBLISH?
@@ -139,8 +140,10 @@ export function ContextBar({ onConnections }: { onConnections: (section?: HubVie
   const querySub = querying?.available ? (querying.kind === 'localDesktop' || querying.kind === 'local' ? 'local running model' : 'published model') : 'tests and queries unavailable';
   // A model opened live publishes back to where it came from, but opening it chose nothing: the footer names a target only once
   // one was chosen or published to (round 2 UAT N22).
-  const publishSet = !!publishing?.available && !publishing.implied;
-  const publishMain = publishSet ? (publishing!.modelName || publishing!.database || 'Published model') : publishing?.available ? 'Not set yet' : 'Not linked';
+  // The Jobs panel reads the same words (cx1 blocker 3), and the hover says where a publish would go.
+  const publish = publishWords(publishing);
+  const publishSet = publish.set;
+  const publishMain = publish.main;
   const v = syncVerdict(s, conn);
   const warn = v.tone === 'warn';
   // Folded, the pill carries the Tests fact so nothing about the session becomes unreadable at a narrow width.
@@ -162,7 +165,7 @@ export function ContextBar({ onConnections }: { onConnections: (section?: HubVie
         <span className={connected ? 'connection-value' : 'connection-value connection-value-none'}>{queryMain}</span>
       </button>
       <span className="connection-separator" aria-hidden="true">→</span>
-      <button type="button" data-testid="connections-publishing" onClick={() => onConnections('setup')} title="Choose the live model that will receive published changes" className={segment}>
+      <button type="button" data-testid="connections-publishing" onClick={() => onConnections('setup')} title={`${publish.detail} Choose the live model that will receive published changes.`} className={segment}>
         <span className="connection-kicker">Publish:</span>
         <span className={publishSet ? 'connection-value' : 'connection-value connection-value-none'}>{publishMain}</span>
       </button>

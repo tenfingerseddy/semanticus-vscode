@@ -19,7 +19,7 @@ function useCountTo(target: number, reduced: boolean): number {
     let frame = 0;
     const tick = (now: number) => {
       const k = Math.min(1, (now - t0) / 600);
-      setShown(Math.round(start + (target - start) * (1 - Math.pow(1 - k, 3))));
+      setShown(k === 1 ? target : Math.round(start + (target - start) * (1 - Math.pow(1 - k, 3))));
       if (k < 1) frame = requestAnimationFrame(tick); else from.current = target;
     };
     frame = requestAnimationFrame(tick);
@@ -31,9 +31,10 @@ function useCountTo(target: number, reduced: boolean): number {
 function GradeValue({ f }: { f: GradeFigure }) {
   const tone = gradeBand(f.letter) ?? (f.score !== null ? band(f.score) : 'good');
   const reduced = usePersonalitySettings().reducedMotion;
-  const score = useCountTo(f.score ?? 0, reduced);
+  const animatedScore = useCountTo(f.score ?? 0, reduced || f.key === 'ai');
+  const score = f.key === 'ai' ? f.score : animatedScore;
   return <span className={`pc-fv pc-grade sem-rag-${tone}`}>
-    <span className="pc-letter" data-testid={`fig-${f.key}-letter`}><GradeFlip grade={f.letter} from={f.key === 'ai' ? 'D' : f.letter} eventKey={`${f.key}:${f.letter}`} /></span>
+    <span className="pc-letter" data-testid={`fig-${f.key}-letter`}><GradeFlip key={f.key === 'ai' ? `${f.letter}:${f.score}` : undefined} grade={f.letter} from={f.letter} eventKey={`${f.key}:${f.letter}`} /></span>
     {f.score !== null && <span key={f.score} className="sem-num pc-score pc-bump" data-testid={`fig-${f.key}-score`} data-value={f.score}>{score}</span>}
   </span>;
 }

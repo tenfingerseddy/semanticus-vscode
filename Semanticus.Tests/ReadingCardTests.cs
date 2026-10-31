@@ -19,6 +19,19 @@ namespace Semanticus.Tests
 {
     public sealed class ReadingCardTests
     {
+        [Theory]
+        [InlineData(56.9, "F")]
+        [InlineData(59.9, "F")]
+        [InlineData(60.0, "D")]
+        [InlineData(79.9, "C")]
+        public void Fx174_the_plan_preserves_the_summary_score_and_grade(double score, string grade)
+        {
+            var card = new Semanticus.Analysis.Scorecard { Overall = score, Grade = grade };
+            var view = ReadingCardBuilder.Build(card, new System.Collections.Generic.HashSet<string>(), 0);
+            Assert.Equal(card.Grade, view.Grade);
+            Assert.Equal(card.Overall, view.Score);
+        }
+
         [Fact]
         public async Task The_card_gives_the_grade_the_grade_after_and_the_top_issues_in_plain_words()
         {

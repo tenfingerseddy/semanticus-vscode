@@ -226,11 +226,14 @@ function reasonLine(mark: Mark, state: State): string {
 
 export interface CardVerdict { state: State | null; glyph: string; word: string; reason: string; line: string; worst: string | null; more: number; ranCount: number }
 /** The one line a measure leads with (spec 4.4). `match`: the Description score, which counts only when it does not match. */
-export function cardVerdict(marks: Mark[] | null | undefined, match?: ScoreMatch | null, opts: { running?: boolean; checked?: boolean } = {}): CardVerdict {
+export function cardVerdict(marks: Mark[] | null | undefined, match?: ScoreMatch | null, opts: { running?: boolean; checked?: boolean; reading?: boolean } = {}): CardVerdict {
   const shown = shownMarks(marks, opts.checked).map(({ mark, state }) => ({ name: mark.name, state, reason: reasonOf(mark, state), mark }));
   if (match && match.score != null && match.level === 'does not match')
     shown.push({ name: 'Description', state: 'review', reason: 'the Description does not match the formula', mark: { name: 'Description', state: 'suspect' } });
   const none = (line: string): CardVerdict => ({ state: null, glyph: '', word: '', reason: '', line, worst: null, more: 0, ranCount: 0 });
+  // Until the engine's marks load the line is empty and the card holds its layout (spec 4.4 cuts "Reading the marks."). After a
+  // restart the reads take seconds, and "Not checked yet" there was false while the tree row showed the mark (rc35 tester Next 1).
+  if (opts.reading) return none('');
   if (opts.running) return none('Checking now');
   if (!shown.length) {
     // A measure that was in a run with no mark that applies is not "not checked yet": nobody knows if it is right (R8).

@@ -28,7 +28,7 @@ namespace Semanticus.Engine
                 if (after?.Grade != null)
                 {
                     view.GradeAfter = after.Grade;
-                    view.ScoreAfter = (int)Math.Round(after.Overall, MidpointRounding.AwayFromZero);
+                    view.ScoreAfter = after.Overall;
                 }
             }
             return view;

@@ -1087,6 +1087,8 @@ namespace Semanticus.Engine
 
         internal static bool CalendarsEqual(TOM.Table a, TOM.Table b) => JsonSemanticEqual(CalendarsJson(a), CalendarsJson(b));
 
+        internal static string CalendarState(TOM.Calendar calendar) => Ser(calendar);
+
         /// <summary>Make the target table's calendars match the source's, losslessly. Each calendar and each column group is
         /// rebuilt on the TARGET, bound to the target's own columns by name. The copy is rehearsed on a clone of the target
         /// first and read back, so a property it cannot carry refuses this table change alone and never half-applies.</summary>
@@ -1247,7 +1249,10 @@ namespace Semanticus.Engine
         {
             var root = ParseObject(Ser(measure));
             Remove(root, "name", "description", "isHidden", "formatString", "displayFolder", "expression",
-                "lineageTag", "changedProperties", "annotations");
+                "lineageTag", "changedProperties");
+            // Check settings and Description provenance, including clears, use the owned-annotation channel.
+            // Foreign notes stay outside the push. Neither belongs in unsupported measure metadata.
+            Remove(root, "annotations");
             // A note on the measure's KPI goes with the measure like a note on the measure (LiveDeploy writes it), so it is no uncarried residual.
             if (Get(root, "kpi") is Newtonsoft.Json.Linq.JObject kpi) Remove(kpi, "annotations");
             return ("{}", root.ToString(Newtonsoft.Json.Formatting.None));

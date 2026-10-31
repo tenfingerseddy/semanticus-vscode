@@ -654,6 +654,10 @@ const COVER = 'NO TEST: this fixture is exercising the commit half, so the test 
         4312658680: 'Semanticus.Engine/Program.cs',
         4312658695: 'Semanticus.Engine/Connect/SqlHostTrust.cs',
         4312658707: 'Semanticus.Engine/LocalEngine.cs',
+        // PR #404, the 1.7 release. Calendar invalidation, check annotation publishing and calendar-only validation.
+        4419322354: 'Semanticus.Engine/LocalEngine.MarkDefinitions.cs',
+        4419322358: 'Semanticus.Engine/LocalEngine.MarkFilters.cs',
+        4419322362: 'Semanticus.Engine/Testing/CalendarChecks.cs',
     };
     for (const [pr, rows_] of live)
         for (const [commentId, r] of rows_) {

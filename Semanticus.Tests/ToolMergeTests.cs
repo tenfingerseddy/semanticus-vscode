@@ -277,7 +277,8 @@ namespace Semanticus.Tests
             // 411 = 410 plus pick_check_visuals (Jev picks each check's visual on Validation, 1.6).
             // 421 = 418 plus propose_calendar, setup_calendars and add_time_measures (lane m17/calendar-ui). 418 = 412 plus six (18 Oct 2026, m17/engine-groundwork): the four standard tools and the two calendar checks.
             // 438 = 435 of rc23 plus stop_measure_run and keep_measure_edit (L1, 1.7) and set_measure_filters_on_purpose (L2, 1.7).
-            Assert.Equal(438, tools.Length);
+            // FX174 adds cancel_sql_source_test to those 438 tools.
+            Assert.Equal(439, tools.Length);
             foreach (var old in RetiredTools)
             {
                 Assert.DoesNotContain(old, tools);

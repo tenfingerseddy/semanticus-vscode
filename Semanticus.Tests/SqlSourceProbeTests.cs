@@ -16,6 +16,35 @@ namespace Semanticus.Tests
     [Collection("restore-root")]
     public sealed class SqlSourceProbeTests : IDisposable
     {
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task Fx174_cancel_ends_the_sql_endpoint_test_during_sign_in_or_query(bool querying)
+        {
+            var rec = Save();
+            var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var stopped = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            async Task Wait(CancellationToken ct)
+            {
+                entered.TrySetResult(true);
+                try { await Task.Delay(Timeout.Infinite, ct); }
+                finally { stopped.TrySetResult(ct.IsCancellationRequested); }
+            }
+            SqlSourceProbe.TokenForTests = async (mode, tenant, ct) => { if (!querying) await Wait(ct); return "fake-token"; };
+            SqlSourceProbe.QueryForTests = async (source, token, ct) => { await Wait(ct); return OneValue(); };
+            using var engine = new LocalEngine(new SessionManager());
+            var cancel = typeof(LocalEngine).GetMethod("CancelSqlSourceTestAsync");
+            Assert.NotNull(cancel);
+            var running = engine.TestSqlSourceAsync(rec.Id);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.True(await (Task<bool>)cancel.Invoke(engine, new object[] { rec.Id }));
+            Assert.True(await stopped.Task.WaitAsync(TimeSpan.FromSeconds(3)));
+            Assert.False((await running.WaitAsync(TimeSpan.FromSeconds(3))).Ok);
+            SqlSourceProbe.TokenForTests = (mode, tenant, ct) => Task.FromResult("fake-token");
+            SqlSourceProbe.QueryForTests = (source, token, ct) => Task.FromResult(OneValue());
+            Assert.True((await engine.TestSqlSourceAsync(rec.Id)).Ok);
+        }
+
         private readonly string _root;
         private readonly string _safeRoot;
 
