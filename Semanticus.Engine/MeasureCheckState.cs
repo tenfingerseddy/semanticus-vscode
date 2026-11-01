@@ -36,9 +36,9 @@ internal static class MeasureCheckVerdict
 
     // A mark with one of these codes does not apply to the measure: it is not shown and never counts.
     private static readonly HashSet<string> NotApplying = new(StringComparer.Ordinal)
-    { "no_sql", "no_trusted", "no_edit", "kept", "not_timed", "totals_off", "not_scored", "totals_distinct", "filters_no_rows", "not_connected",
-      // Head decision 29 Oct (wr1 F7): a Totals the scorer does not judge for its type, or whose type is unclear, does not apply.
-      "totals_not_judged", "totals_type_unclear" };
+    { "no_sql", "no_trusted", "no_edit", "kept", "not_timed", "totals_off", "not_scored", "filters_no_rows", "not_connected" };
+    // A Totals Jev typed but did not judge (totals_distinct, totals_not_judged, totals_type_unclear) applies: it shows the type Jev
+    // chose and has no verdict, so it never counts (Kane, 1 Nov, f173; this overturns the head decision of 29 Oct, wr1 F7).
     // A mark a run is producing. It has no result of its own yet.
     private static readonly HashSet<string> Working = new(StringComparer.Ordinal) { "waiting", "timing" };
 

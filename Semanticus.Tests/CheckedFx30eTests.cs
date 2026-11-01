@@ -260,21 +260,21 @@ public sealed class CheckedFx30eTests : IDisposable
         return Task.FromResult(DecisionOutcome.Answered(DecisionAnswerReader.Read(request, json.RootElement, "Contoso fake")));
     });
 
-    // F7 (head decision, 29 Oct): a Totals the scorer does not judge for its type, or whose type is unclear, does not apply
-    // (hidden, never counts), like distinct count. Between the cuts stays Unknown.
+    // F7, overturned by Kane on 1 Nov (f173): a Totals the scorer does not judge for its type, or whose type is unclear, applies
+    // and shows the type Jev chose, with no verdict, so it never counts. Between the cuts stays Unknown.
     [Theory]
-    [InlineData("totals_not_judged", false, null)]
-    [InlineData("totals_type_unclear", false, null)]
-    [InlineData("totals_distinct", false, null)]
+    [InlineData("totals_not_judged", true, null)]
+    [InlineData("totals_type_unclear", true, null)]
+    [InlineData("totals_distinct", true, null)]
     [InlineData("totals_unclear", true, "unknown")]
-    public void A_Totals_the_scorer_does_not_judge_does_not_apply(string code, bool applies, string? verdict)
+    public void A_Totals_the_scorer_does_not_judge_is_shown_and_never_counts(string code, bool applies, string? verdict)
     {
         var totals = MeasureCheckVerdict.Finish(new MeasureMark { Name = "Totals", State = code == "totals_unclear" ? "unknown" : "info",
             Sentence = "Checked as a recalc.", ReasonCode = code, LastRan = DateTimeOffset.UtcNow.ToString("O") }, null, false);
         Assert.Equal(applies, totals.Applies);
         Assert.Equal(verdict, totals.Verdict);
         var filters = MeasureCheckVerdict.Finish(new MeasureMark { Name = "Filters", State = "passed", Sentence = "No ignored filter in 4 places." }, null, false);
-        Assert.Equal(applies ? "unknown" : "verified", MeasureCheckVerdict.Worst(new[] { totals, filters }));
+        Assert.Equal(verdict ?? "verified", MeasureCheckVerdict.Worst(new[] { totals, filters }));
     }
 
     // S1: keeping or editing a Description is not an edit of the measure's numbers, so Equivalence does not apply (spec section 3).

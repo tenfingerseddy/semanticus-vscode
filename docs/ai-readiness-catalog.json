@@ -4093,7 +4093,7 @@
   "launchReadiness": {
     "assessedAt": "2026-07-14",
     "verdict": "enough-for-1.0",
-    "offlineBuiltInRules": 91,
+    "offlineBuiltInRules": 102,
     "liveBuiltInRules": 3,
     "closedCriticRuleIds": [
       "FMT-SORTBY",

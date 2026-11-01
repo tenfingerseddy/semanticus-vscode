@@ -1,4 +1,4 @@
-import { Fragment, lazy, Suspense, useEffect, useState, useRef, type ReactNode } from 'react';
+import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useState, useRef, type ReactNode } from 'react';
 import { openLocalModel, pickWorkingCopyFolder, rpc, onConnectionChange, onOpenConnections, announceConnectionChange, closeConnectionsPanel, navigateInStudio, runHostCommand } from './bridge';
 import { planRankingOf } from './features';
 import { useTier } from './pro';
@@ -16,8 +16,8 @@ import {
   type HubRecord, type HubContext, type HubPanel, type Job, type ModelEndpointList, type NotLinkedSource, type SqlEndpointInfo,
   SEARCH_FROM, defaultMoveCount, defaultMoveSentence, endpointFor, jobOptions, kindWord, pickerStillPressed, removeConfirmSentence, routeSection, rowJobs, rowSecondLine, sideId, startFormStaysOpen, testsTargetToKeep,
 } from './connectionshub-model';
-import { historyKindLabel, historySubLine, shortWhen, type HistoryEvent } from './historyrow';
-import { BTN, BTN_COMPACT, BTN_PRIMARY, BTN_QUIET, ChangePanel, DefaultConfirm, JobPicker, NotLinkedList } from './connectionshub-parts';
+import { shortWhen, type HistoryEvent } from './historyrow';
+import { BTN, BTN_COMPACT, BTN_PRIMARY, BTN_QUIET, ChangePanel, DefaultConfirm, HistoryRowView, JobPicker, NotLinkedList } from './connectionshub-parts';
 
 // The Connections HUB, one page (slice C, lane C2; contract 19.1; design connections-minimal.html, Kane 24 Sep).
 // It is ONE list of saved models, ONE account button, and a Jobs button for which model does Editing, Tests and
@@ -1002,9 +1002,16 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     setMenuId(null); setSqlFormError(null); setSqlTest(null); setSqlRow(r.id);
     const ep = endpointOf(r);
     const rec = ep ? sqlSources.find((s) => s.id === ep.sourceId) : undefined;
+    // The saved sources not read yet (the first read failed, or it is on its way): the row already names its saved endpoint, so the form
+    // opens on that one, from what the row knows, and the read that is asked for now fills in the rest (f172 fault 4). A blank "A new one"
+    // here stayed blank after the list arrived, while the row said "SQL endpoint: <its name>".
+    const notReadYet = !!ep && !rec && !ep.missing && !sqlSourcesRead;
+    const modelSignIn = { authMode: r.kind === 'xmla' ? (r.authMode || 'interactive') : 'interactive', tenantId: r.kind === 'xmla' ? modelTenantOf(r) : '' };
     const fresh: SqlSourceForm = rec
       ? { id: rec.id, name: rec.name || '', server: rec.server || '', database: rec.database || '', authMode: defaultSignInMode(rec), tenantId: rec.tenantId || '' }
-      : { id: null, name: '', server: '', database: '', authMode: r.kind === 'xmla' ? (r.authMode || 'interactive') : 'interactive', tenantId: r.kind === 'xmla' ? modelTenantOf(r) : '' };
+      : notReadYet ? { id: ep.sourceId, name: ep.name || '', server: ep.server || '', database: ep.database || '', ...modelSignIn }
+        : { id: null, name: '', server: '', database: '', ...modelSignIn };
+    if (notReadYet) void loadEndpoints();
     // Words left on this row's form open again (the source it points at first, else any other the person typed for it).
     const held = heldSqlForm(r.id, fresh.id);
     sqlNewSeed.current = held ? (held.form.id ? null : held.base) : (fresh.id ? null : sqlFieldsOfForm(fresh));
@@ -1522,15 +1529,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         </div>
         <div className="sem-card sem-card-flush">
           {history.length === 0 && <div className="px-3 py-3 text-xs" style={{ color: 'var(--sem-muted)' }}>No connection history yet.</div>}
-          {history.map((e, i) => (
-            <div key={i} className="flex items-start gap-2 border-b px-4 py-2 last:border-b-0" style={{ borderColor: 'var(--sem-rule)' }}>
-              <span className={`note-dot mt-2 ${e.ok ? 'note-dot-ok' : 'note-dot-bad'}`} aria-hidden />
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-semibold truncate" style={{ color: 'var(--sem-fg)' }}>{historyKindLabel(e)}</div>
-                <div className="text-xs truncate" style={{ color: 'var(--sem-muted)' }} title={e.detail || e.endpoint}>{historySubLine(e)}</div>
-              </div>
-            </div>
-          ))}
+          {history.map((e, i) => <HistoryRow key={i} event={e} />)}
         </div>
       </section>
     );
@@ -1759,6 +1758,27 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
 }
 
 // One ⋯ menu item. A job this model cannot do stays in the menu, greyed, with the engine's reason under it.
+// One History row, with the measure the row view needs: does its one line fit? A row that does not fit opens (f172 fault 3).
+// It lives outside the hub so its open state is not lost when the hub draws again.
+function HistoryRow({ event }: { event: HistoryEvent }) {
+  const [open, setOpen] = useState(false);
+  const [cut, setCut] = useState(false);
+  const line = useRef<HTMLElement | null>(null);
+  // A cut row becomes a button, so its line is a new element: the watch moves to it (cut is a dependency). A line taken out of the
+  // page measures 0 wide, so only a line still on the page is measured.
+  useLayoutEffect(() => {
+    const el = line.current;
+    if (!el || open) return;
+    const measure = () => { if (el.isConnected) setCut(el.scrollWidth > el.clientWidth + 1); };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(measure);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [open, event, cut]);
+  return <HistoryRowView event={event} open={open} cut={cut} onToggle={() => setOpen((v) => !v)} subRef={(el) => { line.current = el; }} />;
+}
+
 function MenuItem({ children, onClick, disabled, danger, why }: { children: ReactNode; onClick: () => void; disabled?: boolean; danger?: boolean; why?: string | null }) {
   return (
     <button role="menuitem" disabled={disabled} onClick={onClick} className="hub-menu-item" data-danger={danger ? 'true' : undefined} data-refused={why ? 'true' : undefined}>

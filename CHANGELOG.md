@@ -7,6 +7,20 @@ All notable changes to Semanticus are recorded here. The format follows
 > with what verification. [`PLAN.md`](docs/PLAN.md) is the forward roadmap (what's next, not what shipped);
 > the per-commit narrative that used to live in PLAN's "Shipped & verified" section now lives here.
 
+## [1.7.2] - 2026-11-01
+
+### Added
+
+- A model marked for Graphicus is graded against the Graphicus-ready contract.
+
+### Fixed
+
+- Cancel on a browser sign-in for another account ends the wait: the screen goes back to the saved account and its workspaces.
+- The Studio header names the account and the tenant in use under the model name, and in the second header row on a narrow window.
+- A long History row shows ▸ and opens to show its whole reason on its own lines, so nothing is cut and no hover is needed.
+- A SQL endpoint form opened before the saved endpoints were read opens on the saved endpoint with its fields filled, not on "A new one".
+- Totals shows the type Jev chose on every measure, also when the total is shown but not judged (distinct counts, ratios Jev is not sure of). That Totals never changes the measure's verdict or the Checks counts.
+
 ## [1.7.1] - 2026-10-31
 
 ### Fixed

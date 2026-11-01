@@ -170,7 +170,7 @@ namespace Semanticus.Analysis
         public override RuleEvaluation Evaluate(Model model) => _eval(model, this);
     }
 
-    public static class ReadinessRuleSet
+    public static partial class ReadinessRuleSet
     {
         // Programmer-identifier "code smell" tells: underscores, camelCase humps, key/id/code suffixes, table-type prefixes.
         private static readonly Regex CodeyName = new Regex(@"(_|[a-z][A-Z]|ID$|Key$|Cd$|^(tbl|dim|fact)\b)", RegexOptions.Compiled);
@@ -1378,6 +1378,7 @@ namespace Semanticus.Analysis
         public static IReadOnlyList<ReadinessRule> Default()
         {
             var rules = new List<ReadinessRule>();
+            rules.AddRange(GraphicusRules());
 
             // ---- Descriptions -------------------------------------------------------------------
             rules.Add(new ObjectRule<Measure>("DESC-MEASURE", "Measure has no description", ReadinessCategory.Descriptions, Severity.High, RuleKind.LlmGenerate, FixKind.AiContent,

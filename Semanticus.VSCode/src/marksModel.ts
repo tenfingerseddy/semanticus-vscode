@@ -38,6 +38,10 @@ export type State = 'broken' | 'review' | 'unknown' | 'overridden' | 'verified';
 export const STATE_ORDER: State[] = ['broken', 'review', 'unknown', 'overridden', 'verified'];
 export const GLYPH: Record<State, string> = { broken: '✗', review: '▲', unknown: '○', overridden: '⊘', verified: '✓' };
 export const WORD: Record<State, string> = { broken: 'Broken', review: 'Needs review', unknown: 'Unknown', overridden: 'Overridden', verified: 'Verified' };
+/** How a mark is drawn: one of the five verdicts, or info, a Totals that names the type Jev chose and is shown, not judged
+ *  (Kane, 1 Nov, f173). Info is never a verdict and never counts. */
+export type MarkShow = State | 'info';
+export const MARK_GLYPH: Record<MarkShow, string> = { ...GLYPH, info: '•' };
 
 // A cause the person can act on keeps its own line; only service-side causes are hidden.
 // fx29b: a never-saved model (E), permission moved mid-score (G) and permission given after the line was written (F) each have their own line.
@@ -84,6 +88,18 @@ export function verdictOf(mark: Mark, measureRan = false): State | null {
   if (mark.state === 'info') return mark.name === 'Filters' ? 'review' : null;
   if (mark.state === 'suspect') return mark.name === 'SQL' || mark.name === 'Trusted number' ? 'broken' : 'review';
   return mark.state === 'unknown' ? 'unknown' : null;
+}
+
+/** A Totals that applies with no verdict and names the type Jev chose: a distinct count, or a type Jev is not sure of. It is shown
+ *  in a calm look and never counts (f173). A Totals with no result (no type) stays hidden. */
+export function shownNotJudged(mark: Mark): boolean {
+  return mark.name === 'Totals' && mark.state === 'info' && !!mark.total?.rule && applies(mark) && verdictOf(mark) === null;
+}
+
+/** The marks a surface draws, in the fixed order: the ones with a verdict, and a Totals shown, not judged, as info. Counts and
+ *  the verdict line read shownMarks, so info never moves them. */
+export function cardMarks(marks: Mark[] | null | undefined): { mark: Mark; state: MarkShow }[] {
+  return orderMarks(marks).flatMap((mark): { mark: Mark; state: MarkShow }[] => { const state = verdictOf(mark); return state ? [{ mark, state }] : shownNotJudged(mark) ? [{ mark, state: 'info' }] : []; });
 }
 
 /** The marks of a measure that apply and ran, in the fixed order, with their verdicts. `checked`: the measure was in a run, so a mark with its own failure reason is Unknown. */
@@ -284,17 +300,20 @@ const BROKEN_FIX = 'Fix the formula, or the number it is compared with, then che
 // sent a stale Totals with the cut "turns on when Jev scoring is released" line (fx35, rc34 tester gap 1).
 const STALE_LINE = 'Your edit changed this measure. This result is from before the edit.';
 /** The sentence at the top of a mark's detail (spec 4.4 "mark detail"). */
-export function detailSentence(mark: Mark, state: State, limitMs = 3000): string { return tidy(detailText(mark, state, limitMs)); }
-function detailText(mark: Mark, state: State, limitMs: number): string {
+export function detailSentence(mark: Mark, state: MarkShow, limitMs = 3000): string { return tidy(detailText(mark, state, limitMs)); }
+function detailText(mark: Mark, state: MarkShow, limitMs: number): string {
   const text = (mark.sentence ?? '').trim();
   const cells = mark.cells ?? [];
   if (mark.reasonCode === 'stale') return STALE_LINE;
   if (mark.reasonCode === 'held') return sentence(text);
   switch (mark.name) {
-    case 'Totals':
+    case 'Totals': {
       if (state === 'verified') return `Checked as ${aType(mark)}. The total fits its rows.`;
       if (state === 'overridden') return `Checked as ${aType(mark)}. You marked this total as expected.`;
-      return `Checked as ${aType(mark)}. ${sentence(text)}`;
+      // The engine's sentence can start with its own "Checked as ...": the type is named once, in the card's words (f173).
+      const rest = sentence(text.replace(/^Checked as [^.]*\.\s*/i, ''));
+      return `Checked as ${aType(mark)}.${rest ? ` ${rest}` : ''}`;
+    }
     case 'Filters': {
       if (state === 'overridden') { const scope = /ignores (.+?) filters/i.exec(text)?.[1]; return `Ignores ${scope ? `${scope} ` : ''}filters on purpose, as you said.`; }
       if (state === 'verified') {
@@ -389,7 +408,10 @@ export function treeRowItem(name: string, marks: Mark[] | null | undefined, desc
     const line = verdict.line.startsWith('Not checked yet') ? 'Not checked yet' : verdict.line;
     return { description: '', tooltip: line, state: null, mark: 'Totals', label: `${name}, ${line}` };
   }
-  const ran = shownMarks(marks, description?.checked).map(({ mark, state }) => `${GLYPH[state]} ${mark.name}`).join('   ');
+  // Totals names the type Jev chose, judged or only shown (Kane 1 Nov, rc723 tester finding 1), once: a verdict line that
+  // already names it ("the total does not fit a sum") keeps the mark plain (rc724 tester finding 1).
+  const typed = (mark: Mark) => mark.name === 'Totals' && mark.total?.rule && !verdict.line.includes(totalType(mark)) ? `: ${totalType(mark)}` : '';
+  const ran = cardMarks(marks).map(({ mark, state }) => `${MARK_GLYPH[state]} ${mark.name}${typed(mark)}`).join('   ');
   const used = wordCount(verdict.line) + wordCount(ran);
   const line3 = descriptionLine(firstSentence(description?.text ?? description?.oneLine), Math.max(0, Math.min(DESCRIPTION_LINE_WORDS * 2, HOVER_WORDS - used)));
   return { description: verdict.glyph, tooltip: [verdict.line, ran, line3].filter(Boolean).join('\n'), state: verdict.state, mark: verdict.worst ?? 'Totals', label };

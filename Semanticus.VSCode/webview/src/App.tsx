@@ -69,6 +69,7 @@ import { band } from './readinessband.mjs';
 import { SCAN_PAGE_OF_TOOL } from './studio/checks-run';
 import { GradeFlip, BigWin } from './personality/motion';
 import { RagBars } from './ragbars';
+import { studioIdentityLine } from './studio-identity';
 import { LiveReadinessCheck, RatioFixChoice } from './readiness-numbers';
 import { AREA_ALIASES, DESTINATION_OF_TOOL, PLAN_START_TARGET, SQL_DRAFT_TARGET, areaHomeTool, landingOf, objectLabel, objectToRef, refToObject, tableOfObject, type Area, type Route, type Seed, type ToolId } from './route';
 
@@ -1266,7 +1267,9 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
   // Everything in the header whose text changes its width. A ResizeObserver only sees the header resize, so the
   // fold has to be re-measured when the content inside it changes too.
   const headerRef = useRef<HTMLElement | null>(null);
-  const headerSignature = [shellSession?.modelName, source, publishLine, permissionLine,
+  // The account and the tenant in use, under the model name (f172 fault 2). Without it they were one dialog away.
+  const identityLine = studioIdentityLine(shellSession?.currentAccount, shellSession?.currentTenant);
+  const headerSignature = [shellSession?.modelName, identityLine?.line, source, publishLine, permissionLine,
     activeRun ? `${activeRun.title || activeRun.workflow}|${activeRun.stepIndex}|${activeRun.totalSteps}|${liveRunCount}` : '',
     pendingApprovalCount].join('|');
   useHeaderFold(headerRef, headerSignature);
@@ -1280,6 +1283,7 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
           into the tooltip so the header says one thing here. */}
       <div className="studio-identity min-w-0">
         <div className="font-semibold tracking-tight truncate" title={shellSession?.source || undefined}>{shellSession?.modelName || 'Semanticus'}</div>
+        {identityLine && <div className="truncate" data-testid="studio-account-line" title={identityLine.title}>{identityLine.line}</div>}
       </div>
       <nav className="studio-groups flex items-center gap-1 ml-2 min-w-0" aria-label="Studio areas">
         {/* An area is marked Pro only when EVERY tool in it is locked: a mixed area would be lying about the
@@ -1307,6 +1311,8 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
         </div>
         {/* Get Pro, always in sight just left of Your assistant; a quiet Pro once you have it. Never folds. */}
         <ProChip here={tab === 'pro'} />
+        {/* On a phone the identity folds away, so the account and the tenant start the second header row (f172 fault 2). */}
+        {identityLine && <span className="studio-account-meta sem-text-meta truncate" data-testid="studio-account-meta" title={identityLine.title}>{identityLine.short}</span>}
         <LiveActivity onOpen={onTab} pendingApprovalCount={pendingApprovalCount} firstPendingApprovalId={firstPendingApprovalId}
           planCount={assistantCount} onPlanCount={onAssistantCount} />
         {/* One Publish button in sight. Here it opens the Publish page; on the Publish page it is hidden, because the

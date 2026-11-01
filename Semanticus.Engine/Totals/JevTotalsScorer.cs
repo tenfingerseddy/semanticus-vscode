@@ -41,17 +41,22 @@ internal sealed class JevTotalsScorer : ITotalsScorer
             ReasonCode = reason, ActionCodes = state == "suspect" ? new[] { "expected" } : Array.Empty<string>(),
             LastRan = DateTimeOffset.UtcNow.ToString("O")
         };
-        if (confidence < settings.TypeUnclearBelow) return Read("info", "Type unclear.", first, reason: "totals_type_unclear");
-        var info = "Checked as " + Article(rule) + ". Totals for this type are shown, not judged.";
+        // Jev chose a type, so Totals shows it (Kane, 1 Nov, f173). A total that is shown but not judged has no verdict.
+        if (confidence < settings.TypeUnclearBelow)
+            return Read("info", Shown(rule, "Jev is not sure of the type, so the total is shown, not judged."), first, reason: "totals_type_unclear");
         if (expected) return Read("info", ExpectedSentence(rule), first, reason: "totals_expected");
-        if (rule == "distinct_count") return Read("info", info, first, reason: "totals_distinct");
+        if (rule == "distinct_count")
+            return Read("info", Shown(rule, "Distinct counts do not add up, so the total is shown, not judged."), first, reason: "totals_distinct");
         // A sum whose every probed total is exactly the sum of its rows is right, whatever a fit score says: the arithmetic is
         // the proof (fx30e F5: SUM ( Sales[Quantity] ) * 2 read Unknown at fit 0.38 with a total equal to its rows).
         if (rule == "sum_of_rows" && probes.Length > 0
             && probes.All(p => TotalsQuestions.Facts(p).GetValueOrDefault("total_equals_sum_of_rows") is true))
             return Read("passed", Passed(rule), first);
         var (warn, pass, typeAtLeast) = settings.Cuts(rule);
-        if (confidence < typeAtLeast || probes.Length == 0) return Read("info", info, first, reason: "totals_not_judged");
+        if (confidence < typeAtLeast)
+            return Read("info", Shown(rule, "Jev is not sure enough of the type to judge it, so the total is shown, not judged."), first, reason: "totals_not_judged");
+        if (probes.Length == 0)
+            return Read("info", Shown(rule, "No place was found to check the total, so it is shown, not judged."), first, reason: "totals_not_judged");
 
         // Two cuts measured on a held-out set (l2 totals-report.md): warn below the warn cut, Verified only when
         // every probe reaches the pass cut. A pass cut set below the warn cut never widens the pass.
@@ -85,6 +90,17 @@ internal sealed class JevTotalsScorer : ITotalsScorer
     }
 
     private static bool Probability(double value) => double.IsFinite(value) && value >= 0 && value <= 1;
+    // The type in the card's own words (marksModel.ts totalType), so the assistant and the card name it the same way.
+    private static string Shown(string rule, string reason) => "Checked as " + Plain(rule) + ". " + reason;
+    private static string Plain(string rule)
+    {
+        var word = rule switch {
+            "sum_of_rows" => "sum", "recomputed_at_total" => "recalculation",
+            "last_value_over_time" or "first_value_over_time" => "semi-additive", "distinct_count" => "distinct count",
+            "average" => "average", "blank_at_total" => "blank at total", _ => "sum"
+        };
+        return ("aeiou".Contains(word[0]) ? "an " : "a ") + word;
+    }
     internal static string ExpectedSentence(string rule) => "Checked as " + Article(rule) + ". This is expected.";
     internal static string TypeName(string rule) => rule switch {
         "sum_of_rows" => "sum", "recomputed_at_total" => "recalc (recomputed at the total)",

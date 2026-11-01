@@ -88,6 +88,10 @@ public sealed class CheckedL2Tests
         var distinct = await Score(Fake("distinct_count", .99, .99));
         Assert.Equal("info", distinct.State);
         Assert.Equal("totals_distinct", distinct.ReasonCode);
+        // f173: a distinct count is shown with its type and never counts.
+        var shown = MeasureCheckVerdict.Finish(distinct, null, false);
+        Assert.True(shown.Applies);
+        Assert.Null(shown.Verdict);
         var passed = await Score(Fake("sum_of_rows", .9, .9));
         Assert.Equal("passed", passed.State);
         Assert.Null(passed.ReasonCode);

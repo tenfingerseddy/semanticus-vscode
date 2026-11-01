@@ -75,6 +75,7 @@ namespace Semanticus.Analysis
 
         private static readonly RuleAbout Advisory = RuleAbout.Nothing("advice about the model as a whole; no single property is written");
         private static readonly RuleAbout Structural = RuleAbout.Nothing("the change adds, removes or restructures objects; no single property is written");
+        private static readonly RuleAbout GraphicusAnnotation = RuleAbout.Nothing("a Graphicus annotation; contract v1 grades it and writes no property");
         private static readonly RuleAbout EitherOr = RuleAbout.Nothing("an either-or proposal (change it one way or the other); no single property is asked for");
 
         /// <summary>AI-readiness rules by id.</summary>
@@ -179,6 +180,18 @@ namespace Semanticus.Analysis
             ["DAC-AI-INSTRUCTIONS"] = RuleAbout.Own(Model, "aiInstructions"),
             ["DAC-AI-INSTRUCTIONS-LEN"] = RuleAbout.Own(Model, "aiInstructions"),
             ["DAC-GLOSSARY-GAP"] = RuleAbout.Own(Model, "aiInstructions"),
+            // Graphicus-ready contract v1 (docs/contracts/graphicus-ready.v1.json)
+            ["GR-DESC-MEASURE"] = RuleAbout.Keep(Meas, "description"),
+            ["GR-DESC-TABLE"] = RuleAbout.Keep(Tab, "description"),
+            ["GR-SYNONYMS"] = RuleAbout.Keep(Meas + "," + Col + "," + Tab, "synonyms"),
+            ["GR-AI-INSTRUCTIONS"] = RuleAbout.Own(Model, "aiInstructions"),
+            ["GR-AI-DATA-SCHEMA"] = RuleAbout.Nothing("the AI data schema is authored in the service; the change is a list of excluded fields, not one property"),
+            ["GR-DATE-TABLE"] = RuleAbout.KeepFromModel(Tab, "dataCategory"),
+            ["GR-PL-ORDER"] = GraphicusAnnotation,
+            ["GR-PL-SIGN"] = GraphicusAnnotation,
+            ["GR-PL-ROLE"] = GraphicusAnnotation,
+            ["GR-FUNNEL-ORDER"] = GraphicusAnnotation,
+            ["GR-TARGET-OF"] = GraphicusAnnotation,
             ["DAC-AI-DATA-SCHEMA"] = RuleAbout.Nothing("the AI data schema is authored in the service; the change is a list of excluded fields, not one property"),
             ["AISCHEMA-DEP-MISSING"] = RuleAbout.Nothing("the change edits the AI data schema's field list, not one property"),
             ["DAC-COPILOT-TOOLING-FORMAT"] = Advisory,

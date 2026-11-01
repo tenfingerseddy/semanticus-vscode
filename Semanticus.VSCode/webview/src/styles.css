@@ -427,6 +427,10 @@ body.vscode-reduce-motion .sem-flash { animation: none; }
 .studio-identity { max-width: 210px; font-size: var(--sem-text-body); line-height: var(--sem-lh-body); flex-shrink: 0; }
 .studio-identity > div:last-child:not(:first-child) { color: var(--sem-muted); font-size: var(--sem-text-label); line-height: var(--sem-lh-label); }
 .studio-model-identity { color: var(--sem-muted); font-weight: var(--sem-weight); }
+/* The account and the tenant on a phone (f172 fault 2): the identity above is hidden at fold 4, so this line in the action
+   row takes its place and starts the second row. Hidden at every other level, so it never changes what the fold measures. */
+.studio-account-meta { display: none; min-width: 0; max-width: 100%; margin-right: auto; }
+.studio-chrome[data-fold="4"] .studio-account-meta { display: block; }
 .studio-more { display: none; }
 /* The areas nav shrinks (min-w-0) before it folds, and shrinking a flex box does NOT shrink what is inside it:
    at a 769px header the five segments went on painting past the nav's right edge and over the actions next to
@@ -1742,6 +1746,10 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .hub-row[data-selected="true"] { box-shadow: inset 2px 0 0 var(--sem-fg); }
 .hub-row[data-selected="true"] .sem-list-row { padding-left: var(--sem-space-3); }
 .hub-row-name { color: var(--sem-fg); font-size: var(--sem-text-body); line-height: var(--sem-lh-body); }
+/* A History row that does not fit opens to its whole text (f172 fault 3). The row is a button only then; it keeps the row's look. */
+button.hub-history-row { background: none; color: inherit; font: inherit; cursor: pointer; }
+.hub-history-reason { margin-top: var(--sem-space-1); color: var(--sem-fg); overflow-wrap: anywhere; }
+.hub-history-marker { flex-shrink: 0; margin-top: var(--sem-space-1); color: var(--sem-muted); font-size: var(--sem-text-label); line-height: var(--sem-lh-label); }
 .hub-row[data-selected="true"] .hub-row-name { font-weight: var(--sem-weight-strong); }
 .hub-overflow { width: var(--sem-control-h-sm); padding: 0; border-color: transparent; color: var(--sem-muted); }
 .hub-menu { min-width: 240px; max-width: 360px; padding: var(--sem-space-1) 0; border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); background: var(--sem-surface); box-shadow: var(--sem-shadow-pop); }

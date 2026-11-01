@@ -1,0 +1,122 @@
+{
+  "$comment": "Graphicus-ready contract, version 1. Semanticus grades and fixes a model to this file; Graphicus reads the same facts and does not re-check figures (W2, D5). Change only by a new version.",
+  "contract": "graphicus-ready",
+  "version": "1",
+  "modelMarker": {
+    "annotation": "graphicus.contract.version",
+    "on": "model",
+    "value": "1"
+  },
+  "facts": [
+    {
+      "id": "GR-DESC-MEASURE",
+      "on": "measure",
+      "storage": "description",
+      "required": true,
+      "rule": "Every visible measure has a Description that Jev scores 70 or higher (Matches)."
+    },
+    {
+      "id": "GR-DESC-TABLE",
+      "on": "table",
+      "storage": "description",
+      "required": true,
+      "rule": "Every visible table has a Description."
+    },
+    {
+      "id": "GR-SYNONYMS",
+      "on": "table|column|measure",
+      "storage": "linguistic schema synonyms",
+      "required": false,
+      "rule": "Visible fields carry synonyms for the words the team uses; the team profile maps team words to measures."
+    },
+    {
+      "id": "GR-AI-INSTRUCTIONS",
+      "on": "model",
+      "storage": "linguistic schema CustomInstructions",
+      "required": false,
+      "rule": "AI instructions exist and stay under 10,000 characters."
+    },
+    {
+      "id": "GR-AI-DATA-SCHEMA",
+      "on": "table|column|measure",
+      "storage": "linguistic schema Visibility",
+      "required": false,
+      "rule": "Helper fields are excluded from the AI data schema."
+    },
+    {
+      "id": "GR-DATE-TABLE",
+      "on": "table",
+      "storage": "DataCategory Time + marked date table",
+      "required": true,
+      "rule": "The model has a marked date table."
+    },
+    {
+      "id": "GR-PL-ORDER",
+      "on": "measure",
+      "storage": "annotation graphicus.pl.order",
+      "valueType": "integer",
+      "required": "when a P&L is in the model",
+      "rule": "Each P&L measure has a unique line number (10, 20, 30 and so on); lower numbers show first."
+    },
+    {
+      "id": "GR-PL-SIGN",
+      "on": "measure",
+      "storage": "annotation graphicus.pl.sign",
+      "valueType": "enum",
+      "values": [
+        "1",
+        "-1"
+      ],
+      "required": "when graphicus.pl.order is set",
+      "rule": "1 means the line adds to profit; -1 means it takes from profit."
+    },
+    {
+      "id": "GR-PL-ROLE",
+      "on": "measure",
+      "storage": "annotation graphicus.pl.role",
+      "valueType": "enum",
+      "values": [
+        "revenue",
+        "cost_of_sales",
+        "gross_profit",
+        "operating_expense",
+        "operating_profit",
+        "other",
+        "net_profit"
+      ],
+      "required": "when graphicus.pl.order is set",
+      "rule": "Each P&L line names its role."
+    },
+    {
+      "id": "GR-FUNNEL-ORDER",
+      "on": "measure|column",
+      "storage": "annotation graphicus.funnel.order (each stage measure) or graphicus.funnel.stages (the stage column)",
+      "valueType": "integer stage number, or a JSON array of the stage values in order",
+      "required": "when a funnel stage column is in the model",
+      "rule": "Funnel stages have an order: a stage number on each stage measure, or the list of values on the one stage column."
+    },
+    {
+      "id": "GR-TARGET-OF",
+      "on": "measure",
+      "storage": "annotation graphicus.target.of + graphicus.target.kind",
+      "valueType": "target.of: the exact name of the actual measure; target.kind: enum",
+      "values": [
+        "budget",
+        "target",
+        "forecast"
+      ],
+      "required": "when a budget, target or forecast measure exists",
+      "rule": "A budget, target or forecast measure names the actual measure it compares to (for example on Budget Amount: Net Sales) and its kind. The named measure must exist."
+    }
+  ],
+  "notAnnotated": [
+    {
+      "what": "team-named measures (for example Net Revenue and Gross Bookings)",
+      "why": "Separate measures with Descriptions and synonyms; the team profile (W3) maps the team's word to the measure."
+    },
+    {
+      "what": "verified answers",
+      "why": "Power BI service only on live models: no TOM or XMLA writer. Semanticus reads them from a PBIP folder (VerifiedAnswers/definitions) but does not write them in v1."
+    }
+  ]
+}

@@ -449,7 +449,8 @@ assert.match(hub, /openModel\(\{ id: 'new:' \+ c\.endpoint[^\n]*\n\s*c\.accountP
   const page = mount(() => WorkspacePicker(props));
   const view = () => page.result.props;
   const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); };
-  assert.equal(view().askingAccount, true, 'while the new sign-in runs, the header asks for the account instead of naming the saved one');
+  // f172b (rc1 path C): no sign-in has started on a tenantless page, so the header does not ask to pick in the browser yet.
+  assert.equal(view().askingAccount, false, 'before List workspaces no sign-in runs, so the header does not ask for the account');
   assert.equal(view().account, null);
   assert.equal(calls.filter((c) => c[0] === 'listWorkspaces').length, 0, 'FX174: a tenantless page waits for List workspaces');
   view().onRetry();

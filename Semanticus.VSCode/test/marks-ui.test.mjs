@@ -198,8 +198,9 @@ test('Totals information names the checked type without counting as a pass or a 
   const distinct = mark('Totals', 'info', 'Checked as a distinct count. Totals for this type are shown, not judged', {
     total: { rule: 'distinct_count', type: 'distinct count', confidence: .92, expected: false },
   });
-  assert.equal(m.verdictOf(distinct, true), null, 'a distinct count is not judged, so its mark is hidden (27 Oct cut)');
+  assert.equal(m.verdictOf(distinct, true), null, 'a distinct count is not judged, so it has no verdict');
   assert.equal(m.rowVerdict([distinct]), null);
+  assert.deepEqual(m.cardMarks([distinct]).map(x => x.state), ['info'], 'it is shown with its type (f173)');
   const sum = mark('Totals', 'passed', 'Total adds up as a sum, as expected', { total: { rule: 'sum_of_rows', type: 'sum', confidence: .92, expected: false } });
   assert.match(m.detailSentence(sum, 'verified'), /^Checked as a sum\./, 'the detail names the checked type');
 });

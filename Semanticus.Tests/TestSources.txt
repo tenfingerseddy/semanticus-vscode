@@ -1,4 +1,5 @@
 AccountProfileTests.cs
+GraphicusReadinessTests.cs
 MeasureMarksTests.cs
 MeasureMarksDoorTests.cs
 CheckedRunPlanTests.cs
@@ -752,6 +753,7 @@ CheckedFx8Tests.cs
 CheckedPerformanceTests.cs
 CheckedFx11Tests.cs
 CheckedTotalsTests.cs
+CheckedF173TotalsTypeTests.cs
 VerifierRc23ConsentTests.cs
 VerifierRc23TotalsTests.cs
 Fx5TotalsTests.cs

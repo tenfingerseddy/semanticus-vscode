@@ -25,6 +25,8 @@
 .mk-card-verified { border-left-color: var(--sem-good, var(--sem-accent)); }
 .mk-card-unknown { border-left-style: dashed; }
 .mk-card-overridden { border-left-color: var(--sem-muted); }
+/* f173: a Totals shown, not judged. Calm: neither a warning nor a pass. */
+.mk-card-info { border-left-color: var(--sem-border); }
 /* A number never wraps (rc27 tester gap 2, ra1 item 12): the number columns size to their numbers and only the place cell
    wraps, between words. "anywhere" let the table shrink the place column to one letter beside two long numbers at 290 px
    ("Whe / re", "Tota / l", rc28 tester gap 4); break-word keeps a word whole and breaks only one that cannot fit a line. */
@@ -96,6 +98,7 @@
 .mk-v-verified .mk-vglyph, .mk-v-verified b, .mk-s-verified .mk-glyph, .cp-s-verified { color: var(--sem-good, var(--sem-accent)); }
 .mk-v-unknown .mk-vglyph, .mk-v-unknown b, .mk-s-unknown .mk-glyph, .cp-s-unknown { color: var(--sem-nv, var(--sem-muted)); }
 .mk-v-overridden .mk-vglyph, .mk-v-overridden b, .mk-s-overridden .mk-glyph, .cp-s-overridden { color: var(--sem-muted); }
+.mk-s-info .mk-glyph { color: var(--sem-muted); }
 .mk-actionable { margin: 0; font-size: var(--sem-text-meta); }
 .mk-desc-line { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sem-space-3); width: 100%; border: 0; background: transparent; color: var(--sem-muted); font: inherit; text-align: left; padding: 0; cursor: pointer; }
 .mk-desc-line .mk-desc-text { flex: 1 1 0; min-width: 0; }

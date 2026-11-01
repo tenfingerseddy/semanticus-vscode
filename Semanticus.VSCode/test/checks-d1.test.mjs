@@ -92,7 +92,6 @@ test('D1 marks hidden when not applying: all seven marks (section 3)', () => {
     mark('Totals', 'not run', 'Not scored yet. This score turns on when Jev scoring is released.'),
     mark('Totals', 'not run', 'Semanticus has not measured this judge yet'),
     mark('Totals', 'not run', 'Not scored yet.'),
-    mark('Totals', 'info', 'Checked as a distinct count. Totals for this type are shown, not judged', { total: { rule: 'distinct_count', type: 'distinct count', confidence: .9, expected: false, source: '' } }),
     mark('Filters', 'not run', 'The filter check could not compare the source rows.'),
     mark('Filters', 'not run', 'This formula can use different sets of rows, so one row count cannot check its filters.'),
     mark('SQL', 'not run', 'No SQL check is saved for this measure.'),
@@ -110,6 +109,10 @@ test('D1 marks hidden when not applying: all seven marks (section 3)', () => {
     hiddenNames.add(h.name);
   }
   assert.deepEqual([...hiddenNames].sort(), [...m.MARK_ORDER].sort(), 'each of the seven marks has a case that hides it');
+  // f173: a distinct count has no verdict but is shown with its type, so it is not in the hidden list.
+  const distinct = mark('Totals', 'info', 'Checked as a distinct count. Totals for this type are shown, not judged', { total: { rule: 'distinct_count', type: 'distinct count', confidence: .9, expected: false, source: '' } });
+  assert.equal(m.verdictOf(distinct, true), null);
+  assert.deepEqual(m.cardMarks([distinct]).map(x => [x.mark.name, x.state]), [['Totals', 'info']]);
   // A mark that applies and ran is shown, and a mark that applies but could not run is Unknown.
   assert.deepEqual(m.shownMarks(sumMarks()).map(x => x.mark.name), ['Totals', 'Filters', 'Contexts'], 'a SUM with no saved SQL or number and no edit shows three');
   assert.deepEqual(m.shownMarks(editMarks()).map(x => x.mark.name), ['Totals', 'Filters', 'Equivalence', 'Contexts']);
@@ -182,7 +185,7 @@ test('D1 tree hover: three lines, 25 words or fewer, starts with the verdict lin
   const item = m.treeRowItem('Date New Customer', dateMarks(), { text: "The date of a customer's first order. It is the first date.", match: IMPROVE });
   const lines = item.tooltip.split('\n');
   assert.equal(lines[0], '▲ Needs review: ignores Date filters');
-  assert.equal(lines[1], '✓ Totals   ▲ Filters   ✓ Contexts');
+  assert.equal(lines[1], '✓ Totals: sum   ▲ Filters   ✓ Contexts');
   assert.equal(lines[2], "The date of a customer's first order.");
   assert.ok(words(item.tooltip) <= 25, `${words(item.tooltip)} words`);
   const long = m.treeRowItem('Total Quantity', editMarks(), { text: description + ' ' + description, match: IMPROVE });

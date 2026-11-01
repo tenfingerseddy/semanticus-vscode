@@ -310,7 +310,7 @@ namespace Semanticus.Decisions
                 questions: new[] { new DecisionQuestionShape("rule", DecisionQuestionKind.Choice, "the rule the total should follow",
                     new[] { "sum_of_rows", "recomputed_at_total", "last_value_over_time", "first_value_over_time", "distinct_count", "average", "blank_at_total" }) },
                 confidenceBar: 0.5,
-                lowConfidenceBehaviour: "show Type unclear; never warn below the adjustable type confidence cut",
+                lowConfidenceBehaviour: "show the chosen type and that Jev is not sure; never warn below the adjustable type confidence cut",
                 proOnly: true),
             new DecisionPoint(
                 name: TotalsFit,

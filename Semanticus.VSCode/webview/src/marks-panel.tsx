@@ -2,8 +2,8 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { dateText } from '../../src/checkedNumberFormat';
 import { useMarksHost, type DescriptionDrafts, type MarksHost } from './marks-host';
 import {
-  ADVICE_OFF, acceptStates, applies, cardActionable, cardVerdict, checkedAt, contextName, descriptionLine, descriptionScore, detailSentence, ms, orderMarks, placeValue, placeValues, provenanceWords,
-  SCORE_TITLE, shownMarks, timingLine, verdictOf, type CardVerdict, type CheckCache, type Mark, type MarksResult, type ScoreMatch, type State,
+  ADVICE_OFF, MARK_GLYPH, acceptStates, applies, cardActionable, cardMarks, cardVerdict, checkedAt, contextName, descriptionLine, descriptionScore, detailSentence, ms, orderMarks, placeValue, placeValues, provenanceWords,
+  SCORE_TITLE, timingLine, verdictOf, type CardVerdict, type CheckCache, type Mark, type MarkShow, type MarksResult, type ScoreMatch,
 } from './marks-model';
 
 type Proposal = { id: string | null; state: string; message: string; text?: string };
@@ -159,7 +159,7 @@ export function DescriptionBlock({ reference, onMatch, command }: { reference: s
 
 /** The face of a measure's card at rest: the verdict line, the Description line, the marks that apply, the footer. It takes its data as props, so a test can count its words. */
 export function CardFace({ verdict, actionable, onTurnOn, description, marks, open, onMark, onVerdict, detail, checked, running, onCheck, add, notes }: {
-  verdict: CardVerdict; actionable?: string | null; onTurnOn?: () => void; description: ReactNode; marks: { name: string; state: State; checking?: boolean }[]; open: string | null;
+  verdict: CardVerdict; actionable?: string | null; onTurnOn?: () => void; description: ReactNode; marks: { name: string; state: MarkShow; checking?: boolean }[]; open: string | null;
   onMark: (name: string) => void; onVerdict: () => void; detail?: ReactNode; checked: string; running?: boolean; onCheck: () => void; add?: ReactNode; notes?: ReactNode;
 }) {
   const rest = verdict.state ? verdict.line.slice(verdict.glyph.length + 1) : verdict.line;
@@ -187,7 +187,7 @@ export function CardFace({ verdict, actionable, onTurnOn, description, marks, op
     </div>
   </>;
 }
-const glyphOf = (state: State) => ({ broken: '✗', review: '▲', unknown: '○', overridden: '⊘', verified: '✓' })[state];
+const glyphOf = (state: MarkShow) => MARK_GLYPH[state];
 
 /** What a card shows from the engine's check state. The newest version wins: the state record (read, pushed) or the answer of
  *  the read that starts missing checks. Data with no version (an older engine) prefers the state record. A mark the run
@@ -253,7 +253,8 @@ export function MeasureMarksPanel({ reference, name, now, requestedMark }: {
   }, [reference, requestedMark?.id, loaded]);
   const marks = orderMarks(view.marks);
   const checked = !!view.lastChecked;
-  const shown = shownMarks(marks, checked);
+  // A Totals shown, not judged, is drawn beside the marks with a verdict; cardVerdict counts only those (f173).
+  const shown = cardMarks(marks);
   // Until a first read answers, nothing is known about this measure: the card says it is reading (spec 4.4).
   const reading = !loaded && !error;
   const verdict = cardVerdict(marks, match, { running: view.running, checked, reading });
@@ -286,10 +287,10 @@ export function MeasureMarksPanel({ reference, name, now, requestedMark }: {
 
 /** One mark opened: one sentence, up to six numbers, where it looked behind one more click, and one action. */
 export function MarkCard({ reference, mark, state, others, limitMs, onRecheck, onKeep, onPropose }: {
-  reference: string; mark: Mark; state?: State; others: Mark[]; limitMs?: number; onClose?: () => void;
+  reference: string; mark: Mark; state?: MarkShow; others: Mark[]; limitMs?: number; onClose?: () => void;
   onRecheck: (includePerformance?: boolean) => void; onKeep?: () => void; onPropose?: () => void;
 }) {
-  const s = state ?? verdictOf(mark, true) ?? 'unknown';
+  const s: MarkShow = state ?? verdictOf(mark, true) ?? 'unknown';
   const cells = (mark.cells ?? []).slice(0, 6);
   const [looked, setLooked] = useState(false);
   const twoSided = cells.some(c => c.before != null && c.before !== '');
@@ -333,7 +334,7 @@ export function MarkCard({ reference, mark, state, others, limitMs, onRecheck, o
 }
 
 function MarkAction({ reference, mark, state, onRecheck, onKeep, onPropose, looked }: {
-  reference: string; mark: Mark; state: State; onRecheck: (includePerformance?: boolean) => void; onKeep?: () => void; onPropose?: () => void;
+  reference: string; mark: Mark; state: MarkShow; onRecheck: (includePerformance?: boolean) => void; onKeep?: () => void; onPropose?: () => void;
   looked?: { open: boolean; toggle: () => void };
 }) {
   const host = useMarksHost();

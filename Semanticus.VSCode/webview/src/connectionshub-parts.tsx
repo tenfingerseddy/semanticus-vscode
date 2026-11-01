@@ -4,6 +4,7 @@
 
 import type { ReactNode } from 'react';
 import { JOBS, type Job, type JobOption, type NotLinkedSource, notLinkedRemovable, notLinkedUses } from './connectionshub-model';
+import { historyKindLabel, historyParts, historySubLine, type HistoryEvent } from './historyrow';
 
 const BTN = 'sem-btn';
 const BTN_PRIMARY = 'sem-btn sem-btn-primary';
@@ -113,3 +114,30 @@ export function NotLinkedList({ items, linkTargets, onLink, onRemove, busy }:
 }
 
 export { BTN, BTN_PRIMARY, BTN_COMPACT, BTN_QUIET };
+
+/**
+ * One History row (f172 fault 3). A row whose second line fits is drawn as it always was. A row that does not fit (`cut`, measured
+ * by the page) shows ▸ and is a button: open, it shows who, where and when on one line, then the whole reason, wrapped. Nothing
+ * is cut, and a phone or a keyboard reads it without hover.
+ */
+export function HistoryRowView({ event: e, open, cut, onToggle, subRef }:
+  { event: HistoryEvent; open: boolean; cut: boolean; onToggle: () => void; subRef?: (el: HTMLElement | null) => void }) {
+  const parts = open ? historyParts(e) : null;
+  const body = (
+    <>
+      <span className={`note-dot mt-2 ${e.ok ? 'note-dot-ok' : 'note-dot-bad'}`} aria-hidden />
+      <span className="block min-w-0 flex-1">
+        <span className="block text-xs font-semibold truncate" style={{ color: 'var(--sem-fg)' }}>{historyKindLabel(e)}</span>
+        {parts ? (<>
+          <span className="block text-xs" data-history-line="who" style={{ color: 'var(--sem-muted)' }}>{parts.who}</span>
+          {parts.reason && <span className="block sem-text-body hub-history-reason" data-history-line="reason">{parts.reason}</span>}
+        </>) : <span ref={subRef} className="block text-xs truncate" data-history-line="sub" style={{ color: 'var(--sem-muted)' }}>{historySubLine(e)}</span>}
+      </span>
+      {(cut || open) && <span className="hub-history-marker" aria-hidden>{open ? '▾' : '▸'}</span>}
+    </>
+  );
+  const rowClass = 'hub-history-row flex items-start gap-2 border-b px-4 py-2 last:border-b-0';
+  return cut || open
+    ? <button type="button" className={`${rowClass} w-full text-left`} style={{ borderColor: 'var(--sem-rule)' }} aria-expanded={open} onClick={onToggle}>{body}</button>
+    : <div className={rowClass} style={{ borderColor: 'var(--sem-rule)' }}>{body}</div>;
+}

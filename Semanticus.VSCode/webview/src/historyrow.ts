@@ -38,3 +38,13 @@ export const historySubLine = (e: HistoryEvent): string => {
   // A model with no detail used to be the whole "about"; now the model always leads and the reason follows.
   return [model, e.account, e.tenantId ? `tenant ${e.tenantId}` : null, reason, shortWhen(e.whenUtc)].filter(Boolean).join(' · ');
 };
+
+/** The same row split in two for an opened row (f172 fault 3): who, where and when on one line, then the whole reason on its own,
+ *  as a sentence. A long reason was cut at the end of the line, and hover was the only way to read the rest. */
+export const historyParts = (e: HistoryEvent): { who: string; reason: string | null } => {
+  const kind = historyKindLabel(e).trim().toLowerCase();
+  const model = e.modelName || e.database || lastSegment(e.endpoint);
+  const detail = (e.detail || '').trim();
+  const reason = detail && detail.toLowerCase() !== kind ? detail.charAt(0).toUpperCase() + detail.slice(1) : null;
+  return { who: [model, e.account, e.tenantId ? `tenant ${e.tenantId}` : null, shortWhen(e.whenUtc)].filter(Boolean).join(' · '), reason };
+};

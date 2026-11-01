@@ -382,6 +382,7 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
 // saved (its profile id), so picking a workspace and Connect use it too. The saved default does not move.
 type AccountPick = { mode: 'saved' | 'another' | 'chosen'; profileId: string | null; account: string | null };
 const SAVED_ACCOUNT: AccountPick = { mode: 'saved', profileId: null, account: null };
+type StartScreen = { pick: AccountPick; workspaces: Load<FabricWorkspace>; signIn: 'waiting' | 'unfinished' | null; waitingToList: boolean; otherOpen: boolean };
 
 export function WorkspacePicker({ account, anotherAccount = false, pressedFirst = false, initialAuthMode = 'interactive', initialTenant = '', onBack, onPasteAddress, onConnect }: {
   account?: string | null; anotherAccount?: boolean; pressedFirst?: boolean; initialAuthMode?: string; initialTenant?: string;
@@ -406,6 +407,10 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
   const [engine, setEngine] = useState<EngineView>({ state: 'ok' });
   const [signIn, setSignIn] = useState<'waiting' | 'unfinished' | null>(null);
   const cancelSignIn = useRef<() => void>(() => {});
+  // The screen before "Use another account", in whatever state it was: a list, a refused list, a sign-in that did not finish,
+  // or waiting for List workspaces. Cancel on that sign-in goes back to it (f172 fault 1, rc1 paths A and B), because no
+  // sign-in runs any more and the line that asked to pick an account in the browser would be wrong.
+  const beforeAnother = useRef<StartScreen | null>(null);
   const engineWhy = useRef<string | undefined>(undefined);
   const lastPressed = useRef(true);
   const wsGen = useRef(0);
@@ -455,7 +460,16 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
       else setWorkspaces({ kind: 'failed', message: signInSentence(e) });
     } finally { if (showWaiting) clearTimeout(showWaiting); }
   };
-  const cancelWorkspaces = () => cancelSignIn.current();
+  const cancelWorkspaces = () => {
+    cancelSignIn.current();
+    if (accountPickRef.current.mode !== 'another') return;   // the saved account's own sign-in: "Sign-in did not finish" stays the answer
+    ++wsGen.current; ++modelGen.current;   // the ended sign-in's answer is not this screen's any more
+    const back = beforeAnother.current;
+    beforeAnother.current = null;
+    setSignIn(null); setWsId(null); setModels(null); setModelId(null); setConnectError(null);
+    if (back) { setAccountPick(back.pick); setWorkspaces(back.workspaces); setSignIn(back.signIn); setWaitingToList(back.waitingToList); setOtherOpen(back.otherOpen); }
+    else { setOtherOpen(true); setWaitingToList(true); }   // opened as another account: back to its start, which waits for List workspaces
+  };
   // The engine reports itself: up means read again at once; down with a reason means the wait is over and the reason is the answer.
   const engineState = useRef<EngineView['state']>('ok');
   engineState.current = engine.state;
@@ -489,6 +503,19 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
     } catch (e) { if (mine === modelGen.current && live.current) setModels({ kind: 'failed', message: engineSentence(e) }); }
   };
 
+  const startAnotherAccount = () => {
+    if (accountPick.mode !== 'another') {
+      // A saved read still under way is dropped by the new sign-in, so coming back to it means it did not finish (Try again).
+      const inFlight = workspaces.kind === 'loading' && !waitingToList && signIn !== 'unfinished';
+      beforeAnother.current = { pick: accountPick, workspaces, signIn: inFlight ? 'unfinished' : signIn, waitingToList, otherOpen };
+    }
+    setAccountPick({ ...SAVED_ACCOUNT, mode: 'another' });
+    if (tenant.trim()) void loadWorkspaces(); else { setOtherOpen(true); setWaitingToList(true); }
+  };
+  // The header asks to pick the account in the browser only while that sign-in runs (rc1 path C): not before List workspaces,
+  // not after Cancel, and not over a refused or unfinished read.
+  const asking = accountPick.mode === 'another' && !waitingToList && workspaces.kind === 'loading' && signIn !== 'unfinished' && engine.state === 'ok';
+
   const connect = async () => {
     if (workspaces.kind !== 'ready' || models?.kind !== 'ready') return;
     const w = workspaces.items.find((x) => x.id === wsId);
@@ -504,8 +531,8 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
   };
 
   return (
-    <WorkspacePickerView account={accountPick.mode === 'saved' ? account : accountPick.account} askingAccount={accountPick.mode === 'another'}
-      onAnotherAccount={authMode === 'interactive' ? () => { setAccountPick({ ...SAVED_ACCOUNT, mode: 'another' }); if (tenant.trim()) void loadWorkspaces(); else { setOtherOpen(true); setWaitingToList(true); } } : undefined}
+    <WorkspacePickerView account={accountPick.mode === 'saved' ? account : accountPick.account} askingAccount={asking}
+      onAnotherAccount={authMode === 'interactive' ? startAnotherAccount : undefined}
       waitingToList={waitingToList}
       workspaces={workspaces} engine={engine} wsId={wsId} models={models} modelId={modelId} env={env}
       authMode={authMode} tenant={tenant} otherOpen={otherOpen} busy={busy} connectError={connectError}

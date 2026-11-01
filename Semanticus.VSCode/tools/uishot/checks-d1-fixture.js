@@ -103,6 +103,21 @@
     sa[0] = sa[0].map(m => m.name !== 'Trusted number' ? m : M('Trusted number', 'passed', 'The measure matches the saved numbers you trust.', { lastRan: at(),
       cells: [{ context: 'Grand total', before: '628370', after: '628370', beforeText: '$628,370.00', afterText: '$628,370.00' }] }));
   }
+  // f173: '# Customers' is a distinct count and 'Margin %' a ratio whose type Jev is not sure of. f173 is the rc3 engine (the
+  // Totals applies, names the type, no verdict); f173rc2 is the rc2 engine (the same Totals did not apply and was hidden).
+  if (sc === 'f173' || sc === 'f173rc2') {
+    const rc2 = sc === 'f173rc2';
+    const typed = (rule, type, confidence, code, sentence, old, cells) => M('Totals', 'info', rc2 ? old : sentence, { lastRan: at(), reasonCode: code,
+      applies: !rc2, verdict: null, total: { rule, type, confidence, fitScore: null, expected: false, source: '' }, cells });
+    measures['# Customers'][0] = measures['# Customers'][0].map(m => m.name !== 'Totals' ? m : typed('distinct_count', 'distinct count', .99, 'totals_distinct',
+      'Checked as a distinct count. Distinct counts do not add up, so the total is shown, not judged.',
+      'Checked as a distinct count. Totals for this type are shown, not judged.',
+      [['Category: Bikes', '9132'], ['Category: Accessories', '15114'], ['Category: Clothing', '6852'], ['Grand total', '18869']].map(([context, after]) => ({ context, after }))));
+    measures['Margin %'] = [sum('41.1%', [['Year: 2019', '41.1%'], ['Year: 2020', '41.2%']]).map(m => m.name !== 'Totals' ? m : typed('recomputed_at_total', 'recalc (recomputed at the total)', .42,
+      'totals_type_unclear', 'Checked as a recalculation. Jev is not sure of the type, so the total is shown, not judged.', 'Type unclear.',
+      [['Year: 2019', '0.411'], ['Year: 2020', '0.412'], ['Grand total', '0.4115']].map(([context, after]) => ({ context, after })))),
+      D('Gross Profit divided by Sales Amount.', 'person', 90, 'matches')];
+  }
   const names = Object.keys(measures);
   const ref = n => 'measure:Sales/' + n;
   const never = new Set(sc === 'unchecked' ? ['Quantity PY', 'ShowValueForDates'] : []);

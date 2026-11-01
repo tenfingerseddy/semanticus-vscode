@@ -658,6 +658,11 @@ const COVER = 'NO TEST: this fixture is exercising the commit half, so the test 
         4419322354: 'Semanticus.Engine/LocalEngine.MarkDefinitions.cs',
         4419322358: 'Semanticus.Engine/LocalEngine.MarkFilters.cs',
         4419322362: 'Semanticus.Engine/Testing/CalendarChecks.cs',
+        // PR #406, the Graphicus contract. Description grading by match score and Plan routing of the GR content findings (T324, T325).
+        4430332108: 'Semanticus.Analysis/GraphicusReadinessRules.cs',
+        4430332111: 'Semanticus.Analysis/ReadinessAnalyzer.cs',
+        // PR #407, the 1.7.2 release. SQL endpoint edits made before the saved source arrives (T326).
+        4435488517: 'Semanticus.VSCode/webview/src/connectionshub.tsx',
     };
     for (const [pr, rows_] of live)
         for (const [commentId, r] of rows_) {

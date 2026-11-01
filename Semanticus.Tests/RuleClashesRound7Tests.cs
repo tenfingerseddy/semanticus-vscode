@@ -105,6 +105,8 @@ namespace Semanticus.Tests
         /// row that is neither here nor found by the scan fails the test, so a new row cannot be added unread.</summary>
         private static readonly Dictionary<string, string> CheckReadsIndirectly = new(StringComparer.OrdinalIgnoreCase)
         {
+            // GR-SYNONYMS reads each object's synonyms through the helper HasNoSynonyms (GraphicusReadinessRules.cs).
+            ["GR-SYNONYMS"] = "HasNoSynonyms reads each object's synonyms from the linguistic schema",
             // The DAX lint rules lint the object's expression text through DaxBestPracticeRule (a class, not a lambda).
             ["BP-DAX-IFERROR"] = "DaxBestPracticeRule lints the object's expression text",
             ["BP-DAX-IFERROR-DIV"] = "DaxBestPracticeRule lints the object's expression text",
@@ -137,7 +139,7 @@ namespace Semanticus.Tests
                 if (at < 0) return null;
                 from = at + key.Length;
                 var head = source.Substring(Math.Max(0, at - 60), Math.Min(60, at));
-                if (!Regex.IsMatch(head, @"(new\s+(ObjectRule<[^>]*>|ModelRule)|DaxRule|DaxAdvisory)\s*\(\s*$")) continue;
+                if (!Regex.IsMatch(head, @"(new\s+(ObjectRule<[^>]*>|ModelRule)|DaxRule|DaxAdvisory|GraphicusRule)\s*\(\s*$")) continue;
                 var open = source.LastIndexOf('(', at);
                 return Balanced(source, open);
             }
@@ -187,7 +189,7 @@ namespace Semanticus.Tests
         {
             var path = RepoFile(Path.Combine("Semanticus.Analysis", "ReadinessRules.cs"));
             Assert.NotNull(path);
-            var source = File.ReadAllText(path!);
+            var source = File.ReadAllText(path!) + File.ReadAllText(RepoFile(Path.Combine("Semanticus.Analysis", "GraphicusReadinessRules.cs"))!);
             var problems = new List<string>();
             var read = 0;
             foreach (var r in AllReadinessRules())
@@ -197,7 +199,7 @@ namespace Semanticus.Tests
                 if (!ReadAs.TryGetValue(about.Property, out var names)) { problems.Add(r.Id + ": '" + about.Property + "' has no reading in this test; add it"); continue; }
                 if (CheckReadsIndirectly.ContainsKey(r.Id)) continue;
                 var def = RuleDefinition(source, r.Id);
-                if (def == null) { problems.Add(r.Id + ": its definition was not found in ReadinessRules.cs and it is not listed"); continue; }
+                if (def == null) { problems.Add(r.Id + ": its definition was not found in the readiness rule files and it is not listed"); continue; }
                 var idents = new HashSet<string>(Identifier.Matches(def).Select(m => m.Value), StringComparer.Ordinal);
                 if (names.Any(idents.Contains)) read++;
                 else problems.Add(r.Id + ": the row names '" + about.Property + "' but the check never reads " + string.Join(" or ", names));

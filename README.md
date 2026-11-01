@@ -2,7 +2,7 @@
 
 **Build, test and ship Power BI and Fabric semantic models in VS Code. Work alongside your own assistant on one live model.**
 
-[Download 1.7.1](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest) ·
+[Download 1.7.2](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest) ·
 [Website](https://semanticus.com.au) · [User guide](https://semanticus.com.au/docs) ·
 [Release notes](CHANGELOG.md)
 
@@ -73,7 +73,7 @@ Fabric or Azure Analysis Services. On Windows x64, you can also discover a runni
 
 ![The model diagram in the bus matrix layout](https://semanticus.com.au/assets/shots/diagram-matrix.png)
 
-## Install 1.7.1
+## Install 1.7.2
 
 Install Semanticus from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=semanticus-vscode.semanticus-vscode): in VS Code, open **Extensions**,
 search for Semanticus and choose **Install**. VS Code picks the right build for your computer, and every build

@@ -23,6 +23,7 @@ namespace Semanticus.Analysis
             [ReadinessCategory.BestPractice] = 0.08,
             [ReadinessCategory.Formatting] = 0.05,
             [ReadinessCategory.CopilotLimits] = 0.05,
+            [ReadinessCategory.Graphicus] = 0,
         };
 
         private readonly IReadOnlyList<ReadinessRule> _rules;
@@ -254,7 +255,8 @@ namespace Semanticus.Analysis
                 OrphanedWaivers = orphans,
                 OrphanedWaiverCount = orphans.Length,
                 ScoredRuleIds = new HashSet<string>(
-                    evals.Where(x => x.ev.Applicable > 0 && !x.rule.GateOnly).Select(x => x.rule.Id), StringComparer.OrdinalIgnoreCase),
+                    evals.Where(x => x.ev.Applicable > 0 && !x.rule.GateOnly && Weights[x.rule.Category] > 0)
+                         .Select(x => x.rule.Id), StringComparer.OrdinalIgnoreCase),
             };
         }
 

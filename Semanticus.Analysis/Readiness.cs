@@ -20,6 +20,7 @@ namespace Semanticus.Analysis
         CopilotLimits,
         DataAgentConfig,
         BestPractice,
+        Graphicus,
     }
 
     /// <summary>Severity doubles as the rule weight inside its category (Info=1 … Critical=5).</summary>

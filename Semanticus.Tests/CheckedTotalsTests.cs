@@ -81,7 +81,7 @@ public sealed class CheckedTotalsTests
     {
         var mark = await Fake("distinct_count", .99, fit).ScoreAsync(Input, Probes, new(), false, CancellationToken.None);
         Assert.Equal("info", mark.State);
-        Assert.Equal("Checked as a distinct count. Totals for this type are shown, not judged.", mark.Sentence);
+        Assert.Equal("Checked as a distinct count. Distinct counts do not add up, so the total is shown, not judged.", mark.Sentence);
         Assert.Null(mark.Action);
     }
 
@@ -91,7 +91,7 @@ public sealed class CheckedTotalsTests
     {
         var mark = await Fake("average", confidence, .01).ScoreAsync(Input, Probes, new(), false, CancellationToken.None);
         Assert.Equal(state, mark.State);
-        if (confidence < .5) Assert.Equal("Type unclear.", mark.Sentence);
+        if (confidence < .5) Assert.Equal("Checked as an average. Jev is not sure of the type, so the total is shown, not judged.", mark.Sentence);
     }
 
     [Fact]
@@ -149,7 +149,7 @@ public sealed class CheckedTotalsTests
             SemiAdditivePassAtLeast = .2, AveragePassAtLeast = .2, BlankPassAtLeast = .2 };
         Assert.Equal("passed", (await Fake(rule, .6, .3).ScoreAsync(Input, Probes, settings, false, CancellationToken.None)).State);
         var unclear = await Fake(rule, .6, .01).ScoreAsync(Input, Probes, settings with { TypeUnclearBelow = .7 }, false, CancellationToken.None);
-        Assert.Equal("Type unclear.", unclear.Sentence);
+        Assert.EndsWith(". Jev is not sure of the type, so the total is shown, not judged.", unclear.Sentence);
         Assert.Equal("info", unclear.State);
         Assert.Equal(rule, unclear.Total.Rule);
     }
