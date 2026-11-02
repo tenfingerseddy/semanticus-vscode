@@ -884,6 +884,7 @@
       "Semanticus.VSCode/test/composer-draft.test.mjs",
       "Semanticus.VSCode/test/connect-assistants.test.mjs",
       "Semanticus.VSCode/test/connect-pickers.test.mjs",
+      "Semanticus.VSCode/test/connections-address-environment.test.mjs",
       "Semanticus.VSCode/test/connections-fx171.test.mjs",
       "Semanticus.VSCode/test/connections-hub.test.mjs",
       "Semanticus.VSCode/test/connections-one-page.test.mjs",
@@ -1139,6 +1140,7 @@
       "Semanticus.VSCode/test/studio-wire.test.mjs",
       "Semanticus.VSCode/test/suite-gate-wiring.test.mjs",
       "Semanticus.VSCode/test/suite-shard.test.mjs",
+      "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs",
       "Semanticus.VSCode/test/tab-state-preservation.test.mjs",
       "Semanticus.VSCode/test/tasks-register.test.mjs",
       "Semanticus.VSCode/test/tests-fixes.test.mjs",
@@ -2931,11 +2933,13 @@
         "Semanticus.Tests/OpTaxonomyTests.cs",
         "Semanticus.Tests/SessionLifecycleTests.cs",
         "Semanticus.Tests/TestSuiteCoverageTests.cs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
         "Semanticus.VSCode/test/f172-small-fixes.test.mjs",
         "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
-        "Semanticus.VSCode/test/incremental-refresh.test.mjs"
+        "Semanticus.VSCode/test/incremental-refresh.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs"
       ]
     },
     {
@@ -2959,13 +2963,15 @@
         "Semanticus.Tests/StateHomeVerifyTests.cs",
         "Semanticus.Tests/TestSuiteCoverageTests.cs",
         "Semanticus.Tests/TimeIntelligenceDataEdgeTests.cs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
         "Semanticus.VSCode/test/f172-small-fixes.test.mjs",
         "Semanticus.VSCode/test/first-start.test.mjs",
         "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/incremental-refresh.test.mjs",
-        "Semanticus.VSCode/test/publish-surface.test.mjs"
+        "Semanticus.VSCode/test/publish-surface.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs"
       ]
     },
     {
@@ -5664,6 +5670,7 @@
         "Semanticus.Tests/VerifySfInt2Tests.cs",
         "Semanticus.Tests/VPlanBugsAttackTests.cs",
         "Semanticus.VSCode/test/column-relationship-safety.test.mjs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/connections-one-page.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
@@ -5675,6 +5682,7 @@
         "Semanticus.VSCode/test/mcp-update.integration.mjs",
         "Semanticus.VSCode/test/rpc-auth.test.mjs",
         "Semanticus.VSCode/test/solui-round2-sweep3.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs",
         "Semanticus.VSCode/test/verify-solui-r2-c.test.mjs"
       ]
     },
@@ -5748,6 +5756,7 @@
         "Semanticus.Tests/WorkflowBindingTests.cs",
         "Semanticus.Tests/WorkflowCheckTests.cs",
         "Semanticus.Tests/WorkflowUpgradeTests.cs",
+        "Semanticus.VSCode/test/mirror-release-tools.test.mjs",
         "Semanticus.VSCode/test/workflow-document.test.mjs"
       ]
     },
@@ -6151,6 +6160,7 @@
         "Semanticus.Tests/ConnectionPublicDoorTests.cs",
         "Semanticus.Tests/ConnectionRegistryTests.cs",
         "Semanticus.Tests/VerifyUatUndoGate2Tests.cs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/connections-one-page.test.mjs"
       ]
@@ -8022,6 +8032,7 @@
         "Semanticus.Tests/ConnectionPublicDoorTests.cs",
         "Semanticus.Tests/ProFeatureMapTests.cs",
         "Semanticus.Tests/ToolMergeTests.cs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/connections-one-page.test.mjs"
       ]
@@ -8050,7 +8061,8 @@
         "Semanticus.Tests/StateHomeVerifyTests.cs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/f172-small-fixes.test.mjs",
-        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs"
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs"
       ]
     },
     {
@@ -8184,6 +8196,7 @@
         "Semanticus.Tests/ConnectionRegistryTests.cs",
         "Semanticus.Tests/StateHomeTests.cs",
         "Semanticus.Tests/StateHomeVerifyTests.cs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/connections-one-page.test.mjs",
         "Semanticus.VSCode/test/dax-editor-live-identity.test.mjs",
@@ -8193,7 +8206,8 @@
         "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/mcp-update.integration.mjs",
         "Semanticus.VSCode/test/reopen-behaviour.mjs",
-        "Semanticus.VSCode/test/sidebar-identity.test.mjs"
+        "Semanticus.VSCode/test/sidebar-identity.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs"
       ]
     },
     {
@@ -8473,7 +8487,8 @@
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
         "Semanticus.VSCode/test/f172-small-fixes.test.mjs",
         "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
-        "Semanticus.VSCode/test/pro-feature-line.test.mjs"
+        "Semanticus.VSCode/test/pro-feature-line.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs"
       ]
     },
     {
@@ -8707,6 +8722,7 @@
         "Semanticus.VSCode/test/startplan-studio.test.mjs",
         "Semanticus.VSCode/test/startplan-uat7.test.mjs",
         "Semanticus.VSCode/test/startplan-wiring.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs",
         "Semanticus.VSCode/test/tests-new-check-drawer.test.mjs",
         "Semanticus.VSCode/test/tests-page-surface.test.mjs",
         "Semanticus.VSCode/test/uatj8-start.test.mjs",
@@ -9230,6 +9246,7 @@
         "Semanticus.Tests/VerifyDraftIdentityRound3Tests.cs",
         "Semanticus.Tests/WorkspaceSqlEndpointListTests.cs",
         "Semanticus.VSCode/test/bridge-timeouts.test.mjs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/dax-editor-live-identity.test.mjs",
         "Semanticus.VSCode/test/drafts-live-key.test.mjs",
@@ -9265,6 +9282,7 @@
         "Semanticus.Tests/SnapshotCleanupTests.cs",
         "Semanticus.Tests/UatUndoRefusedWriteSweepTests.cs",
         "Semanticus.VSCode/test/bridge-timeouts.test.mjs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
         "Semanticus.VSCode/test/engine-restart-recovery.test.mjs",
@@ -9273,6 +9291,7 @@
         "Semanticus.VSCode/test/join11-relay-scope.test.mjs",
         "Semanticus.VSCode/test/reopen-behaviour.mjs",
         "Semanticus.VSCode/test/solui-page-stamp.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs",
         "Semanticus.VSCode/test/v-open-note-studio.test.mjs"
       ]
     },
@@ -9569,7 +9588,8 @@
         "Semanticus.Tests/PersistentSignInTests.cs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/f172-small-fixes.test.mjs",
-        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs"
+        "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs"
       ]
     },
     {
@@ -9951,7 +9971,8 @@
         "Semanticus.Tests/LoopbackIntakeRefusalTests.cs",
         "Semanticus.Tests/StateHomeTests.cs",
         "Semanticus.Tests/StateHomeVerifyTests.cs",
-        "Semanticus.Tests/VerifyUatUndoGate2Tests.cs"
+        "Semanticus.Tests/VerifyUatUndoGate2Tests.cs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs"
       ]
     },
     {
@@ -10632,6 +10653,7 @@
         "Semanticus.Tests/Tc2SqlTokenAttackTests.cs",
         "Semanticus.Tests/TestsFixesTests.cs",
         "Semanticus.Tests/VerifyUatUndoGate2Tests.cs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/drafts-hub.test.mjs",
         "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
@@ -10639,7 +10661,8 @@
         "Semanticus.VSCode/test/save-class-expected-values.test.mjs",
         "Semanticus.VSCode/test/sql-token-host-card.test.mjs",
         "Semanticus.VSCode/test/stale-editors-round2.test.mjs",
-        "Semanticus.VSCode/test/stale-editors.test.mjs"
+        "Semanticus.VSCode/test/stale-editors.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs"
       ]
     },
     {
@@ -11685,7 +11708,8 @@
         "Semanticus.VSCode/test/first-start.test.mjs",
         "Semanticus.VSCode/test/fx171-tenant-signin.test.mjs",
         "Semanticus.VSCode/test/save-class-expected-values.test.mjs",
-        "Semanticus.VSCode/test/stale-editors-round2.test.mjs"
+        "Semanticus.VSCode/test/stale-editors-round2.test.mjs",
+        "Semanticus.VSCode/test/t326-sql-endpoint-typed-before-read.test.mjs"
       ]
     },
     {
@@ -11995,6 +12019,7 @@
         "Semanticus.Tests/SavedSignInTests.cs",
         "Semanticus.Tests/SignInPressTests.cs",
         "Semanticus.Tests/VerifyUatUndoGate2Tests.cs",
+        "Semanticus.VSCode/test/connections-address-environment.test.mjs",
         "Semanticus.VSCode/test/connections-hub.test.mjs",
         "Semanticus.VSCode/test/connections-one-page.test.mjs",
         "Semanticus.VSCode/test/publish-surface.test.mjs",

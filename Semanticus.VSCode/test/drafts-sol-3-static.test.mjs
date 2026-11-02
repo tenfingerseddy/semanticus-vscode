@@ -63,7 +63,7 @@ test('J3: the standalone Connections page names the model it shows, as Studio do
   const hub = readFileSync(join(root, 'webview', 'src', 'connectionshub.tsx'), 'utf8').replace(/\r\n/g, '\n');
   const standalone = hub.slice(hub.indexOf('export function ConnectionsStandalone('));
   assert.match(standalone, /const \{ session \} = useConnection\(\);\s+setPageModelIdentity\(session\?\.sessionId \? session\.modelIdentity : undefined\);/);
-  assert.match(hub, /import \{ setPageModelIdentity \} from '\.\/pagemodel';/);
+  assert.match(hub, /import \{[^}]*\bsetPageModelIdentity\b[^}]*\} from '\.\/pagemodel';/);
   // Studio does the same in App.tsx (setDraftModel -> setPageModelIdentity): the two pages that can send a write are the two that name their model
   const app = readFileSync(join(root, 'webview', 'src', 'App.tsx'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(app, /if \(session\?\.sessionId\) setDraftModel\(/);

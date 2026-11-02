@@ -7,6 +7,13 @@ All notable changes to Semanticus are recorded here. The format follows
 > with what verification. [`PLAN.md`](docs/PLAN.md) is the forward roadmap (what's next, not what shipped);
 > the per-commit narrative that used to live in PLAN's "Shipped & verified" section now lives here.
 
+## [1.7.3] - 2026-11-02
+
+### Fixed
+
+- The environment you pick in "Add a model by its address" is saved. A model you mark Production reads Production in Connections, and the assistant follows Production rules on it.
+- Words you type in a SQL endpoint form while its saved endpoint is still loading stay when it arrives. Only the boxes you did not touch fill in.
+
 ## [1.7.2] - 2026-11-01
 
 ### Added

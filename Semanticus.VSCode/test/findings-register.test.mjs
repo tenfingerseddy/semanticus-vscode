@@ -663,6 +663,8 @@ const COVER = 'NO TEST: this fixture is exercising the commit half, so the test 
         4430332111: 'Semanticus.Analysis/ReadinessAnalyzer.cs',
         // PR #407, the 1.7.2 release. SQL endpoint edits made before the saved source arrives (T326).
         4435488517: 'Semanticus.VSCode/webview/src/connectionshub.tsx',
+        // PR #409, the 1.7.3 release. The environment on the record the open saves under another spelling of the address (T327).
+        4439630043: 'Semanticus.VSCode/webview/src/connectionshub.tsx',
     };
     for (const [pr, rows_] of live)
         for (const [commentId, r] of rows_) {

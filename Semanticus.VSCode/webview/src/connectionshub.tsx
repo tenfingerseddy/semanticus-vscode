@@ -9,12 +9,12 @@ import { useSurfaceEscape } from './surface-escape';
 import { ConsentCard } from './consent';
 import { DraftMark, EditMovedBanner, sameValue, useEditBase } from './editbase';
 import { draftModel, draftStore, heldDraft, useHeldDrafts } from './drafts';
-import { setPageModelIdentity } from './pagemodel';
+import { namingModel, setPageModelIdentity } from './pagemodel';
 import { DesktopPicker, WorkspacePicker, type WorkspaceChoice } from './connectpickers';
 import { COPY as PICKER_COPY, ENV_OPTIONS, OPTION_STYLE, SIGN_IN_WAYS, publishWords, signInSentence, signInToReuse, signInStopped, waitForSignIn } from './connectpickers-model';
 import {
   type HubRecord, type HubContext, type HubPanel, type Job, type ModelEndpointList, type NotLinkedSource, type SqlEndpointInfo,
-  SEARCH_FROM, defaultMoveCount, defaultMoveSentence, endpointFor, jobOptions, kindWord, pickerStillPressed, removeConfirmSentence, routeSection, rowJobs, rowSecondLine, sideId, startFormStaysOpen, testsTargetToKeep,
+  SEARCH_FROM, defaultMoveCount, savedRecordFor, defaultMoveSentence, endpointFor, jobOptions, kindWord, pickerStillPressed, removeConfirmSentence, routeSection, rowJobs, rowSecondLine, sideId, startFormStaysOpen, testsTargetToKeep,
 } from './connectionshub-model';
 import { shortWhen, type HistoryEvent } from './historyrow';
 import { BTN, BTN_COMPACT, BTN_PRIMARY, BTN_QUIET, ChangePanel, DefaultConfirm, HistoryRowView, JobPicker, NotLinkedList } from './connectionshub-parts';
@@ -690,10 +690,16 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       const s = await rpc<SessionInfo>('sessionInfo').catch(() => null);
       if (s?.hasUnsavedChanges && !openConfirm) { setPendingOpen(r); setOpenSaveFormat(s.source ? (/\.bim$/i.test(s.source) ? 'BIM' : 'TMDL') : null); setOpenConfirm(true); setBusyId(null); return null; }
       const discard = !!s?.hasUnsavedChanges;
+      // A model typed into the address form carries the environment the person picked. It is put on here, after any unsaved-changes question, so it
+      // also lands when the open waited on that question (gap 1). A model already saved takes it before the connect, so it lands even when the connect does not finish.
+      // After the open it goes on again: the engine saves the address as typed, so another spelling of a saved address (host case, %20) makes a new record,
+      // and that new record is the one the agent policy reads (PR #409 Codex P1).
+      if (r.id.startsWith('new:') && r.label) await labelSaved(r, false);
       if (r.kind === 'localDesktop') await rpc('openLocal', r.endpoint, r.database || null, discard);
       else if (r.kind === 'file') await rpc('open', r.endpoint, discard);
       else await rpc('openLive', r.endpoint, r.database || null, r.authMode || 'interactive', null, r.tenantId || null,
         opts?.forceReauth ?? false, opts?.accountProfileId ?? null, opts?.makeDefault ?? false, opts?.loginHint ?? null, 'human', discard);
+      if (r.id.startsWith('new:') && r.label) await labelSaved(r, true);
       if (left()) { await refresh(); await load(); await reloadHistory(); return null; }
       setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null); setOpenConfirm(false); setPendingOpen(null);
       await refresh(); await load(); await reloadHistory();
@@ -714,6 +720,16 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       return failure;
     }
     finally { if (!left()) setBusyId(null); }
+  };
+  // The environment typed with an address goes on its saved record. After the open, the request names the model the open made: the page still names the model it
+  // showed until it reads the new session, and the engine refuses a write for any other model than the open one, so the label was refused and lost (gap 1).
+  const labelSaved = async (r: ConnectionRecord, opened: boolean): Promise<boolean> => {
+    const recs = await rpc<ConnectionRecord[]>('listConnections').catch(() => [] as ConnectionRecord[]);
+    const match = savedRecordFor(recs ?? [], r.endpoint, r.database, !opened);
+    if (!match) return false;
+    if ((match.label ?? '') === r.label) return true;   // already reads the picked environment: no second write, no second history line
+    const now = opened ? (await rpc<SessionInfo>('sessionInfo').catch(() => null))?.modelIdentity : undefined;
+    return namingModel(now, () => rpc('labelConnection', match.id, r.label)).then(() => true, () => false);
   };
   // The person's own save, then the open: the work they were asked about is kept and nothing is thrown away. A save that fails stays on the question and says why.
   const saveThenOpen = async (r: ConnectionRecord) => {
@@ -808,15 +824,10 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   const openByAddress = async (c: { endpoint: string; database: string; authMode: string; tenantId: string | null; label?: string; accountProfileId?: string | null }): Promise<string | null> => {
     setError(null);
     // A model picked from a list read as a chosen account opens as that account, never as the saved default.
-    const failure = await openModel({ id: 'new:' + c.endpoint, kind: 'xmla', endpoint: c.endpoint, database: c.database, authMode: c.authMode, tenantId: c.tenantId } as ConnectionRecord,
+    // The environment label rides on the record, and the open puts it on the saved record (labelSaved).
+    const failure = await openModel({ id: 'new:' + c.endpoint, kind: 'xmla', endpoint: c.endpoint, database: c.database, authMode: c.authMode, tenantId: c.tenantId, label: c.label || undefined } as ConnectionRecord,
       c.accountProfileId ? { accountProfileId: c.accountProfileId } : undefined);
     if (failure) return failure || 'The connection did not complete.';
-    if (c.label) {
-      const recs = await rpc<ConnectionRecord[]>('listConnections').catch(() => [] as ConnectionRecord[]);
-      const match = (recs ?? []).find((r) => r.endpoint === c.endpoint && (r.database || '') === c.database)
-        ?? (recs ?? []).find((r) => r.endpoint === c.endpoint);
-      if (match) await rpc('labelConnection', match.id, c.label).catch(() => undefined);
-    }
     announceConnectionChange();   // the same in-webview announce the pasted-address add makes (see addAndConnect)
     return null;
   };

@@ -217,3 +217,22 @@ export function testsTargetToKeep(querying: ConnectionContextModel | null | unde
   if (same(querying.endpoint, added.endpoint) && (!added.database.trim() || same(querying.database, added.database))) return null;
   return { endpoint: querying.endpoint, database: querying.database ?? '', authMode: querying.authMode || 'interactive', tenantId: querying.tenantId ?? null };
 }
+
+// An address as a person reads it: decoded, any case, no trailing slash. The engine may keep it another way than it was typed.
+function sameAddress(a?: string | null, b?: string | null): boolean {
+  const plain = (value?: string | null) => { const text = (value ?? '').trim().replace(/\/+$/, ''); try { return decodeURI(text).toLowerCase(); } catch { return text.toLowerCase(); } };
+  return !!a && !!b && plain(a) === plain(b);
+}
+/** The saved record a model typed into the address form is (gap 1: Production was saved as Not set). `before` (the connect has not run yet): only a record with
+ *  the same address and the same named model, so a form with no model name labels nothing before the open. After the open: the same address and model first,
+ *  then the same address, then the newest published record with no label yet, which the open that just succeeded saved a moment ago. A record that already has
+ *  a label is never that guess, so a guess cannot change a label the person set. */
+export function savedRecordFor<T extends Pick<HubRecord, 'kind' | 'endpoint' | 'database' | 'lastUsedUtc' | 'label'>>(records: T[], endpoint: string, database?: string | null, before = false): T | undefined {
+  const sameModel = (r: T) => (r.database ?? '').trim().toLowerCase() === (database ?? '').trim().toLowerCase();
+  const published = records.filter((r) => r.kind === 'xmla');
+  const exact = published.find((r) => sameAddress(r.endpoint, endpoint) && sameModel(r));
+  if (before) return (database ?? '').trim() ? exact : undefined;
+  return exact
+    ?? published.find((r) => sameAddress(r.endpoint, endpoint))
+    ?? [...published].sort((a, b) => (b.lastUsedUtc ?? '').localeCompare(a.lastUsedUtc ?? '')).filter((r, i) => i === 0 && !r.label)[0];
+}

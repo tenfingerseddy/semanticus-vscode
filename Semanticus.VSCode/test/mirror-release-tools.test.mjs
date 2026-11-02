@@ -206,3 +206,32 @@ test('the publishable register is load-bearing, not decoration', { skip: SKIP },
   assert.deepEqual(addedBy(removed, before), registered,
     'a manifest with no publishableFiles key at all must fail the same way, not throw and not pass');
 });
+
+// The mirror's own arguments (head-ops, 2 Nov 20:2x). mirror-public.mjs ignored any flag it did not know, so `--help`, or a typo such
+// as `--no-psuh` or `--dryrun`, ran a REAL mirror and push of origin/main. An unknown argument, or a value flag with no value, must stop
+// with the usage text and exit 1; `--help` prints the usage and exits 0. Every call also passes `--self-check-only`, so the code before
+// this check (which ignored the bad argument) exits at the offline self-check and can never clone or push while this test is red.
+const mirrorScript = resolve(repoRoot, 'tools/release/mirror-public.mjs'); // mirror-optional: the mirror self-excludes
+const MIRROR_SKIP = existsSync(mirrorScript) ? false : 'mirror-public.mjs is curated away in this copy';
+function runMirror(...args) {
+  try {
+    const out = execFileSync(process.execPath, [mirrorScript, ...args, '--self-check-only'], { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000 });
+    return { code: 0, out };
+  } catch (err) {
+    return { code: err.status, out: String(err.stdout ?? '') + String(err.stderr ?? '') };
+  }
+}
+test('the mirror refuses an argument it does not know, and a value flag with no value, before it does anything', { skip: MIRROR_SKIP }, () => {
+  for (const bad of [['--no-psuh'], ['--dryrun'], ['-n'], ['--work-dir']]) {
+    const r = runMirror(...bad);
+    assert.equal(r.code, 1, `${bad.join(' ')} must stop with exit 1`);
+    assert.match(r.out, /Usage: node tools\/release\/mirror-public\.mjs/, `${bad.join(' ')} prints the usage`);
+    assert.doesNotMatch(r.out, /\[mirror\] mirroring/, `${bad.join(' ')} mirrors nothing`);
+  }
+});
+test('the mirror prints its usage for --help and exits 0 without mirroring', { skip: MIRROR_SKIP }, () => {
+  const r = runMirror('--help');
+  assert.equal(r.code, 0);
+  assert.match(r.out, /Usage: node tools\/release\/mirror-public\.mjs/);
+  assert.doesNotMatch(r.out, /\[mirror\] mirroring/);
+});

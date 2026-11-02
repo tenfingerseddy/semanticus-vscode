@@ -29,6 +29,17 @@ export const sameValue = (a: unknown, b: unknown) => stable(a) === stable(b);
 /** True for the engine's refusal of a save whose starting point is no longer the live value (LocalEngine.GuardExpectedValue's words). */
 export const movedError = (e: unknown): boolean => /changed in the model after you opened it/.test(String((e as { message?: string })?.message ?? e));
 
+/** The live value with the person's words kept: each field still equal to what the editor opened on takes the live value, each typed field stays.
+ *  A value that is not a plain object is one field: typed, it stays whole. */
+export function fillUntouched<T>(opened: T | null | undefined, draft: T | null | undefined, now: T): T {
+  const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!isObj(now) || !isObj(draft)) return sameValue(draft, opened) ? now : (draft as T);
+  const was: Record<string, unknown> = isObj(opened) ? opened : {};
+  const out: Record<string, unknown> = { ...now };
+  for (const k of Object.keys(draft)) if (!sameValue(draft[k], was[k])) out[k] = draft[k];
+  return out as T;
+}
+
 /** What an open editor does when the live thing is read again: nothing, follow it, or ask. */
 export type Reconciled = 'same' | 'follow' | 'ask';
 export function reconcile(base: unknown, now: unknown, dirty: boolean): Reconciled {
@@ -68,17 +79,23 @@ export function useEditBase<T>(o: EditBaseOptions<T>) {
   const was = useRef(o.editing);
   const scopeRef = useRef(o.scope);
   const confirmedRef = useRef<T | null | undefined>(undefined);   // the live value the last passing beforeSave() saw: what the write names as its starting point
+  // What the editor showed when it opened before the live thing was read (T326): the fields still equal to it are untouched, so the first read fills only those.
+  const openedRef = useRef<{ scope: string | undefined; draft: T | null | undefined } | null>(null);
 
   const typed = () => !sameValue(live.current.draft, baseRef.current);
   const sig = stable(o.current);   // the live thing by value: a caller may build `current` fresh on every render
 
   useEffect(() => {
     const { current, editing, reseed } = live.current;
-    if (!editing) { was.current = false; scopeRef.current = live.current.scope; setBase(current); setTheirs(null); return; }
+    if (!editing) { was.current = false; openedRef.current = null; scopeRef.current = live.current.scope; setBase(current); setTheirs(null); return; }
     // Just opened: the draft was seeded from this. The scope it opened on is the one to compare with later; without it the first
     // live change reads as "another thing altogether" and replaces what the person typed.
-    if (!was.current) { was.current = true; scopeRef.current = live.current.scope; setBase(current); setTheirs(null); return; }
-    if (current === undefined) { if (!awaitingRead.current) setBase(undefined); return; }   // not read yet: nothing to compare with (a held draft keeps its starting point)
+    if (!was.current) { was.current = true; scopeRef.current = live.current.scope; openedRef.current = { scope: live.current.scope, draft: live.current.draft }; setBase(current); setTheirs(null); return; }
+    if (current === undefined) {   // not read yet: nothing to compare with (a held draft keeps its starting point)
+      if (openedRef.current?.scope !== live.current.scope) openedRef.current = { scope: live.current.scope, draft: live.current.draft };
+      if (!awaitingRead.current) setBase(undefined);
+      return;
+    }
     awaitingRead.current = false;
     if (baseRef.current === undefined || scopeRef.current !== live.current.scope) {   // first read, or another thing altogether: start from it
       scopeRef.current = live.current.scope; setTheirs(null);
@@ -88,6 +105,11 @@ export function useEditBase<T>(o: EditBaseOptions<T>) {
         reseed(h.value); setBase(h.base);
         if (!sameValue(h.base, current)) setTheirs({ v: current });   // the value moved while those words were away: ask now, as a mount does
         return;
+      }
+      // Words typed while the read was on its way stay; only the fields the person has not touched take the live value (T326, F-302).
+      const opened = openedRef.current; openedRef.current = null;
+      if (opened && opened.scope === live.current.scope && current !== null && !sameValue(live.current.draft, opened.draft)) {
+        reseed(fillUntouched(opened.draft, live.current.draft, current)); setBase(current); return;
       }
       reseed(current as T); setBase(current); return;
     }
