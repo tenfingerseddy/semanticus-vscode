@@ -1022,6 +1022,9 @@ namespace Semanticus.Engine
             else ReplaceKeepingBackup(tmp, FilePath());   // a crash mid-write leaves the old file intact + a .tmp, never a truncated registry
         }
 
+        /// <summary>Test seam: runs just before a flush to the disk, with the path being written. A test makes a flush slow with it (cx1).</summary>
+        internal static Action<string> FlushHookForTests;
+
         /// <summary>Write <paramref name="text"/> and flush it to the disk before the caller renames it into place. A
         /// rename is journalled while file data often is not (NTFS, ext4 data=writeback), so without the flush a power
         /// cut can leave the renamed file holding zeros: the torn list ReadForWrite recovers from.</summary>
@@ -1030,6 +1033,7 @@ namespace Semanticus.Engine
             using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
             var bytes = new System.Text.UTF8Encoding(false).GetBytes(text);
             fs.Write(bytes, 0, bytes.Length);
+            FlushHookForTests?.Invoke(path);
             fs.Flush(flushToDisk: true);
         }
 

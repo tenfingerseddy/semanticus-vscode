@@ -219,7 +219,11 @@ namespace Semanticus.Engine
 
             Directory.CreateDirectory(ConnectionRegistry.Root());
             var tmp = FilePath() + ".tmp";
-            ConnectionRegistry.WriteFlushed(tmp, JsonSerializer.Serialize(all, JsonOpts));
+            // Written, not flushed to the disk (cx1). Every open and connect appends here, and the flush was on the open's path: on a
+            // busy disk it took up to 6 s and made a 1 s open look frozen. This is a convenience log; a power cut that tears it falls
+            // back to .bak or a fresh log (ReadForWrite), and losing a timeline line is harmless. connections.json, which holds the
+            // labels the agent policy reads, is still flushed.
+            File.WriteAllText(tmp, JsonSerializer.Serialize(all, JsonOpts), new System.Text.UTF8Encoding(false));
             if (setAsideUnreadable) ConnectionRegistry.ReplaceSettingAside(tmp, FilePath());   // .bak keeps the good copy
             else ConnectionRegistry.ReplaceKeepingBackup(tmp, FilePath());   // keeps one previous copy as connection-history.json.bak
         }

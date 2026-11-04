@@ -4,6 +4,7 @@ MeasureMarksTests.cs
 MeasureMarksDoorTests.cs
 CheckedRunPlanTests.cs
 CheckedRunPlanDoorTests.cs
+CheckedPlannerThreadTests.cs
 AgentNonInteractiveDoorTests.cs
 AgentNonInteractiveTests.cs
 AgentPolicyGateTests.cs
@@ -794,3 +795,5 @@ CheckedVFx29bTests.cs
 CheckedFx30eTests.cs
 SignInAnotherAccountTests.cs
 GuestTenantSignInTests.cs
+OpenPathTimingTests.cs
+OpenProgressCancelTests.cs

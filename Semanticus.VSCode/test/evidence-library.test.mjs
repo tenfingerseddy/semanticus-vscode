@@ -35,7 +35,7 @@ assert.match(dialog, /Save the report and its data beside this model\. Export sa
 // tab switch, so the report library keeps its state when you move between Checks and Reports.
 assert.match(app, /\(tab === 'tests' \|\| tab === 'evidence'\) && !engineStarting && !engineDown \? 'h-full' : 'hidden'/,
   'Checks shows both tabs when the engine is ready; hiding it preserves its mounted state');
-assert.match(app, /\{session\?\.sessionId && <div className=[^\n]*><TestsView key=\{session\.sessionId\}/,
+assert.match(app, /\{session\?\.sessionId && (!swapReading && )?<div className=[^\n]*><TestsView key=\{session\.sessionId\}/,
   'only a model session controls the persistent mount, so tab and engine changes retain its state');
 assert.match(app, /page=\{validationTab\} onPage=\{\(next\) => goTab\(next === 'reports' \? 'evidence' : 'tests'\)\}/,
   'and the two tabs are real routes, so a deep link and the strip agree');

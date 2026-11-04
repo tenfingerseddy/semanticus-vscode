@@ -128,6 +128,8 @@ namespace Semanticus.Engine
                 // No token → a local Analysis Services instance (Power BI Desktop): connect with the current
                 // Windows identity that owns the process. AMO uses integrated auth when AccessToken is unset.
                 server.Connect("Data Source=" + endpoint);
+                OpenTimer.Step("connect to the workspace");
+                OpenTimer.Phase(3, "Reading the model definition");   // the window's step 3 of 5 (cx2)
                 return Serialize(server, database);
             });
 
@@ -153,7 +155,9 @@ namespace Semanticus.Engine
             // creating the snapshot, or Power BI-only properties fail later while Review Changes reads the file.
             if (db.CompatibilityMode != AS.CompatibilityMode.PowerBI)
                 db.CompatibilityMode = AS.CompatibilityMode.PowerBI;
+            OpenTimer.Step("find the dataset");
             var json = TOM.JsonSerializer.SerializeDatabase(db);
+            OpenTimer.Step("read the model definition");
             var dir = Path.Combine(TempRoot, Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(dir);
             var bimPath = Path.Combine(dir, Sanitize(db.Name) + ".bim");
@@ -166,6 +170,7 @@ namespace Semanticus.Engine
             Task.Run(() => { try { SweepStale(TimeSpan.FromDays(1), keep: dir); } catch { } });
 
             try { server.Disconnect(); } catch { /* best-effort; the snapshot is already written */ }
+            OpenTimer.Step("write the snapshot and disconnect");
             return new Snapshot { BimPath = bimPath, DatabaseName = db.Name, DatabaseCount = names.Length, DatabaseNames = names };
         }
 

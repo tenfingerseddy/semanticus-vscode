@@ -1,5 +1,7 @@
 import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useState, useRef, type ReactNode } from 'react';
-import { openLocalModel, pickWorkingCopyFolder, rpc, onConnectionChange, onOpenConnections, announceConnectionChange, closeConnectionsPanel, navigateInStudio, runHostCommand } from './bridge';
+import { openLocalModel, pickWorkingCopyFolder, rpc, onConnectionChange, onEngineReady, onOpenConnections, onProgress, announceConnectionChange, closeConnectionsPanel, navigateInStudio, runHostCommand } from './bridge';
+import { OpenBar, type OpenBarMessage } from './openbar';
+import { foldOpenProgress, isStoppedAnswer, pickDuringOpenLine, startOpenRun, stoppedLine, type OpenProgressEvent, type OpenRun } from './openbar-model';
 import { planRankingOf } from './features';
 import { useTier } from './pro';
 import { useConnection, type ConnectionContextModel, type SessionInfo } from './connection';
@@ -504,7 +506,12 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   // below keys on [shown, onClose] and will not re-run then). Left at 0 on the initial mount.
   const [openToken, setOpenToken] = useState(0);
 
+  // Only the newest read draws the list. The start-up open drops every read still in flight ('reconnected'); the dialog reads again when the
+  // engine is ready, and the dropped read's late failure must not draw an error or an empty list over it (cx3 blocker).
+  const loadSeq = useRef(0);
+  const [listRead, setListRead] = useState(false);
   const load = async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     try {
       // Probe alongside the list: the probe is the truth of who the NEXT open signs in as (the tenant-wide record),
@@ -514,11 +521,12 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         rpc<AccountProbe[]>('probeConnectionAccounts').catch(() => [] as AccountProbe[]),
         rpc<AccountProfile[]>('listAccountProfiles').catch(() => [] as AccountProfile[]),
       ]);
-      setRecords(recs ?? []); setProbes(prb ?? []); setProfiles(profs ?? []); setError(null);
+      if (seq !== loadSeq.current) return;
+      setRecords(recs ?? []); setProbes(prb ?? []); setProfiles(profs ?? []); setError(null); setListRead(true);
     }
-    catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { setLoading(false); }
-    void loadEndpoints();
+    catch (e) { if (seq === loadSeq.current) setError(String((e as Error).message ?? e)); }
+    finally { if (seq === loadSeq.current) setLoading(false); }
+    if (seq === loadSeq.current) void loadEndpoints();
   };
   // Each row's SQL endpoint and the sources no model is linked to, from the engine (C1). A failed read leaves the rows
   // without an endpoint line rather than claiming none is set.
@@ -540,6 +548,8 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   const accountOf = (r: ConnectionRecord): string | undefined => probeOf(r)?.account;
 
   useEffect(() => { if (shown) { void load(); void refresh(); } }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The engine is there now (a start-up open finished, or the engine connected): read the list again (cx3 blocker).
+  useEffect(() => { if (!shown) return; return onEngineReady(() => { void load(); void refresh(); }); }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
   // A pending "open on this view" request (openConnectionsOnView) lands the hub on the requested place when it opens.
   useEffect(() => {
     if (!shown || !nextView) return;
@@ -646,6 +656,31 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   // The account choice's sign-in, counted (cx1 blocker 2): Cancel moves the count on, so the sign-in the person left no longer
   // holds every Open button. Its late answer is not shown; a model it did open still shows in the list.
   const signInAttempt = useRef(0);
+  // The bar at the bottom of the dialog (cx2, option A, Kane 3 Nov 11:44): the picked row, the one Open, the one account place, and while a
+  // model opens its step and Cancel. The engine sends each step as it starts (progress/didChange, opKey "open"); the run holds where it is.
+  const [pickId, setPickId] = useState<string | null>(null);
+  const [run, setRunState] = useState<OpenRun | null>(null);
+  const runRef = useRef<OpenRun | null>(null);
+  const setRun = (r: OpenRun | null) => { runRef.current = r; setRunState(r); };
+  const runInteractive = useRef(false);   // the open signs in with a browser: its first step may wait on the person there
+  const [barMsg, setBarMsg] = useState<OpenBarMessage | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const cancelWanted = useRef(false);     // Cancel came before the engine named the run: it is sent when the first step names it
+  const openStopped = useRef(false);      // the last open was stopped by the person's Cancel: the pasted-address form keeps what was typed (cx5)
+  const [barSlot, setBarSlot] = useState<HTMLDivElement | null>(null);   // the frame's bottom row: the Workspace model screen draws its bar there too
+  useEffect(() => onProgress((e) => {
+    const was = runRef.current;
+    const next = foldOpenProgress(was, e as OpenProgressEvent, Date.now());
+    if (next === was) return;
+    setRun(next);
+    if (next && !was?.runId && next.runId && cancelWanted.current) { cancelWanted.current = false; void rpc('cancelOpen', next.runId).catch(() => undefined); }
+  }), []);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!run) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [run != null]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!shown) return null;
 
@@ -690,6 +725,10 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       const s = await rpc<SessionInfo>('sessionInfo').catch(() => null);
       if (s?.hasUnsavedChanges && !openConfirm) { setPendingOpen(r); setOpenSaveFormat(s.source ? (/\.bim$/i.test(s.source) ? 'BIM' : 'TMDL') : null); setOpenConfirm(true); setBusyId(null); return null; }
       const discard = !!s?.hasUnsavedChanges;
+      // The bar shows the open from here: its name, then each step the engine sends, and Cancel (cx2).
+      cancelWanted.current = false; setBarMsg(null);
+      runInteractive.current = r.kind === 'xmla' && (r.authMode || 'interactive') === 'interactive';
+      setRun(startOpenRun(nameOf(r), r.kind === 'file' ? endpointText(r.endpoint) : r.kind === 'xmla' ? whereOf(r).replace(/^In /, 'in ') : 'on this computer', r.kind === 'xmla' ? 5 : r.kind === 'file' ? 3 : 0, Date.now()));
       // A model typed into the address form carries the environment the person picked. It is put on here, after any unsaved-changes question, so it
       // also lands when the open waited on that question (gap 1). A model already saved takes it before the connect, so it lands even when the connect does not finish.
       // After the open it goes on again: the engine saves the address as typed, so another spelling of a saved address (host case, %20) makes a new record,
@@ -700,14 +739,19 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       else await rpc('openLive', r.endpoint, r.database || null, r.authMode || 'interactive', null, r.tenantId || null,
         opts?.forceReauth ?? false, opts?.accountProfileId ?? null, opts?.makeDefault ?? false, opts?.loginHint ?? null, 'human', discard);
       if (r.id.startsWith('new:') && r.label) await labelSaved(r, true);
+      setRun(null);
       if (left()) { await refresh(); await load(); await reloadHistory(); return null; }
       setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null); setOpenConfirm(false); setPendingOpen(null);
-      await refresh(); await load(); await reloadHistory();
+      // Close first: the reads below go to the engine's one model thread, which is busy with the checks the open starts (cx3).
       onClose();
+      await refresh(); await load(); await reloadHistory();
       return null;
     } catch (e) {
       const failure = String((e as Error).message ?? e);
+      setRun(null);
       if (left()) { await reloadHistory(); return null; }
+      // The person's Cancel, in the engine's words: a stop, not a fault. Nothing changed, so the bar says so and Open is back (cx2).
+      if (isStoppedAnswer(failure)) { openStopped.current = true; setOpenConfirm(false); setPendingOpen(null); setBarMsg({ kind: 'stop', text: stoppedLine(nameOf(r)) }); return null; }
       await reloadHistory();   // a FAILED open also appends a timeline event (a cancelled sign-in / superseded open)
       if (r.id.startsWith('new:')) return failure;
       if (isSwitchableXmla(r) && isAuthRequiredFailure(failure)) {
@@ -720,6 +764,30 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       return failure;
     }
     finally { if (!left()) setBusyId(null); }
+  };
+  // The bar's Cancel: the engine stops the open and changes nothing, or says it is too late (the new model is already open, and the open
+  // finishes). A Cancel before the engine named the run waits for its first step, then stops it.
+  const cancelRun = async () => {
+    const r = runRef.current;
+    if (!r || !r.cancellable || r.cancelling) return;
+    setRun({ ...r, cancelling: true });
+    try {
+      const answer = await rpc<{ stopped?: boolean; state?: string }>('cancelOpen', r.runId);
+      const still = runRef.current;
+      if (answer?.state === 'none' && !r.runId) cancelWanted.current = true;
+      else if (answer?.state === 'opened' && still) setRun({ ...still, cancelling: false, cancellable: false });
+    } catch { const still = runRef.current; if (still) setRun({ ...still, cancelling: false }); }
+  };
+  // A press on a row picks it for the bar; a double-click opens it at once. A pick while a model opens waits: the bar says to cancel first.
+  const pickRow = (r: ConnectionRecord) => {
+    setPickId(r.id); setRowError(null); setMenuId(null);
+    if (!runRef.current) setBarMsg(null);
+    if (switchTarget && switchTarget.id !== r.id) { setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setError(null); }
+  };
+  const staleRow = (r: ConnectionRecord) => r.kind === 'xmla' && !accountOf(r) && !!credentialFamily(r.authMode);
+  const actOn = (r: ConnectionRecord) => {
+    if (runRef.current || rowJobs(r, ctx).includes('editing')) return;
+    if (staleRow(r)) openAccountChoice(r, 'open'); else void openModel(r);
   };
   // The environment typed with an address goes on its saved record. After the open, the request names the model the open made: the page still names the model it
   // showed until it reads the new session, and the engine refuses a write for any other model than the open one, so the label was refused and lost (gap 1).
@@ -914,6 +982,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       // tenant a prior advanced attempt left behind (MED, sol) - the picker targets the tenant itself.
       const advanced = authMode === 'azcli' || authMode === 'serviceprincipal';
       // The address form opens the model (and remembers it, and the label the person set), as Open on its row would.
+      openStopped.current = false;
       const call = openByAddress({ endpoint: endpoint.trim(), database: database.trim(), authMode, tenantId: advanced ? (newTenant.trim() || null) : null, label: newLabel });
       let failure: string | null;
       if (bounded) {
@@ -924,6 +993,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         failure = out.value;
       } else failure = await call;
       if (failure && signInStopped(failure)) { setError(PICKER_COPY.signInUnfinished + ' Try again.'); return; }
+      if (!failure && openStopped.current) return;   // Cancel: the bar says it stopped, and the form keeps the address (cx5)
       failure = failure && signInSentence(failure);   // a lost engine in plain words
       if (failure) { setError(failure || 'The connection did not complete. Check the address, model name, and sign-in.'); return; }   // the engine's actual reason
       // The new model is saved. The model that answered the checks answers them again, so no check turns into "could not check".
@@ -1174,22 +1244,21 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     const testsWhy = rowJobs(r, ctx).includes('tests and queries') ? null : (r.testsRefusal || null);
     const publishWhy = rowJobs(r, ctx).includes('publish target') ? null : (r.publishRefusal || null);
     return (
-      <div className="hub-row relative" data-selected={isEditing ? 'true' : undefined}>
+      <div className="hub-row relative" data-selected={isEditing ? 'true' : undefined} data-picked={pickId === r.id ? 'true' : undefined}
+        onDoubleClick={(e) => { if ((e.target as HTMLElement).closest('[data-hub-menu], .hub-overflow, .hub-inline')) return; pickRow(r); actOn(r); }}>
         <div className="sem-list-row sem-list-row-2">
           {/* The environment label sits INSIDE the row's reading line, not between it and Open. It is a word whose
               width changes from row to row (none, dev, uat, Production), and outside the line it pushed each row's
               Open to its own x, 97 px apart down the list. Inside it, every Open is in one column. */}
           <div className="flex min-w-0 flex-1 items-center gap-2 sem-row-line">
-            <div data-testid="hub-model-row" className="flex min-w-0 flex-1 flex-col items-start py-2 text-left">
+            <button type="button" data-testid="hub-model-row" aria-pressed={pickId === r.id} onClick={() => pickRow(r)} className="hub-row-pick flex min-w-0 flex-1 flex-col items-start py-2 text-left">
               <span className="hub-row-name block max-w-full truncate">{nameOf(r)}</span>
               <span className="sem-text-meta block max-w-full truncate" title={endpointText(r.endpoint)}>{rowSecondLine(where, jobs, ep?.name || null)}</span>
               {/* Words typed into this row's SQL endpoint form and not saved: kept, and found again when the form opens. */}
               <DraftMark show={sqlRow !== r.id && [...heldSql].some((id) => String(JSON.parse(id)[0]).startsWith(sqlRowPrefix(r.id)))} />
-            </div>
+            </button>
             <EnvBadge r={r} />
           </div>
-          <button className={`${BTN_COMPACT} whitespace-nowrap`} data-testid="hub-row-open" disabled={busy || isEditing} title={isEditing ? 'Open now' : undefined}
-            onClick={() => { if (stale) openAccountChoice(r, 'open'); else void openModel(r); }}>Open</button>
           <button className="sem-btn sem-btn-sm hub-overflow" data-testid="hub-row-overflow" aria-haspopup="menu" aria-expanded={menuId === r.id} aria-label={`More for ${nameOf(r)}`}
             onClick={(e) => { const opening = menuId !== r.id; if (opening) menuTriggerRef.current = e.currentTarget; setMenuId(opening ? r.id : null); setPanel('none'); }} title="More">{'⋯'}</button>
         </div>
@@ -1441,7 +1510,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         </div>
         {panel !== 'account' && defaultConfirm}
         <div className="mt-3 flex justify-end gap-2">
-          <button className={BTN} onClick={() => { signInAttempt.current++; setBusyId(null); setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null); setError(null); }}>Cancel</button>
+          <button className={BTN} onClick={() => { const going = runRef.current; if (going?.cancellable) void rpc('cancelOpen', going.runId).catch(() => undefined); setRun(null); signInAttempt.current++; setBusyId(null); setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null); setError(null); }}>Cancel</button>
           <button className={BTN_PRIMARY} data-testid="hub-open-default" disabled={busy || (!picked && list.length > 0)} onClick={runPrimary}>{primaryLabel}</button>
         </div>
       </div>
@@ -1475,7 +1544,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     return (
       <section className="hub-page">
         <div className="hub-adds">
-          <button className={records.length === 0 ? BTN_PRIMARY : BTN} data-testid="hub-add-file" onClick={() => openLocalModel()}>Open file or folder</button>
+          <button className={listRead && records.length === 0 ? BTN_PRIMARY : BTN} data-testid="hub-add-file" onClick={() => openLocalModel()}>Open file or folder</button>
           <button className={BTN} data-testid="hub-add-desktop" onClick={() => { setError(null); setView('desktop'); }}>Power BI Desktop</button>
           <button className={BTN} data-testid="hub-add-workspace" onClick={() => { setError(null); openPicker(); }}>Workspace model</button>
           <button className={BTN_QUIET} data-testid="hub-add-blank" onClick={() => openCreate()}>New blank model</button>
@@ -1483,8 +1552,8 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           {records.length >= SEARCH_FROM && <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} type="search" placeholder="Search models" aria-label="Search models" className="sem-field ml-auto hub-search" />}
         </div>
         {notice && panel !== 'change' && <div className="sem-text-meta note-line note-ok" data-testid="hub-notice">{notice}</div>}
-        {loading && records.length === 0 && <div className="sem-text-meta">Loading your models...</div>}
-        {!loading && records.length === 0 && (
+        {(loading || !listRead) && records.length === 0 && !error && <div className="sem-text-meta" data-testid="hub-loading">Loading your models...</div>}
+        {!loading && listRead && records.length === 0 && (
           <div className="hub-empty" data-testid="hub-empty">
             <b className="sem-card-title">Open your first model</b>
             <p className="sem-text-meta">A file or folder on this computer, a report open in Power BI Desktop, or a model in a Fabric or Power BI workspace. Models you open show up here next time.</p>
@@ -1629,15 +1698,14 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
             </select>
             <span className="sem-text-meta">Sets what your assistant may do on this model.</span></label>
           {advanced && AuthPreflight()}
-          {addSignIn === 'waiting' && (
+          {addSignIn === 'waiting' && !run && (
             <div className="sem-inline sem-text-meta" aria-live="polite" data-testid="hub-add-signin-waiting">
               <span>{PICKER_COPY.signInWaiting}</span>
               <button type="button" className={`${BTN_QUIET} sem-push`} data-testid="hub-add-signin-cancel" onClick={() => cancelAdd.current()}>Cancel</button>
             </div>)}
-          <div className="flex justify-end gap-2 border-t pt-3" style={{ borderColor: 'var(--sem-border)' }}>
-            <button type="button" className={BTN} onClick={() => setView('open')}>Cancel</button>
-            <button type="submit" className={BTN_PRIMARY} disabled={!endpoint.trim() || busy}>Connect and remember</button>
-          </div>
+          {/* Connect and remember is in the bar at the foot of the dialog, which never scrolls (cx5: with Service identity the form grew and the
+              button went below the fold at 1440x900). Enter in a field still connects. */}
+          <button type="submit" hidden aria-hidden tabIndex={-1} disabled={!endpoint.trim() || busy} />
         </form>
       </section>
     );
@@ -1680,6 +1748,64 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     );
   }
 
+  // The unsaved-changes question. Over the list and the Workspace model screen it is drawn in the bar, beside the Open it answers for.
+  const unsavedCard = openConfirm && pendingOpen ? (
+    <div className="sem-card mb-3" data-testid="hub-open-unsaved">
+      <div className="sem-card-title">This model has unsaved changes.</div>
+      <div className="mt-2 text-xs leading-5 note-line note-warn">Opening another model throws those changes away unless you save first.</div>
+      <div className="mt-3 flex justify-end gap-2">
+        <button className={BTN} onClick={() => { setOpenConfirm(false); setPendingOpen(null); }}>Cancel</button>
+        <button className={openSaveFormat ? BTN : BTN_PRIMARY} data-testid="hub-open-discard" disabled={busy} onClick={() => { const p = pendingOpen; if (p) void openModel(p); }}>Discard</button>
+        {openSaveFormat && <button className={BTN_PRIMARY} data-testid="hub-open-save" disabled={busy} onClick={() => { const p = pendingOpen; if (p) void saveThenOpen(p); }}>Save and open</button>}
+      </div>
+    </div>
+  ) : null;
+  // The saved list's bar (cx2, option A): the pick, the one account place with Change, the one Open; the step and Cancel while it opens.
+  const barHere = view === 'open' && panel !== 'change' && records.length > 0;
+  const barShown = barHere || view === 'workspace' || view === 'add';
+  const picked = records.find((x) => x.id === pickId) ?? null;
+  const pickedEditing = !!picked && rowJobs(picked, ctx).includes('editing');
+  const pickedAccount = picked?.kind === 'xmla' ? (accountOf(picked) || picked.lastAccount || defaultProfileFor(picked)?.username || null) : null;
+  const listBar = OpenBar({
+    pickName: picked ? nameOf(picked) : null,
+    pickWhere: picked ? (picked.kind === 'xmla' ? whereOf(picked).replace(/^In /, 'in ') : whereOf(picked)) : null,
+    emptyText: 'Pick a model in the list, then press Open.',
+    account: pickedAccount,
+    accountWhy: picked && (accountOf(picked) || picked.lastAccount) ? 'used last time' : null,
+    localNote: !picked ? null : pickedEditing ? 'This model is open now.'
+      : picked.kind === 'file' ? 'Opens from this computer. No account is needed.'
+      : picked.kind === 'localDesktop' ? 'Opens from Power BI Desktop on this computer.' : null,
+    onChange: picked && isSwitchableXmla(picked) && !pickedEditing
+      ? () => { if (switchTarget?.id === picked.id) { setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setError(null); } else openAccountChoice(picked, 'open'); }
+      : undefined,
+    changeOpen: !!switchTarget && switchTarget.id === picked?.id,
+    action: 'Open', actTestId: 'hub-open',
+    canAct: !!picked && !pickedEditing && !busy,
+    onAct: () => { if (picked) actOn(picked); },
+    run, now, onCancel: () => void cancelRun(), interactive: runInteractive.current,
+    pending: pickDuringOpenLine(run, picked ? nameOf(picked) : null),
+    message: barMsg ?? (error && !switchTarget ? { kind: 'bad', text: error, onDismiss: () => setError(null) } : null),
+    pop: switchTarget ? <AccountDialog r={switchTarget} /> : unsavedCard,
+  });
+
+  // The pasted-address screen's bar (cx5): the same bar as a row open, so Connect and remember is always in view and its open shows
+  // "Step n of 5", the seconds and Cancel. Before cx5 this screen drew no bar, and the open sat still with a dimmed button for 6 to 20 s.
+  const addWorkspace = (() => {
+    const leaf = endpoint.trim().replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+    try { return decodeURIComponent(leaf); } catch { return leaf; }
+  })();
+  const addBar = view === 'add' ? OpenBar({
+    pickName: database.trim() || (addWorkspace ? `The model in ${addWorkspace}` : null),
+    pickWhere: database.trim() && addWorkspace ? `in ${addWorkspace}` : null,
+    emptyText: 'Paste the workspace address, then press Connect and remember.',
+    accountText: `Signs in with ${SIGN_IN_WAYS.find((w) => w.value === authMode)?.label ?? 'the sign-in you choose'}`,
+    action: 'Connect', actLabel: 'Connect and remember', actTestId: 'hub-add-connect',
+    canAct: !!endpoint.trim() && !busy,
+    onAct: () => void addAndConnect(),
+    run, now, onCancel: () => void cancelRun(), interactive: runInteractive.current,
+    message: barMsg ?? (error ? { kind: 'bad', text: error, onDismiss: () => setError(null) } : null),
+  }) : null;
+
   // The frame: the header (title, Jobs, the one account button, close), then the page. It sits on the
   // 12-column grid (One Visual Language): every row spans all twelve columns.
   const body = (
@@ -1701,17 +1827,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         <button onClick={onClose} className="sem-btn sem-btn-quiet hub-close" aria-label="Close Connections">{'×'}</button>
       </header>
       <div className="hub-main">
-          {openConfirm && pendingOpen && (
-            <div className="sem-card mb-3" data-testid="hub-open-unsaved">
-              <div className="sem-card-title">This model has unsaved changes.</div>
-              <div className="mt-2 text-xs leading-5 note-line note-warn">Opening another model throws those changes away unless you save first.</div>
-              <div className="mt-3 flex justify-end gap-2">
-                <button className={BTN} onClick={() => { setOpenConfirm(false); setPendingOpen(null); }}>Cancel</button>
-                <button className={openSaveFormat ? BTN : BTN_PRIMARY} data-testid="hub-open-discard" disabled={busy} onClick={() => { const p = pendingOpen; if (p) void openModel(p); }}>Discard</button>
-                {openSaveFormat && <button className={BTN_PRIMARY} data-testid="hub-open-save" disabled={busy} onClick={() => { const p = pendingOpen; if (p) void saveThenOpen(p); }}>Save and open</button>}
-              </div>
-            </div>
-          )}
+          {openConfirm && pendingOpen && !barShown && unsavedCard}
           {createOpen && (
             <div className="sem-card mb-3">
               <div className="sem-card-title">New blank model</div>
@@ -1736,7 +1852,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
               </div>
             </div>
           )}
-          {switchTarget && <AccountDialog r={switchTarget} />}
+          {switchTarget && !barHere && <AccountDialog r={switchTarget} />}
           {!switchTarget && panel !== 'account' && defaultConfirm}
           {view === 'open' && panel === 'change' && JobsPanel()}
           {view === 'open' && panel !== 'change' && ListView()}
@@ -1744,10 +1860,15 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           {view === 'add' && AddView()}
           {view === 'work' && WorkView()}
           {view === 'desktop' && <DesktopPicker onBack={() => setView('open')} onUseForTests={useDesktopForTests} onOpen={openDesktop} />}
-          {view === 'workspace' && <WorkspacePicker key={pickerAsk.key} anotherAccount={pickerAsk.another} account={signedInAccount || workingWay?.label} {...(({ authMode, tenantId }) => ({ initialAuthMode: authMode, initialTenant: tenantId }))(signInToReuse(records, liveConnId, profiles, pickerAsk.another ? 'interactive' : pickerAsk.mode))} pressedFirst={pickerPressed.current} onBack={() => setView('open')}
+          {view === 'workspace' && <WorkspacePicker key={pickerAsk.key} anotherAccount={pickerAsk.another} account={signedInAccount || workingWay?.label}
+            barSlot={barSlot} run={run} now={now} onCancel={() => void cancelRun()} barPop={openConfirm && pendingOpen ? unsavedCard : null}
+            barMessage={barMsg ?? (error ? { kind: 'bad', text: error, onDismiss: () => setError(null) } : null)}
+            profiles={profiles.filter((p) => p.signedIn && credentialFamily(p.family) === 'interactive').map((p) => ({ id: p.id, username: p.username }))} {...(({ authMode, tenantId }) => ({ initialAuthMode: authMode, initialTenant: tenantId }))(signInToReuse(records, liveConnId, profiles, pickerAsk.another ? 'interactive' : pickerAsk.mode))} pressedFirst={pickerPressed.current} onBack={() => setView('open')}
             onPasteAddress={() => openAddView()} onConnect={connectPicked} />}
       </div>
-      {error && !switchTarget && <div className="hub-error" role="alert">{error}</div>}
+      {/* The bar's row (cx2): it never scrolls. The saved list draws its bar here; the Workspace model screen portals its own in. */}
+      <div className="hub-bar-slot" ref={setBarSlot}>{barHere ? listBar : addBar}</div>
+      {error && !switchTarget && !barShown && <div className="hub-error" role="alert">{error}</div>}
     </div>
   );
 

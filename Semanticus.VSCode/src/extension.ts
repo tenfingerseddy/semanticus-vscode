@@ -127,6 +127,9 @@ import {
 // model: the identity of the model this node was fetched for (the host's, when listTree was SENT). A context menu or a keypress on a node names it, so an action started on a node
 // of A still names A after B opens (modelFence.ts personAction). Folder nodes take their children's.
 import { checksCountView, type ChecksCount } from './checksCount';
+import { openTimingLines, type OpenStepTime } from './openTiming';
+import { swapModelOf, swapReadingChip, swapReadingLine, type SwapModel } from './swapReading';
+import { OpenWatch, isOpenMethod, openTargetName, openedNameOf, openingLine } from './openWatch';
 interface TreeNode { ref: string; name: string; kind: string; hasChildren: boolean; displayFolder?: string; model?: string; }
 interface ModelRef { kind: string; path?: string; gitRef?: string; endpoint?: string; database?: string; authMode?: string; tenantId?: string; label?: string; }
 interface ChangeDelta { kind: string; ref: string; props?: string[]; before?: string | null; after?: string | null; }
@@ -353,7 +356,8 @@ function refreshChecksCount(): void {
     checksCountTimer = setTimeout(() => {
         checksCountReading = true;
         void caller.sendRequest<{ sessionId: string; summary: ChecksCount }>('getChecksPage').then(page => {
-            if (read !== checksCountRead || caller !== conn || page.sessionId !== currentSessionId) return;
+            // A count of the model being left lands while another opens: dropped, its number would sit beside the new model (cx5).
+            if (read !== checksCountRead || caller !== conn || page.sessionId !== currentSessionId || openWatch.drops(page.sessionId)) return;
             const view = checksCountView(page.summary);
             tree.setChecksCount(view);
             checksStatus.text = `${view.attention ? '$(error)' : '$(check)'} ${view.text}`;
@@ -365,6 +369,57 @@ function refreshChecksCount(): void {
             .finally(() => { checksCountReading = false; if (checksCountAgain) { checksCountAgain = false; refreshChecksCount(); } });
     }, 80);
 }
+/** The open answered: the status bar names the new model and its checks item says it is being read, at once. setStatusFromInfo
+ *  draws the new model's own values when its session is read (cx4). */
+function showSwapReading(swap: SwapModel): void {
+    ++checksCountRead;   // a count read of the old model that lands after this is dropped
+    tree?.setChecksCount(undefined);
+    // The tree's model row: the new name, "Reading...", none of the old model's file or live state.
+    tree?.setIdentity({ name: swap.name, source: '', sourceFull: '', live: false, liveBound: false, unsaved: false, reading: true, opening: undefined });
+    if (checksStatus) {
+        const chip = swapReadingChip(swap.name);
+        checksStatus.text = chip.text;
+        checksStatus.tooltip = chip.tooltip;
+        checksStatus.command = undefined;
+        checksStatus.color = undefined;
+        checksStatus.show();
+    }
+    if (status) { status.text = `$(database) ${swap.name}`; status.tooltip = swapReadingLine(swap.name); status.backgroundColor = undefined; }
+}
+/** The press (cx5): the model open now stays open until the engine swaps, but none of its figures stays on screen beside the open. The
+ *  status bar says "Opening <model>...", the tree's row keeps its name over its own tables and drops its figures, Properties says the line. */
+function showOpening(name: string): void {
+    ++checksCountRead;   // a count read of the model being left that lands after this is dropped
+    tree?.setChecksCount(undefined);
+    tree?.markOpening(name);
+    checksStatus?.hide();
+    if (status) {
+        status.text = `$(sync~spin) ${openingLine(name)}`;
+        status.tooltip = `${openingLine(name)} The model open now stays open until then.`;
+        status.backgroundColor = undefined;
+    }
+    propGrid?.reading(name, openingLine(name));
+}
+/** The engine swaps the session and says so ("Opened <model>") before it connects for queries and answers the open: 1 to 3 s at "Step 5 of 5"
+ *  (cx5, the 1.7.4-rc3 tester). openWatch.seen has moved every surface to "Reading <model>..."; this reads the new session in full, so the
+ *  window is never half the new model and half the old. The window's own open reads Properties after its answer; a swap with no open of this
+ *  window in flight (a start, another door) reads it here. */
+function followSwap(sessionId: string): void {
+    out.appendLine(`[open] window step=the engine swapped before its answer session=${sessionId}`);
+    tree?.refresh();
+    void refreshStatus().then((info) => {
+        if (!openWatch.opening && info?.sessionId === sessionId) return propGrid?.showModel(info.modelName);
+    }).catch(() => undefined);
+}
+/** From the press, every per-model surface drops any value whose session is not the one being opened (cx5, src/openWatch.ts). */
+const openWatch = new OpenWatch({
+    opening: showOpening,
+    reading: (swap) => { showSwapReading(swap); propGrid?.reading(swap.name); },
+    // A stopped or failed open: the model that stays open is read and shown again.
+    restore: () => {
+        void refreshStatus().then((info) => { tree?.refresh(); return propGrid?.showModel(info?.modelName); }).catch(() => undefined);
+    },
+}, () => currentSessionId);
 let publishStatus: vscode.StatusBarItem;              // Publish chip: visible only while a live model is open. Click opens Ship > Deploy with the confirm card.
 let draftUndoStatus: vscode.StatusBarItem;           // "Undo: ran N steps from your words" after a composer draft ran (lane author-gaps, B10); cleared by the next change
 let draftUndoChip: UndoChip | null = null;
@@ -1938,18 +1993,22 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
 
         connected.onNotification('model/didChange', (n: ChangeNotification) => {
             out.appendLine(`didChange rev=${n.revision} origin=${n.origin} label=${n.label ?? ''}`);
+            // Another session: the engine's swap, before the answer (cx5).
+            const moved = openWatch.seen(n.sessionId, openedNameOf(n.label)) === 'moved';
             noteHandChanges(n);
-            refreshChecksCount();
-            tree.refresh();
+            if (moved) followSwap(n.sessionId);
+            else { refreshChecksCount(); tree.refresh(); }
             if (!n.replay && (n.by ?? (n.origin === 'agent' ? 'assistant' : n.origin)) === 'assistant') {
                 const refs = (n.deltas ?? []).filter((d) => d.kind !== 'remove').map((d) => d.ref);
                 tree.flashAssistant(refs);
                 if (saidMayMoveTree && refs[0]) void revealAssistantRefInTree(refs[0]);
             }
             scheduleDaxSymbolRebuild();   // keep DAX IntelliSense in sync with renames/creates/deletes
-            propGrid.followRename(n.deltas ?? []);   // a renamed selected object keeps its place on the grid (UAT 18 Oct N20)
-            // A verdict changes only the mark. Replacing the editors here interrupts typing.
-            void propGrid.refresh();
+            if (!moved && !openWatch.opening) {   // an open reads Properties (cx5)
+                propGrid.followRename(n.deltas ?? []);   // a renamed selected object keeps its place on the grid (UAT 18 Oct N20)
+                // A verdict changes only the mark. Replacing the editors here interrupts typing.
+                void propGrid.refresh();
+            }
             for (const d of n.deltas ?? []) {
                 daxFs.signalChanged(d.ref, n.origin !== 'human' || !!n.replay, { sessionId: n.sessionId, revision: n.revision });
                 if (d.kind === 'remove') void closeDaxTabsForRef(d.ref);
@@ -1958,7 +2017,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
             renderDraftUndoChip(chipAfterModelChange(draftUndoChip, n.revision));
             healthSessionId = n.sessionId;   // the chip now reflects THIS session's last change
             renderHealthChip(chipHealthFor(n));   // a walk through the history clears it (journey m11 F10)
-            void refreshSyncChip();   // an edit can flip hasUnsavedChanges → repaint the editing↔querying verdict
+            if (!moved) void refreshSyncChip();   // an edit can flip hasUnsavedChanges → repaint the editing↔querying verdict
             postToPanels({ type: 'didChange', payload: n });   // both the Studio panel AND the standalone Connections hub re-read session state
         });
         // The engine moved the tier by itself: a trial reached its end while the window was open (m15 trial, contract C).
@@ -2023,6 +2082,8 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         });
         connected.onNotification('progress/didChange', (v: unknown) => {
             try { studioPanel?.webview.postMessage({ type: 'progressDidChange', payload: v }); } catch { /* disposing */ }
+            // The Connections panel shows an open's steps in its bar (cx2), so it hears them too.
+            try { connectionsPanel?.webview.postMessage({ type: 'progressDidChange', payload: v }); } catch { /* disposing */ }
         });
         // The model spec broadcasts separately so the Studio Spec tab updates live as it's auto-generated / built /
         // refined (by the human OR the user's Claude on the same session).
@@ -3781,6 +3842,8 @@ interface ModelIdentity {
     live: boolean;
     liveBound: boolean;
     unsaved: boolean;
+    reading?: boolean;    // an open answered and the new session is not read yet (cx4)
+    opening?: string;     // the press: the model being opened; the row keeps its name and drops its figures (cx5)
 }
 
 
@@ -3877,13 +3940,25 @@ class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         const before = this.identity;
         if (before && before.name === merged.name && before.source === merged.source
             && before.sourceFull === merged.sourceFull && before.live === merged.live
-            && before.liveBound === merged.liveBound && before.unsaved === merged.unsaved) return;
+            && before.liveBound === merged.liveBound && before.unsaved === merged.unsaved && !!before.reading === !!merged.reading
+            && before.opening === merged.opening) return;
         this.identity = merged;
         this._emitter.fire();
     }
+    /** The press (cx5): the row keeps the open model's name over its tables and says which model is opening, with none of its figures. */
+    markOpening(name: string): void {
+        if (!this.identity || this.identity.opening === name) return;
+        this.identity = { ...this.identity, opening: name };
+        // Only the row: a full repaint waits on the engine's tree read, which an open keeps busy (1.2 s in the lane under load).
+        if (this.identityEl) this._emitter.fire(this.identityEl); else this._emitter.fire();
+    }
 
+    // One element for the model row while its name stays, so the press can draw the row alone (cx5).
+    private identityEl: TreeNode | undefined;
     private identityNode(): TreeNode {
-        return { ref: 'identity:', name: this.identity?.name ?? 'Model', kind: 'modelIdentity', hasChildren: false };
+        const name = this.identity?.name ?? 'Model';
+        if (this.identityEl?.name !== name) this.identityEl = { ref: 'identity:', name, kind: 'modelIdentity', hasChildren: false };
+        return this.identityEl;
     }
 
     getTreeItem(n: TreeNode): vscode.TreeItem {
@@ -3899,6 +3974,9 @@ class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             // The unsaved marker is a leading dot in the DESCRIPTION, not a different icon: a TreeItem has ONE
             // icon slot and it is already holding the model glyph, so swapping it would trade one fact for another.
             const dot = id?.unsaved ? '● ' : '';
+            // Between an open's answer and the read of the new session the row names the new model and says only that (cx4).
+            if (id?.reading) { row.description = 'Reading...'; row.tooltip = swapReadingLine(n.name); row.command = undefined; return row; }
+            if (id?.opening) { row.description = openingLine(id.opening); row.tooltip = `${openingLine(id.opening)} ${n.name} stays open until then.`; return row; }
             row.description = dot + (id?.source ? `${id.source} · ${where}` : where) + (this.checksCount ? ` · ${this.checksCount.text}` : '');
             row.tooltip = [id?.sourceFull || undefined, this.checksCount?.text, id?.unsaved ? 'Unsaved changes' : undefined]
                 .filter(Boolean).join('\n') || undefined;
@@ -3952,6 +4030,12 @@ class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
         const model = hostModelIdentity;
         try {
             if (!n) {
+                // While an open runs, another repaint (a check-state push) can read the new model's tables before the swap notice lands, under the
+                // old model's row (cx5, a reverse open in the lane). The read asks which session it reads first, so the row moves with the tables.
+                if (openWatch.opening) {
+                    const s = await this.connection.sendRequest<SessionInfo>('sessionInfo').catch(() => undefined);
+                    if (s?.sessionId) openWatch.seen(s.sessionId, s.modelName);
+                }
                 const roots = stampModel(await this.connection.sendRequest<TreeNode[]>('listTree', null), model);
                 // The model's identity is the FIRST row, above the tables it describes. Only when a model is
                 // actually open: with none, there is nothing to name and the empty-state row speaks for itself.
@@ -5780,7 +5864,11 @@ function setStatusFromInfo(info?: SessionInfo): void {
         live: !!info.liveConnected,
         liveBound: !!info.liveBound,
         unsaved: !!(info.hasUnsavedEdits ?? info.hasUnsavedChanges),
+        reading: false,
+        opening: undefined,
     } : undefined);
+    // A read of the model being left, while another opens, keeps the press line: its figures would sit beside the open (cx5).
+    if (info?.sessionId && openWatch.drops(info?.sessionId) && openWatch.opening) showOpening(openWatch.opening);
     // A model session just became available, so bring Studio up. Deferred to the next tick so a window reload
     // that is still handing back a restored Studio panel wins the race and no second one is created.
     if (extensionContext) {
@@ -5881,6 +5969,7 @@ async function refreshSyncChip(): Promise<void> {
     if (!conn) { publishStatus?.hide(); return; }
     try {
         const info = await conn.sendRequest<SessionInfo>('sessionInfo');
+        if (openWatch.drops(info?.sessionId)) return;   // the model being left, while another opens (cx5)
         renderSyncChip(info);
         renderPublishChip(info);
         noteBlank(info);
@@ -6209,7 +6298,8 @@ function withOpenProgress(key: string, title: string, work: () => Thenable<OpenR
             };
             const cancel = (reason: Error) => finish(() => reject(reason));
             timer = setTimeout(() => cancel(new Error('Opening timed out. Sign-in did not finish. Try again.')), OPEN_WAIT_MS);
-            sub = token.onCancellationRequested(() => cancel(new Error('Opening cancelled.')));
+            // The person's Cancel also stops the open in the engine (cx2): before, only this wait ended and the open ran on.
+            sub = token.onCancellationRequested(() => { void conn?.sendRequest('cancelOpen', null).catch(() => undefined); cancel(new Error('Opening cancelled.')); });
             openingByKey.set(key, { cancel });
             void Promise.resolve(work()).then(
                 (r) => finish(() => resolve(r)),
@@ -8069,6 +8159,13 @@ class PropertyGridProvider implements vscode.WebviewViewProvider {
         this.names = [this.modelName];
         await this.push();
     }
+    /// An open answered (cx4): the grid drops the old model's object and its check card at once and names the model being read.
+    /// The push that follows shows the new model; a push of the old one still in flight is dropped.
+    reading(name: string, line?: string): void {
+        ++this._pushSeq;
+        this.modelName = name;
+        void this.view?.webview.postMessage({ type: 'reading', name, line });
+    }
     async showModelIfEmpty(name?: string): Promise<void> {
         if (name) this.modelName = name;
         if (this.refs.length === 0) await this.showModel();
@@ -8527,15 +8624,19 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
         if (!conn) { await waitForEngine(); }   // a start or retry that is running answers first; only then is the engine called away
         if (!conn) { panel.webview.postMessage({ type: 'rpcResult', id: msg.id, error: 'Engine not connected.' }); return; }
         const caller = conn;
+        let openId: number | undefined;
         try {
             // byPosition: vscode-jsonrpc sends a lone object argument as JSON-RPC NAMED params, which the engine's
             // single-complex-parameter methods (searchModelEx(SearchOptions), …) cannot bind ("supplies 6").
             const params = msg.params ?? [];
+            // The press (cx5): from here no per-model surface shows a value of a session that is not the one being opened.
+            if (isOpenMethod(msg.method)) openId = openWatch.begin(openTargetName(msg.method, params));
             // Every request a page sends names the model that page was showing (C1, drafts-sol round 2): the ENGINE refuses a write whose page is not on the open model.
             // One place for every page and every editor; withModelIdentity puts it on this request and no other.
             const named = msg.modelIdentity;
             // A call a button made says so (rpcPressed); only that kind may open a sign-in window in the engine (SignInPress).
             const pressed = msg.pressed === true;
+            const sentAt = Date.now();
             const result: any = await withPress(pressed, () => params.length
                 ? withModelIdentity(named, () => caller.sendRequest(msg.method, ParameterStructures.byPosition, ...params))
                 : withModelIdentity(named, () => caller.sendRequest(msg.method)));
@@ -8550,12 +8651,35 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             // A restore reopens the SAME model, so it is not a fresh occasion to ask for anything Studio asks once per
             // open (the Pro permission card): 'restore', not 'person'.
             const swapBy = msg.method === 'restoreHistoryCheckpoint' ? 'restore' : 'person';
+            let answered = false;   // an open answers its page before the window's own steps (cx3)
             if (modelSwapped) {
+                // Each step of the open, with its time, in the output log (cx1): the engine's steps ride on the result, the window's are timed here.
+                const openSteps: OpenStepTime[] = [{ step: 'engine answered', ms: Date.now() - sentAt }];
                 if (msg.method === 'open') showOpenNote(result?.note);   // a hub recent row, or any page's open
                 if (msg.method === 'openLive') void offerSavedCopy(result?.savedCopy);   // the hub's Open on a published model
+                // The page hears the answer now, and Properties and the status bar fill in after it. Both read the new model on the engine's one
+                // model thread, and the open's own change has just started the measure checks' planner there (the tree marks, the Properties card,
+                // the Checks page): 1.4 to 2.1 s a time. The Properties read waited 5.5 to 6.6 s behind it while the dialog still said
+                // "Connecting for queries" (cx3, proved with a trace of the model thread in a lane).
+                panel.webview.postMessage({ type: 'rpcResult', id: msg.id, result });
+                answered = true;
+                // From here until each surface reads the new model, it shows the new model's value or "Reading <model>...", never the old
+                // model's (cx4: the 1.7.4-rc2 tester saw pilot2's tables beside the old model's "8 measures", grade and tasks for 5 to 8 s).
+                const swap = swapModelOf(result);
+                // The watch moves every surface to the new model now, unless a change that named it already did (cx5).
+                if (swap) openWatch.seen(swap.sessionId, swap.name);
+                // Then the swap, to both panels, so Studio names the new model at once (see the order rule below).
+                postToPanels({ type: 'reconnected', by: swapBy, model: swap });
+                if (swap) propGrid.reading(swap.name);
+                let mark = Date.now();
+                const stepDone = (step: string) => { const now = Date.now(); openSteps.push({ step, ms: now - mark, after: true }); mark = now; };
                 try { await propGrid.showModel(result?.context?.editing?.modelName ?? result?.modelName ?? result?.destination?.name ?? 'Model'); } catch { }
+                stepDone('properties');
                 tree.refresh();
                 const swapped = await refreshStatus();
+                stepDone('status');
+                if (openId !== undefined) { openWatch.end(openId, true); openId = undefined; }
+                for (const line of openTimingLines(msg.method, result, openSteps)) out.appendLine(line);
                 // A model opened through Studio or the Connections hub is the model a restart must bring back.
                 // This block used not to record it, so the remembered model stayed whatever a NATIVE command last
                 // set — which is how Kane's restart went looking for a different, long-deleted model (2026-09-15).
@@ -8565,12 +8689,13 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
                 refreshOpenDaxEditors();
                 setTimeout(() => { void resyncPropertiesFromTree(); }, 0);
             }
-            panel.webview.postMessage({ type: 'rpcResult', id: msg.id, result });
+            if (!answered) panel.webview.postMessage({ type: 'rpcResult', id: msg.id, result });
+            if (openId !== undefined) openWatch.end(openId, true);   // an answer that opened nothing new: the open model is read again
             // Resolve the caller BEFORE announcing the model swap. onReconnect deliberately rejects requests still
             // in flight against the old session; reversing these two messages would make a successful hub open
             // report "connection lost" and discard its real result. Broadcast the swap to BOTH panels so the OTHER
             // door (Studio, or the standalone hub) re-reads the new session instead of showing the old one.
-            if (modelSwapped) postToPanels({ type: 'reconnected', by: swapBy });
+            // (A model swap posted both above, before the window's own reads.)
             // A webview attach/disconnect changes the QUERYING side (and the account in play) but fires no
             // model/didChange — repaint the native status chip AND the sync chip so neither lags behind the door the
             // user just acted through, and nudge BOTH panels so the OTHER surface re-reads the connection too.
@@ -8578,6 +8703,8 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             // stale on a webview connect/disconnect (HIGH 7).
             if (SYNC_REFRESH_METHODS.has(msg.method)) { void refreshStatus(); postToPanels({ type: 'connectionChanged' }); }
         } catch (e: any) {
+            // A stopped or failed open: the model that stays open is read and shown again (cx5).
+            if (openId !== undefined) openWatch.end(openId, false);
             // Never the engine's raw text for a missing method (Kane, 25 Sep): that is a build mismatch, said plainly.
             panel.webview.postMessage({ type: 'rpcResult', id: msg.id, error: await studioRpcError(e, caller) });
         }

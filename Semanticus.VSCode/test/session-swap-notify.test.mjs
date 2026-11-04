@@ -10,7 +10,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const extension = readFileSync(join(root, 'src', 'extension.ts'), 'utf8');
+// Windows checkouts use CRLF: compare on LF so a character distance means the same on every runner.
+const extension = readFileSync(join(root, 'src', 'extension.ts'), 'utf8').replace(/\r\n/g, '\n');
 
 const at = extension.indexOf("connected.onNotification('session/didChange'");
 assert.ok(at > 0, 'the window must listen for session/didChange on the engine connection');

@@ -464,7 +464,11 @@ public sealed partial class LocalEngine
         var extraInputs = extras?.Inputs ?? "none";
         var live = _live;
         var connection = live == null ? "offline" : live.DataSource + "|" + live.Database;
-        return await session.ReadAsync(model =>
+        // On the model thread: only what reads the model. Every open starts this two or three times (the tree marks, the Properties card,
+        // the Checks page), and every read the window makes after an open waits behind it. The fingerprints are hashed after the read, off
+        // the model thread, and the structure is written and hashed once, not once per measure: on a model whose structure text is 8 MB that
+        // held the thread 2 to 4 s per call (cx4, the 1.7.4-rc2 tester).
+        var read = await session.ReadAsync(model =>
         {
             var graph = LineageGraph.Build(model);
             var markSnapshot = CaptureCheckSnapshot(model, session);
@@ -497,55 +501,70 @@ public sealed partial class LocalEngine
                 return seen.OrderBy(r => r, StringComparer.Ordinal).ToArray();
             }
             var closures = model.AllMeasures.ToDictionary(ObjectRefs.For, m => Closure(ObjectRefs.For(m)), StringComparer.Ordinal);
-            return model.AllMeasures.Select(measure =>
+            var measures = model.AllMeasures.Select(measure =>
             {
-                var reference = ObjectRefs.For(measure); var closure = closures[reference]; cache.TryGetValue(reference, out var previous);
-                var bodies = closure.Select(r =>
+                var reference = ObjectRefs.For(measure);
+                // The bodies are plain values (strings and flags) copied from the model, so the fingerprints can be written after the read.
+                var bodies = closures[reference].Select(r =>
                 {
                     var obj = ObjectRefs.Resolve(model, r);
-                    return new { Ref = r, Expression = obj is Function function ? function.Expression : (obj as IExpressionObject)?.Expression,
+                    return (object)new { Ref = r, Expression = obj is Function function ? function.Expression : (obj as IExpressionObject)?.Expression,
                         Description = (obj as IDescriptionObject)?.Description, FormatString = (obj as IFormattableObject)?.FormatString,
                         FormatStringExpression = (obj as Measure)?.FormatStringExpression, DisplayFolder = (obj as Measure)?.DisplayFolder,
                         IncludePerformance = markSnapshot.TimedMeasures.Contains(r),
                         ExpectedTotals = (obj as Measure)?.GetAnnotation("Semanticus.Totals.Expected"),
                         OnPurposeFilters = (obj as Measure)?.GetAnnotation(FiltersOnPurposeAnnotation) };
                 }).ToArray();
-                var performanceSettings = markSnapshot.PerformanceSettings;
-                var totalsSettings = markSnapshot.TotalsSettings;
-                var inputs = MeasureRunPlanner.Digest(JsonSerializer.Serialize(new { bodies, structure, saved, connection, extraInputs, performanceSettings, totalsSettings }));
-                var inputSnapshot = JsonSerializer.SerializeToElement(new
-                { bodies, Structure = MeasureRunPlanner.Digest(structure), SavedChecks = saved, Connection = connection,
-                    ExtraChecks = extraInputs, PerformanceSettings = performanceSettings, TotalsSettings = totalsSettings });
-                var tokens = DaxScan.Tokenize(measure.Expression ?? "");
-                var functions = tokens.Where((t, i) => t.Kind == DaxScan.Kind.Word && i + 1 < tokens.Count && tokens[i + 1].Kind == DaxScan.Kind.LParen)
-                    .Select(t => t.Text.ToUpperInvariant()).ToHashSet();
-                var risk = MeasureRunRisk(functions, tokens);
-                var helper = tokens.Count > 1 && tokens[0].Kind == DaxScan.Kind.Word && tokens[0].Text.Equals("FORMAT", StringComparison.OrdinalIgnoreCase)
-                    || tokens.Count == 1 && tokens[0].Kind is DaxScan.Kind.Name or DaxScan.Kind.Number or DaxScan.Kind.String
-                        && reportUses.GetValueOrDefault(reference) == 0 && !closures.Any(p => p.Key != reference && p.Value.Contains(reference));
-                // A rough first estimate uses the rule plan, without running queries or calling a scoring service.
-                var contextChecks = 24;
-                if (estimateContexts)
-                {
-                    var contextMeasure = markSnapshot.ContextModel.Measures.Single(m => m.Table == measure.Table.Name && m.Name == measure.Name);
-                    var contextPlan = new MeasureContexts.MeasureContextPlanner().Plan(new(markSnapshot.ContextModel, contextMeasure));
-                    contextChecks = new[] { "Filters", "Contexts", "Totals" }.Sum(name => contextPlan.ForMark(name).Count());
-                }
-                return new MeasureRunCandidate
-                {
-                    MeasureRef = reference, Table = measure.Table.Name, Folder = measure.DisplayFolder, Formula = measure.Expression,
-                    Description = measure.Description, Inputs = inputs, InputSnapshot = inputSnapshot, Helper = helper,
-                    IncludePerformance = markSnapshot.TimedMeasures.Contains(reference),
-                    FactTables = markSnapshot.Closure(reference).SelectMany(f => f.FactTables).Distinct().ToArray(),
-                    Changed = previous?.LastChecked != null ? MeasureContentChanged(previous, inputSnapshot, inputs) : closure.Any(edits.ContainsKey),
-                    BaseMeasure = !closure.Any(r => r != reference && r.StartsWith("measure:", StringComparison.Ordinal)),
-                    Dependents = closures.Count(p => p.Key != reference && p.Value.Contains(reference)), ReportUses = reportUses.GetValueOrDefault(reference), Risk = risk,
-                    MatchScore = previous?.MatchScore, Suspect = previous?.Marks.Concat(previous.Cheap).Any(m => m.State == "suspect") == true,
-                    LastChecked = previous?.LastChecked, LastSeconds = previous?.Seconds, ContextChecks = contextChecks
-                };
-            }).OrderBy(c => c.MeasureRef, StringComparer.Ordinal).ToArray();
+                return new MeasureRunRead(reference, measure.Table.Name, measure.Name, measure.DisplayFolder, measure.Expression, measure.Description, bodies);
+            }).ToArray();
+            return (markSnapshot, reportUses, structure, closures, measures);
         }).ConfigureAwait(false);
+
+        // Off the model thread, from the copy: the same values as before cx4 (CheckedPlannerThreadTests pins them).
+        var (snapshot, uses, structureText, measureClosures, reads) = read;
+        var structureInputs = new MeasureRunPlanner.StructureInputs(structureText);
+        var performanceSettings = snapshot.PerformanceSettings;
+        var totalsSettings = snapshot.TotalsSettings;
+        return reads.Select(m =>
+        {
+            var reference = m.Reference; var closure = measureClosures[reference]; cache.TryGetValue(reference, out var previous);
+            var bodies = m.Bodies;
+            var inputs = structureInputs.InputsOf(new { bodies, structure = MeasureRunPlanner.StructureInputs.Slot, saved, connection, extraInputs, performanceSettings, totalsSettings });
+            var inputSnapshot = JsonSerializer.SerializeToElement(new
+            { bodies, Structure = structureInputs.Digest, SavedChecks = saved, Connection = connection,
+                ExtraChecks = extraInputs, PerformanceSettings = performanceSettings, TotalsSettings = totalsSettings });
+            var tokens = DaxScan.Tokenize(m.Expression ?? "");
+            var functions = tokens.Where((t, i) => t.Kind == DaxScan.Kind.Word && i + 1 < tokens.Count && tokens[i + 1].Kind == DaxScan.Kind.LParen)
+                .Select(t => t.Text.ToUpperInvariant()).ToHashSet();
+            var risk = MeasureRunRisk(functions, tokens);
+            var helper = tokens.Count > 1 && tokens[0].Kind == DaxScan.Kind.Word && tokens[0].Text.Equals("FORMAT", StringComparison.OrdinalIgnoreCase)
+                || tokens.Count == 1 && tokens[0].Kind is DaxScan.Kind.Name or DaxScan.Kind.Number or DaxScan.Kind.String
+                    && uses.GetValueOrDefault(reference) == 0 && !measureClosures.Any(p => p.Key != reference && p.Value.Contains(reference));
+            // A rough first estimate uses the rule plan, without running queries or calling a scoring service.
+            var contextChecks = 24;
+            if (estimateContexts)
+            {
+                var contextMeasure = snapshot.ContextModel.Measures.Single(c => c.Table == m.Table && c.Name == m.Name);
+                var contextPlan = new MeasureContexts.MeasureContextPlanner().Plan(new(snapshot.ContextModel, contextMeasure));
+                contextChecks = new[] { "Filters", "Contexts", "Totals" }.Sum(name => contextPlan.ForMark(name).Count());
+            }
+            return new MeasureRunCandidate
+            {
+                MeasureRef = reference, Table = m.Table, Folder = m.Folder, Formula = m.Expression,
+                Description = m.Description, Inputs = inputs, InputSnapshot = inputSnapshot, Helper = helper,
+                IncludePerformance = snapshot.TimedMeasures.Contains(reference),
+                FactTables = snapshot.Closure(reference).SelectMany(f => f.FactTables).Distinct().ToArray(),
+                Changed = previous?.LastChecked != null ? MeasureContentChanged(previous, inputSnapshot, inputs) : closure.Any(edits.ContainsKey),
+                BaseMeasure = !closure.Any(r => r != reference && r.StartsWith("measure:", StringComparison.Ordinal)),
+                Dependents = measureClosures.Count(p => p.Key != reference && p.Value.Contains(reference)), ReportUses = uses.GetValueOrDefault(reference), Risk = risk,
+                MatchScore = previous?.MatchScore, Suspect = previous?.Marks.Concat(previous.Cheap).Any(mark => mark.State == "suspect") == true,
+                LastChecked = previous?.LastChecked, LastSeconds = previous?.Seconds, ContextChecks = contextChecks
+            };
+        }).OrderBy(c => c.MeasureRef, StringComparer.Ordinal).ToArray();
     }
+
+    /// <summary>What the planner copies from one measure on the model thread: plain values only, so the rest runs after the read.</summary>
+    private sealed record MeasureRunRead(string Reference, string Table, string Name, string Folder, string Expression, string Description, object[] Bodies);
 
     private static bool MeasureContentChanged(MeasureCheckCache previous, JsonElement current, string inputs)
     {

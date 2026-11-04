@@ -9,6 +9,7 @@ import { ActivityProvider, LiveActivity, ClaudeRanBanner, useClaudeReflection, K
 import { SaidLine, noteAssistantChange } from './studio/said-line';
 import { useFixState } from './hooks';
 import { useConnection, ConnectBar, type SessionInfo } from './connection';
+import { useSwapReading } from './swap-reading';
 import { ContextBar, compareSeedFromSession, QueryStalenessChip } from './contextbar';
 import { FileRecoveryOffer } from './file-recovery';
 import { ConnectionsHub, openConnectionsOnCreate, openConnectionsOnView, type HubView } from './connectionshub';
@@ -167,6 +168,9 @@ export function App() {
   if (session?.sessionId) setDraftModel(modelKeyOfSession(session), session.modelLabel, session.sessionId);
   const sessionRef = useRef<SessionInfo | null>(null);
   sessionRef.current = session;
+  // From an open's answer until this page reads the new session, the page says "Reading <model>..." and shows none of the old
+  // model's figures: the Plan's grade and tasks, the Checks counts (cx4, the 1.7.4-rc2 tester saw them for 5 to 8 s).
+  const swapReading = useSwapReading(session?.sessionId);
   // No engine at all. Distinct from "no model open": with no engine the Open a model placeholder is a dead end,
   // because its button needs the engine too. That is what Kane hit on 2026-09-15 after a restart failed.
   const [engineDown, setEngineDown] = useState(false);
@@ -799,7 +803,7 @@ export function App() {
       <TrialEndingLine hidden={tab === 'pro'} />
       {/* A test run can carry substantial cell evidence, so keep the view alive across Studio navigation instead
           of copying it into persisted webview state. The session key still discards it when a different model opens. */}
-      {session?.sessionId && <div className={(tab === 'tests' || tab === 'evidence') && !engineStarting && !engineDown ? 'h-full' : 'hidden'}><TestsView key={session.sessionId} navTarget={testTarget} onNavConsumed={consumeRouteSeed}
+      {session?.sessionId && !swapReading && <div className={(tab === 'tests' || tab === 'evidence') && !engineStarting && !engineDown ? 'h-full' : 'hidden'}><TestsView key={session.sessionId} navTarget={testTarget} onNavConsumed={consumeRouteSeed}
         page={validationTab} onPage={(next) => goTab(next === 'reports' ? 'evidence' : 'tests')}
         onOpenDaxLab={(ref) => goTab('query', undefined, ref)} onOpenSavedReports={() => goTab('evidence')} /></div>}
       {tab === 'pro' ? (
@@ -810,6 +814,8 @@ export function App() {
         <EngineDown />
       ) : engineStarting && !keepPlan ? (
         <EngineStarting />
+      ) : swapReading ? (
+        <SwapReadingPage line={swapReading.line} />
       ) : !session?.sessionId ? (
         <Empty onOpen={() => showConnections('open')} reconnectName={reconnectName} offer={reconnectOffer} />
       ) : featureGrant === 'denied' ? (
@@ -1190,7 +1196,7 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
   const tab = route.tool;
   const activeGroup = route.destination === 'utility' ? null : route.destination;
   const group = activeGroup ? TAB_GROUPS.find((item) => item.id === activeGroup) : undefined;
-  const { session: shellSession, context, contextResolved, refresh } = useConnection();
+  const { session: shellSession, reading, context, contextResolved, refresh } = useConnection();
   // Set by the Published page's own comparison against the destination. Null until something has actually tried.
   const unreachable = usePublishReach(shellSession?.sessionId, context?.publishing?.connectionId);
   // The tools this plan does not reach. The row keeps every one of them in its place and marks it; the
@@ -1268,7 +1274,8 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
   // fold has to be re-measured when the content inside it changes too.
   const headerRef = useRef<HTMLElement | null>(null);
   // The account and the tenant in use, under the model name (f172 fault 2). Without it they were one dialog away.
-  const identityLine = studioIdentityLine(shellSession?.currentAccount, shellSession?.currentTenant);
+  // While the next model is read, the old model's account is not named under the new model's name (cx4).
+  const identityLine = reading ? null : studioIdentityLine(shellSession?.currentAccount, shellSession?.currentTenant);
   const headerSignature = [shellSession?.modelName, identityLine?.line, source, publishLine, permissionLine,
     activeRun ? `${activeRun.title || activeRun.workflow}|${activeRun.stepIndex}|${activeRun.totalSteps}|${liveRunCount}` : '',
     pendingApprovalCount].join('|');
@@ -1282,7 +1289,7 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
       {/* Logo, then the model's name. The word "Semanticus" is the logo and the VS Code tab title; the file name moved
           into the tooltip so the header says one thing here. */}
       <div className="studio-identity min-w-0">
-        <div className="font-semibold tracking-tight truncate" title={shellSession?.source || undefined}>{shellSession?.modelName || 'Semanticus'}</div>
+        <div className="font-semibold tracking-tight truncate" title={reading ? reading.line : shellSession?.source || undefined}>{reading?.name ?? (shellSession?.modelName || 'Semanticus')}</div>
         {identityLine && <div className="truncate" data-testid="studio-account-line" title={identityLine.title}>{identityLine.line}</div>}
       </div>
       <nav className="studio-groups flex items-center gap-1 ml-2 min-w-0" aria-label="Studio areas">
@@ -1736,6 +1743,13 @@ function FeatureChecking() {
 function EngineStarting() {
   return <div className="h-full flex items-center justify-center p-8" data-testid="engine-starting">
     <p role="status">Starting Semanticus...</p>
+  </div>;
+}
+
+// The page between an open's answer and this page's read of the new model (cx4): one line, none of the old model's figures.
+function SwapReadingPage({ line }: { line: string }) {
+  return <div className="h-full flex items-center justify-center p-8" data-testid="swap-reading">
+    <p role="status">{line}</p>
   </div>;
 }
 

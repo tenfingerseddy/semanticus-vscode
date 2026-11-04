@@ -163,6 +163,9 @@ window.addEventListener('message', e => {
     // A draft this gesture did not write is said out loud (the host shows the line), never dropped without a word.
     if (m.id != null) vscode.postMessage({ type: 'applied', id: m.id, notice: notice || undefined });
   }
+  // An open answered (cx4): no object of the old model, no check card, one line naming the model being read until its load comes.
+  // The press (cx5) sends its own line, "Opening <model>...".
+  else if (m.type === 'reading') { state = null; replaceBoxes('<div class="empty">' + esc(String(m.line || ('Reading ' + (m.name || 'the model') + '...'))) + '</div>'); window.dispatchEvent(new CustomEvent('semanticus-marks-load')); }
   else if (m.type === 'empty') { state = null; replaceBoxes('<div class="empty">Open a model to inspect its properties. Select model objects to edit them; clear the selection to return to model settings.</div>'); window.dispatchEvent(new CustomEvent('semanticus-marks-load')); }
 });
 // A Save (or the apply key) commits ONE thing: the field the person is in. An open format editor counts only while its own box has the focus, the

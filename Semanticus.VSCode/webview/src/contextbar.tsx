@@ -127,8 +127,14 @@ function useTestsFolded(): boolean {
 }
 
 export function ContextBar({ onConnections }: { onConnections: (section?: HubView) => void }) {
-  const { session, conn, context } = useConnection();
+  const { session, conn, context, reading } = useConnection();
   const testsFolded = useTestsFolded();
+  // Between an open and this bar's read of the new model, the bar names the model being read and none of the old one's facts (cx4).
+  if (reading) return (
+    <div className="studio-contextbar" style={{ minHeight: 34 }}>
+      <span className="connection-role" data-testid="contextbar-reading"><span className="connection-value">{reading.line}</span></span>
+    </div>
+  );
   if (!session?.sessionId) return null;
   const s = session;
   const editing = context?.editing;

@@ -30,6 +30,7 @@ function build() {
     ...folders,
     refParts: (ref) => { const kind = ref.slice(0, ref.indexOf(':')); const rest = ref.slice(ref.indexOf(':') + 1); const slash = rest.indexOf('/'); return slash < 0 ? { kind, name: rest } : { kind, table: rest.slice(0, slash), name: rest.slice(slash + 1) }; },
     iconFor: () => undefined, DAX_KINDS: new Set(),
+    openWatch: { opening: undefined, seen: () => 'shown' },   // cx5: no open in flight, so the tree's top read asks nothing first
   };
   const make = new Function(...Object.keys(scope), `let hostModelIdentity;\n${js}\nreturn { ModelTreeProvider, setHost: (v) => { hostModelIdentity = v; } };`);
   return make(...Object.values(scope));

@@ -17,6 +17,8 @@ namespace Semanticus.Engine
         public bool LiveConnected { get; set; }   // a unified live open (open_local / open_live) also bound the query engine
         public string Account { get; set; }       // the account (UPN) this open signed in as, when known — null = "account unknown" (azcli/sp/local)
         public string Note { get; set; }          // one plain line when the open had something to say (a copy saved inside the model folder was left out); null otherwise
+        public OpenStep[] Steps { get; set; }     // each step of the open and its time (cx1), so the extension can log them whichever process owns the engine
+        public long TotalMs { get; set; }
         public SavedCopyOffer SavedCopy { get; set; }   // a live open only: a saved file of this published model holds work the service copy lacks (UAT 1.7 D3); null otherwise
     }
 
@@ -259,6 +261,18 @@ namespace Semanticus.Engine
         public int Done { get; set; }
         public int Total { get; set; }
         public string Note { get; set; }
+        /// <summary>An open's step (OpKey "open"): who started it ("human" or "agent"), so a window shows only its own open.</summary>
+        public string Origin { get; set; }
+        /// <summary>An open's step: true while Cancel can still stop it and change nothing; false once the new model is open.</summary>
+        public bool? Cancellable { get; set; }
+    }
+
+    /// <summary>What the window's Cancel did to an open (cx2). State: "stopped" (the open ended and nothing changed), "opened" (too late:
+    /// the model was already open, and the open finishes), or "none" (no open with that id is running).</summary>
+    public sealed class OpenCancelResult
+    {
+        public bool Stopped { get; set; }
+        public string State { get; set; }
     }
 
     /// <summary>The deterministic health delta ONE committed mutation caused — "spell-check for your model"

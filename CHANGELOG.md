@@ -7,6 +7,20 @@ All notable changes to Semanticus are recorded here. The format follows
 > with what verification. [`PLAN.md`](docs/PLAN.md) is the forward roadmap (what's next, not what shipped);
 > the per-commit narrative that used to live in PLAN's "Shipped & verified" section now lives here.
 
+## [1.7.4] - 2026-11-04
+
+### Fixed
+
+- Opening a model no longer waits for the connection history to reach the disk, and a workspace model saves its connection while its query connection opens. On a busy disk an open of a 7-table workspace model went from 19.7 s to 9.2 s. A local model open now waits for one disk flush, not two.
+- The Semanticus output log names each step of an open and its time, with the three slowest steps on one line, so a slow open shows its cause.
+- Connections has one bar at the bottom of the dialog, on the saved list and on the Workspace model screen. It holds the picked model, who it opens as with Change, and the one Open (Connect). It never scrolls, so with 29 saved models or 29 workspaces Open and Connect stay in view. A press on a row picks it; a double-click opens it. The account choice and the unsaved-changes question open inside the bar.
+- While a model opens, the bar shows "Step n of 5" with the step's name as it happens, and Cancel. Cancel stops the open in the engine: the open model, the saved list and the history stay as they were. After the new model is open the bar says it can no longer be stopped. A browser sign-in step says to finish the sign-in in the browser.
+- On the Workspace model screen, Change picks another signed-in account and reads that account's workspaces again. The model list says "Reading models..." while it loads.
+- Connections lists your saved models when you open it right after VS Code starts, before Semanticus is ready. It says "Loading your models..." until the list is read.
+- From the press of Open until the new model is read, the status bar, the model tree, Properties and the Studio show the new model or "Opening <model>..." and "Reading <model>...", never the old model's numbers or tasks.
+- The measure checks no longer hold up an open. On a large workspace model every figure is right about 7 s after the press, down from 15 to 25 s.
+- Paste an address on the Workspace model screen has the same bar: "Connect and remember" stays in view, and the open shows its steps, the seconds and Cancel.
+
 ## [1.7.3] - 2026-11-02
 
 ### Fixed

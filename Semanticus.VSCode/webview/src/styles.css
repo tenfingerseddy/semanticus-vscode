@@ -1724,13 +1724,45 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
    The frame is the 12-column grid of One Visual Language, and every row of it spans all twelve: the head (title,
    Jobs, the one account button, close), then the page. Rows are words on rules; the only boxes
    are a card the page holds for a decision, the fields, and the two pop-overs (the row menu and the account menu). */
-.hub-frame { box-sizing: border-box; position: relative; display: grid; grid-template-columns: repeat(var(--sem-grid-columns), minmax(0, 1fr)); grid-template-rows: auto minmax(0, 1fr); column-gap: var(--sem-gap); width: 100%; height: 100%; min-height: 0; padding: 0 var(--sem-page-margin); outline: none; }
+.hub-frame { box-sizing: border-box; position: relative; display: grid; grid-template-columns: repeat(var(--sem-grid-columns), minmax(0, 1fr)); grid-template-rows: auto minmax(0, 1fr) auto; column-gap: var(--sem-gap); width: 100%; height: 100%; min-height: 0; padding: 0 var(--sem-page-margin); outline: none; }
 .hub-head { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--sem-space-3); margin: 0 calc(-1 * var(--sem-page-margin)); padding: var(--sem-space-4) var(--sem-page-margin); border-bottom: var(--sem-hairline) solid var(--sem-rule); }
 .hub-close { width: var(--sem-control-h); padding: 0; text-decoration: none; color: var(--sem-muted); font-size: var(--sem-text-title); }
 .hub-acct { position: relative; }
 .hub-acct > .sem-btn { gap: var(--sem-space-2); }
 .hub-main { grid-column: 1 / -1; min-width: 0; min-height: 0; overflow: auto; padding: var(--sem-space-4) 0; }
 .hub-page { display: flex; flex-direction: column; gap: var(--sem-space-3); }
+/* The bar (cx2, option A of the Connect mock-up, Kane 3 Nov): the frame's last row, so it never scrolls. It holds the pick, the one account
+   place with Change, the one Open (Connect), and while a model opens its step, five marks and Cancel. A question it raises (the account
+   choice, unsaved changes) opens above its line, inside it, and scrolls there when it is tall. */
+.hub-bar-slot { grid-column: 1 / -1; min-width: 0; margin: 0 calc(-1 * var(--sem-page-margin)); }
+.hub-bar-slot:empty { display: none; }
+.hub-bar { flex: none; display: flex; flex-direction: column; gap: var(--sem-space-2); padding: var(--sem-space-3) var(--sem-page-margin); border-top: var(--sem-hairline) solid var(--sem-rule); }
+.hub-bar-pop { max-height: 52vh; overflow-y: auto; }
+.hub-bar-pop > .sem-card { margin-bottom: 0; }
+.hub-bar-pop > .hub-pop { position: static; width: auto; max-width: none; box-shadow: none; }
+.hub-bar-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2) var(--sem-space-3); }
+.hub-bar-what { display: flex; flex: 1 1 220px; flex-direction: column; gap: var(--sem-space-1); min-width: 0; }
+.hub-bar-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sem-fg); font-size: var(--sem-text-body); line-height: var(--sem-lh-body); }
+.hub-bar-name b { font-weight: var(--sem-weight-strong); }
+.hub-bar-acct { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--sem-space-2); min-width: 0; }
+.hub-bar-acct b { color: var(--sem-fg); font-weight: var(--sem-weight-strong); overflow-wrap: anywhere; }
+.hub-bar-change { padding-left: 0; padding-right: 0; text-decoration: underline; }
+.hub-bar-env { flex-direction: row; align-items: center; gap: var(--sem-space-2); }
+.hub-bar-env .sem-field { width: auto; }
+.hub-bar-msg { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.hub-bar-step { overflow-wrap: anywhere; }
+.hub-bar-hint { font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.hub-bar-pips { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; gap: var(--sem-space-1); }
+.hub-pip { display: block; height: 4px; border-radius: var(--sem-radius-inner); background: var(--sem-border); }
+.hub-pip-done { background: var(--sem-accent); }
+.hub-pip-now { background: var(--sem-accent); opacity: .55; }
+/* A saved row is picked by a press on its words; the picked one is marked, and the bar names it. */
+.hub-row-pick { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.hub-row[data-picked="true"] { background: var(--sem-accent-soft); box-shadow: inset 2px 0 0 var(--sem-accent); }
+.hub-row[data-picked="true"] .sem-list-row { padding-left: var(--sem-space-3); }
+/* The Workspace model screen: each list scrolls in its own box, so the model list stays beside the workspace picked far down. */
+.hub-pick-scroll { max-height: max(160px, calc(100vh - 470px)); overflow-y: auto; }
+@media (max-width: 700px) { .hub-pick-scroll { max-height: 34vh; } }
 .hub-error { position: absolute; left: var(--sem-page-margin); right: var(--sem-page-margin); bottom: var(--sem-space-3); padding: var(--sem-space-2) var(--sem-space-3); border: var(--sem-hairline) solid var(--sem-bad); border-radius: var(--sem-radius-control); background: var(--sem-bg); color: var(--sem-fg); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
 /* Three ways to add a model, a quiet blank-model link, and the search once the list is long. */
 .hub-adds { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); }

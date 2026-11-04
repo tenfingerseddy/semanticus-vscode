@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { rpc, onReconnect, onDidChange, onConnectionChange } from './bridge';
 import type { ConnectionStatus } from './wire';
+import { useSwapReading, type SwapReading } from './swap-reading';
 
 // Live-connection state, shared across every Studio query tab (Statistics / DAX Query / DAX Lab / Pivot / Data).
 // Those tabs run DAX/DMV against a real Analysis Services engine. The UNIFIED open (Open Model… → Power BI Desktop
@@ -90,6 +91,9 @@ export interface ConnectResult { ok: boolean; message?: string }
 interface ConnCtx {
   conn: ConnectionStatus | null;     // the attached live QUERY engine (drives the tabs)
   session: SessionInfo | null;       // the OPEN model identity (what the tree shows)
+  /** Set from an open's answer until this provider reads the new session: the header and the footer name the model being read and
+   *  show none of the old model's facts (cx4). */
+  reading: SwapReading | null;
   context: ModelConnectionContext | null; // engine-owned edit/query/publish identities
   contextResolved: boolean;          // the first connectionContext read has completed (with or without a result)
   busy: boolean;
@@ -202,11 +206,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
   // Stable identities: the hub's focus/Escape effect depends on onClose (=closeConnections), so a fresh arrow each
   // render would retrigger it (capturing/restoring focus on every ConnectionProvider re-render). useCallback pins them.
+  const reading = useSwapReading(session?.sessionId);
   const openConnections = useCallback(() => setConnectionsOpen(true), []);
   const closeConnections = useCallback(() => setConnectionsOpen(false), []);
 
   return (
-    <Ctx.Provider value={{ conn, session, context, contextResolved, busy, err, instances, connectLocal, connectXmla, disconnect, refresh,
+    <Ctx.Provider value={{ conn, session, reading, context, contextResolved, busy, err, instances, connectLocal, connectXmla, disconnect, refresh,
       connectionsOpen, openConnections, closeConnections }}>
       {children}
     </Ctx.Provider>

@@ -184,7 +184,7 @@ export const COPY = {
   engineStarting: 'Starting Semanticus...',
   engineFailedFallback: 'Semanticus could not start. Try again, or restart the engine.',
   workspaceNone: 'This account cannot see any workspaces.',
-  modelsLooking: 'Listing models...',
+  modelsLooking: 'Reading models...',
   pickWorkspace: 'Pick a workspace',
   noModels: (ws: string) => `${ws} has no models you can open.`,
   envLabel: 'Environment. It sets what your assistant may change.',

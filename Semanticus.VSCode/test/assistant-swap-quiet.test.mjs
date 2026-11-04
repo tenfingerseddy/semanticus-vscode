@@ -194,7 +194,7 @@ function slice(source, start, end, what) {
   // The relay says a History restore is a restore, so the person's own restore does not re-arm the card.
   assert.match(extension, /const swapBy = msg\.method === 'restoreHistoryCheckpoint' \? 'restore' : 'person';/,
     'the relay tells Studio a restore is a restore');
-  assert.match(extension, /postToPanels\(\{ type: 'reconnected', by: swapBy \}\)/, 'and passes that word on to both panels');
+  assert.match(extension, /postToPanels\(\{ type: 'reconnected', by: swapBy(, model: swap)? \}\)/, 'and passes that word on to both panels');
 
   // The card's memory is the host's, for the window's run, and asked by every panel through one message. A swap is not told to it:
   // the assistant's open asks like any other.

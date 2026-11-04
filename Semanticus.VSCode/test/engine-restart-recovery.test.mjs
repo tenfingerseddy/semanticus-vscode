@@ -141,7 +141,8 @@ assert.match(restart, /await connectEngine\(context, false, true\);/,
 // ---- (f) a model opened through the webview is remembered ------------------------------------------------
 // This is why Kane's remembered path pointed at a DIFFERENT model: the hub open never wrote it.
 
-const relay = slice(source, /if \(modelSwapped\) \{/, /panel\.webview\.postMessage\(\{ type: 'rpcResult'/, 'the webview model-swap block');
+// cx3: the swap block now answers the page first (Properties waited on the engine's model thread), so the block ends at the swap's order rule.
+const relay = slice(source, /if \(modelSwapped\) \{/, /\/\/ Resolve the caller BEFORE announcing the model swap/, 'the webview model-swap block');
 assert.match(relay, /rememberLastModel\(/,
   'a model opened from Studio or the Connections hub must update the remembered model, or a restart reopens a stale one');
 assert.match(relay, /watchModelDisk\(/,
@@ -180,7 +181,7 @@ assert.doesNotMatch(panel, /rpc\(/, 'the panel cannot reach the engine, so it mu
 // The panel replaces the page content; the Shell (and its header) stays around it.
 // The Semanticus Pro page is the one route ahead of it (23 September 2026): it needs no engine of its own, so a
 // person can still reach buying or a key while the engine is down.
-assert.match(app, /\{tab === 'pro' \? \([\s\S]{0,400}?<ProPage \/>\s*\) : engineDown && !keepPlan \? \(\s*<EngineDown \/>\s*\) : engineStarting && !keepPlan \? \(\s*<EngineStarting \/>\s*\) : !session\?\.sessionId \?/,
+assert.match(app, /\{tab === 'pro' \? \([\s\S]{0,400}?<ProPage \/>\s*\) : engineDown && !keepPlan \? \(\s*<EngineDown \/>\s*\) : engineStarting && !keepPlan \? \(\s*<EngineStarting \/>\s*\) : (swapReading \? \(\s*<SwapReadingPage line=\{swapReading\.line\} \/>\s*\) : )?!session\?\.sessionId \?/,
   'the recovery panel replaces the page body inside the Shell, so the header stays');
 // ...except for one thing: words typed into the start plan and not saved (join 8 fix round 2, D1c). The Plan then stays on screen, read-only and saying so, because the panel would unmount the editor.
 assert.match(app, /const keepPlan = keepPlanThroughOutage\(\{ hasSession: !!session\?\.sessionId, hasDraft: anyWordsDraft, tab \}\);/,

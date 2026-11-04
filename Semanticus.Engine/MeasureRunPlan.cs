@@ -222,4 +222,38 @@ public static class MeasureRunPlanner
         || folder.StartsWith(requested.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase));
 
     internal static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+    /// <summary>The model's structure text, written into JSON and hashed once for every measure's fingerprint (cx4). A measure's fingerprint
+    /// is the digest of its inputs as JSON with the whole structure text in them. Writing that JSON again for each measure held the model
+    /// thread 2 to 4 s on a model with an 8 MB structure. Here the per-measure JSON carries a short slot, and the hash reads the structure's
+    /// JSON bytes, made once, in its place: the same bytes, so the same fingerprint, and saved check results stay fresh.</summary>
+    internal sealed class StructureInputs
+    {
+        internal const string Slot = "semanticus-structure-slot-5c1e";
+        private static readonly string Marker = "\"structure\":" + JsonSerializer.Serialize(Slot);
+        private readonly byte[] literal;
+        internal string Digest { get; }
+
+        internal StructureInputs(string structure)
+        {
+            literal = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(structure));
+            Digest = MeasureRunPlanner.Digest(structure);
+        }
+
+        /// <summary>Digest(JsonSerializer.Serialize(payload)) with the structure text in place of the slot. The payload's `structure` property
+        /// holds <see cref="Slot"/>. A JSON string cannot hold an unescaped quote, so the marker is found only at that property.</summary>
+        internal string InputsOf(object payload)
+        {
+            var json = JsonSerializer.Serialize(payload);
+            var at = json.IndexOf(Marker, StringComparison.Ordinal);
+            if (at < 0 || json.IndexOf(Marker, at + Marker.Length, StringComparison.Ordinal) >= 0)
+                throw new InvalidOperationException("The check inputs have no single structure slot.");
+            var value = at + Marker.Length - JsonSerializer.Serialize(Slot).Length;
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            hash.AppendData(Encoding.UTF8.GetBytes(json, 0, value));
+            hash.AppendData(literal);
+            hash.AppendData(Encoding.UTF8.GetBytes(json, at + Marker.Length, json.Length - at - Marker.Length));
+            return Convert.ToHexString(hash.GetHashAndReset());
+        }
+    }
 }

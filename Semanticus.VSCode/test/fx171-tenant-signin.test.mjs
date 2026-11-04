@@ -64,7 +64,7 @@ function open(world, extra = {}) {
   const stubs = {
     './bridge': {
       rpc: world.rpc, openLocalModel: async () => undefined, pickWorkingCopyFolder: async () => null, onConnectionChange: () => () => undefined,
-      onOpenConnections: () => () => undefined, announceConnectionChange: () => undefined, closeConnectionsPanel: () => undefined,
+      onOpenConnections: () => () => undefined, onProgress: () => () => undefined, onEngineReady: () => () => undefined, announceConnectionChange: () => undefined, closeConnectionsPanel: () => undefined,
       navigateInStudio: () => undefined, runHostCommand: () => undefined, loadState: makeDisk().loadState, saveState: makeDisk().saveState,
     },
     './features': { planRankingOf: () => 'granted' },
@@ -205,18 +205,23 @@ test('blocker 2: Cancel on "Sign in another account" while the browser sign-in w
   const world = makeWorld();
   const page = open(world);
   const m = await mount(page);
+  // cx2: the row is picked, and the one Open is in the bar at the bottom of the dialog.
+  byTest(m.row(), 'hub-model-row').props.onClick(); await settleAll();
   await m.menu('Open as another account');
   const dialog = () => byTest(m.h.result, 'hub-account-dialog');
+  const barOpen = () => byTest(m.h.result, 'hub-open');
   assert.ok(dialog(), 'the account choice is open');
   byTest(dialog(), 'hub-sign-in-another').props.onClick(); await settleAll();
   assert.equal(world.calls.filter((c) => c[0] === 'openLive').length, 1, 'the sign-in started');
-  assert.equal(byTest(m.row(), 'hub-row-open').props.disabled, true, 'while it waits, Open waits too');
+  assert.equal(barOpen(), null, 'while it waits, the bar shows the open and its Cancel, not a second Open');
+  assert.ok(byTest(m.h.result, 'hub-bar-cancel'), 'the bar offers Cancel while it waits');
   find(dialog(), (el) => el.type === 'button' && text(el) === 'Cancel').props.onClick(); await settleAll();
   assert.equal(dialog(), null, 'the choice closes');
-  assert.equal(byTest(m.row(), 'hub-row-open').props.disabled, false, 'Open works again after Cancel, with no reload');
+  assert.ok(world.calls.some((c) => c[0] === 'cancelOpen'), 'the engine is asked to stop the open too (cx2)');
+  assert.equal(barOpen().props.disabled, false, 'Open works again after Cancel, with no reload');
   // The sign-in that was left answers late: the page stays usable and says nothing about it.
   world.pending.forEach((r) => r({})); await settleAll();
-  assert.equal(byTest(m.row(), 'hub-row-open').props.disabled, false);
+  assert.equal(barOpen().props.disabled, false);
   m.h.unmount();
 });
 

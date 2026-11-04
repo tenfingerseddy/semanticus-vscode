@@ -330,7 +330,7 @@ test('site 8: the report ticks the person made stay when the chosen report list 
   const pg = makePage({}, MODEL);
   const contexts = withContext(pg.React);
   const lin = loadOne(pg, 'lineage.tsx', {
-    './bridge': { rpc: async () => ({}), onDidChange: () => () => undefined, onProgress: () => () => undefined },
+    './bridge': { rpc: async () => ({}), onDidChange: () => () => undefined, onProgress: () => () => undefined, onEngineReady: () => () => undefined },
     './connection': { useConnection: () => ({ session: null }) },
     './lineage-model': pg.load('lineage-model.ts'),
   }, 'export { DrawerHost };');

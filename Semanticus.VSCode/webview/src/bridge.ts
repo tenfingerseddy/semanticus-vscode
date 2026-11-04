@@ -258,8 +258,11 @@ export function onEntitlementChange(fn: () => void): () => void {
  *  another window). 'restore' is the person's own History restore, which reopens the same model. Absent means the
  *  person's own open, a reload, or an engine restart. */
 export type ReconnectBy = 'person' | 'otherDoor' | 'restore';
-const reconnectListeners = new Set<(by: ReconnectBy) => void>();
-export function onReconnect(fn: (by: ReconnectBy) => void): () => void {
+/** The model an open swapped to, as the host names it from the open's answer (cx4). Until a page reads the new session it says
+ *  "Reading <name>..." instead of showing the old model's figures (swap-reading.ts). Absent when the host could not name it. */
+export interface SwapModel { sessionId: string; name: string }
+const reconnectListeners = new Set<(by: ReconnectBy, model?: SwapModel) => void>();
+export function onReconnect(fn: (by: ReconnectBy, model?: SwapModel) => void): () => void {
   reconnectListeners.add(fn);
   return () => { reconnectListeners.delete(fn); };
 }
@@ -340,6 +343,14 @@ export function onConnectionChange(fn: () => void): () => void {
 // the engine. The host announces both transitions and answers this on 'studioReady', so a panel that mounts while
 // the engine is down learns the truth instead of inferring it from a rejection.
 const engineStateListeners = new Set<(connected: boolean, reason?: string, starting?: boolean) => void>();
+// The engine can answer now: a reconnect or a start-up open just finished (every read still in flight was dropped), or the engine connected.
+// A page that read something at start reads it again on this, so a read dropped by the start-up open is never shown as an empty answer (cx3).
+const engineReadyListeners = new Set<() => void>();
+export function onEngineReady(fn: () => void): () => void {
+  engineReadyListeners.add(fn);
+  return () => { engineReadyListeners.delete(fn); };
+}
+
 export function onEngineState(fn: (connected: boolean, reason?: string, starting?: boolean) => void): () => void {
   engineStateListeners.add(fn);
   return () => { engineStateListeners.delete(fn); };
@@ -632,6 +643,7 @@ window.addEventListener('message', (e: MessageEvent) => {
     const connected = !!msg.connected;
     const reason = typeof msg.reason === 'string' && msg.reason ? msg.reason : undefined;   // why a start failed, in a sentence a person can read
     engineStateListeners.forEach((l) => { try { l(connected, reason, msg.starting === true); } catch { /* isolate a view's handler */ } });
+    if (connected) engineReadyListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'reconnectPending') {
     const name = typeof msg.name === 'string' && msg.name ? msg.name : null;
     const offer = msg.offer === true;   // the last model offered to a window with no folder, not one waiting for a sign-in
@@ -647,7 +659,11 @@ window.addEventListener('message', (e: MessageEvent) => {
     // webview never listened.
     rejectAll('Semanticus: the engine connection was lost while this request was in flight. The operation may still have completed. Verify its result before retrying.');
     const by: ReconnectBy = msg.by === 'otherDoor' || msg.by === 'restore' ? msg.by : 'person';
-    reconnectListeners.forEach((l) => { try { l(by); } catch { /* isolate a view's handler */ } });
+    const m = msg.model;
+    const model: SwapModel | undefined = m && typeof m.sessionId === 'string' && m.sessionId && typeof m.name === 'string' && m.name
+      ? { sessionId: m.sessionId, name: m.name } : undefined;
+    reconnectListeners.forEach((l) => { try { l(by, model); } catch { /* isolate a view's handler */ } });
+    engineReadyListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
   }
 });
 

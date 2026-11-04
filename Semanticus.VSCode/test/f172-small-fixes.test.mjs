@@ -213,7 +213,7 @@ function open(world) {
   const stubs = {
     './bridge': {
       rpc: world.rpc, openLocalModel: async () => undefined, pickWorkingCopyFolder: async () => null, onConnectionChange: () => () => undefined,
-      onOpenConnections: () => () => undefined, announceConnectionChange: () => undefined, closeConnectionsPanel: () => undefined,
+      onOpenConnections: () => () => undefined, onProgress: () => () => undefined, onEngineReady: () => () => undefined, announceConnectionChange: () => undefined, closeConnectionsPanel: () => undefined,
       navigateInStudio: () => undefined, runHostCommand: () => undefined, loadState: makeDisk().loadState, saveState: makeDisk().saveState,
     },
     './features': { planRankingOf: () => 'granted' },

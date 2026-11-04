@@ -3155,7 +3155,14 @@ namespace Semanticus.Engine
         public async Task<OpenResult> OpenAsync(string path, bool discardUnsaved = false)
         {
             RefuseUnheldDiscard(discardUnsaved, "open the model at " + path);
-            return PublishSessionSwap(await OpenCoreAsync(path), "open");
+            using var timer = OpenTimer.Begin("file", "human", _sessions.Bus.PublishProgress, 3);   // its steps go to the window as they start (cx2)
+            OpenTimer.Target(Path.GetFileNameWithoutExtension((path ?? "").TrimEnd('/', '\\')));
+            OpenTimer.Phase(1, "Reading the files");
+            var core = await OpenCoreAsync(path);
+            var opened = PublishSessionSwap(core, "open");
+            OpenTimer.Step("publish the session");
+            timer.Finish(ok: true);
+            return timer.Stamp(opened);
         }
 
         // The open itself, with no session/didChange: a caller that does more after it (a working copy attaches its
@@ -3168,17 +3175,31 @@ namespace Semanticus.Engine
             var result = (await SwapSessionCoreAsync(async () =>
             {
                 var built = await _sessions.BuildOpenAsync(path);
+                OpenTimer.Phase(2, "Loading the model");
                 built.SnapshotOf = LiveModelExport.ReadOriginMarker(path);
                 return built;
             }, path, liveTicket, sessionTicket, announce: "Opened")).Result;
-            var full = Path.GetFullPath(path);
+            OpenTimer.Phase(3, "Saving it to your list");
+            var full = SavedFilePath(Path.GetFullPath(path));
             // A copy under a temp folder is not saved to the connections list (it would push the person's real ones
             // out of a capped list), unless the person already saved it (labelled it, linked a working copy). The
             // timeline still gets its row either way.
             var throwaway = ThrowawayPaths.IsThrowaway(full) && ConnectionRegistry.FindByEndpoint(full, null) == null;
             var rec = throwaway || ThrowawayPaths.IsLearnCopy(full) ? null : RememberConnection("file", full, null, result.ModelName);
             RecordConnectionHistory(rec, "open", null, full, null, null, ok: true, throwaway: throwaway);
+            OpenTimer.Step("save connection and history");
             return result;
+        }
+
+        /// <summary>The path a file open is saved under in the connections list. A Power BI folder model loads from its inner definition folder,
+        /// and that is the source the window remembers and reopens at the next start. Saved under that path, the start-up open added a second
+        /// row next to the row of the .SemanticModel folder the person picked: the same name twice (cx3, tester note 4). Both paths name one model,
+        /// so both are saved under the .SemanticModel folder.</summary>
+        internal static string SavedFilePath(string full)
+        {
+            if (!ModelPathResolver.IsPbipDefinitionFolder(full)) return full;
+            var parent = Path.GetDirectoryName(full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            return parent != null && parent.EndsWith(".SemanticModel", StringComparison.OrdinalIgnoreCase) ? parent : full;
         }
 
         public async Task<OpenResult> CreateModelAsync(string name, int compatibilityLevel, bool discardUnsaved = false)
@@ -3300,8 +3321,12 @@ namespace Semanticus.Engine
             await _lifecycleGate.WaitAsync();
             try
             {
+                OpenTimer.Step("wait for the session gate");
                 await ParkStartPlanForSwapAsync();                          // start plan: loop stopped, scratch drained (S6)
+                OpenTimer.Step("park the start plan");
+                OpenTimer.ThrowIfCancelled();                               // the window's Cancel came in while this open waited (cx2)
                 var next = await build();                                   // a. build (fails clean)
+                OpenTimer.Step("load the model");
                 OpenResult result;
                 try
                 {
@@ -3315,15 +3340,21 @@ namespace Semanticus.Engine
                         Source = next.SourcePath,                           // null for create — unsaved until save_model(path)
                         Note = next.OpenNote
                     });
+                    OpenTimer.Step("count tables and measures");
                     _sessions.AttachObserver(next);                         // c. LAST fallible step — before any destruction
                     if (System.Threading.Interlocked.Read(ref _sessionIntent) != sessionTicket)   // c2. point of no return
                         throw new InvalidOperationException(
                             "This open was superseded by a newer open or create issued while it was loading; the current model is unchanged. Re-issue this open if you still want that model.");
+                    // c3. The window's Cancel (cx2): a Cancel that came in first stops the open HERE, with the old model, its stores and its
+                    // live connection untouched. From here on the new model goes in, so a later Cancel is refused as too late.
+                    OpenTimer.Commit();
                     var previousContext = _sessions.CurrentContext;
                     if (previousContext.Session != null)
                     {
+                        OpenTimer.Step("attach observers");
                         await previousContext.Session.RetireAsync();         // d. close admission + drain old work
                         RefuseStaleDiscard(previousContext);                 // d2. the person's yes was for THIS model, not for work done while the open loaded
+                        OpenTimer.Step("retire the previous model");
                     }
 
                     // Test-only observation point. The old context remains complete until the atomic exchange.
@@ -3347,6 +3378,7 @@ namespace Semanticus.Engine
                             displaced = current.ExchangeLive(null);
                         retired = _sessions.ExchangeRetiredContext(nextContext);   // e. one volatile publication
                     }
+                    OpenTimer.Step("swap the session");
                     SafeDispose(displaced);
                     try { retired.DisposeRetired(); }
                     catch (Exception ex) { try { Console.Error.WriteLine("[session] disposing the replaced context failed (the swap itself is committed): " + ex.Message); } catch { } }
@@ -3360,14 +3392,16 @@ namespace Semanticus.Engine
                 // Post-commit: nothing below may throw (a committed swap must never report as a failed open).
                 try { ReleaseSnapshotDir(unless: releaseUnless); }
                 catch (Exception ex) { try { Console.Error.WriteLine("[open] releasing the previous snapshot dir failed (the swap is committed): " + ex.Message); } catch { } }
+                OpenTimer.Step("release the previous model");
                 await SafeRebroadcastWorkflowLibraryAsync();                // model.* facts changed — re-curate the menu (§10.6)
+                OpenTimer.Step("workflow menu");
                 try { _loadedDiskStamp = ModelDiskStamp(); }
                 catch { _loadedDiskStamp = null; }
                 swapped = (result, published);
             }
             finally { _lifecycleGate.Release(); }
             // Told after the gate is released, so no listener runs while opens are held.
-            if (announce != null) PublishModelSwapped(swapped.Session, announce + " " + swapped.Result.ModelName);
+            if (announce != null) { PublishModelSwapped(swapped.Session, announce + " " + swapped.Result.ModelName); OpenTimer.Step("tell listeners"); }
             return swapped;
         }
 
@@ -3401,6 +3435,11 @@ namespace Semanticus.Engine
         public async Task<OpenResult> OpenLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool forceReauth = false,
             string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human", bool discardUnsaved = false, bool silentOnly = false)
         {
+            using var timer = OpenTimer.Begin("published model", origin, _sessions.Bus.PublishProgress, 5);   // each step and its time to the output log (cx1); a throw logs "failed" with the steps so far
+            // The window's five steps start here (cx2): Signing in, Connecting to the workspace, Reading the model definition, Loading the model,
+            // Connecting for queries. Its Cancel stops the open up to the swap (c3), and then nothing has changed.
+            OpenTimer.Target(string.IsNullOrWhiteSpace(database) ? null : database);
+            OpenTimer.Phase(1, "Signing in");
             RefuseUnheldDiscard(discardUnsaved, "open the published model " + (string.IsNullOrWhiteSpace(database) ? endpoint : database));
             (authMode, tenantId) = PickOpenLiveSignIn(authMode, tenantId, rawToken, accountProfileId);
             // Wire-compat (item 4): a NULL makeDefault is a LEGACY caller (older extension / Phase 1) — a forced re-sign
@@ -3493,16 +3532,30 @@ namespace Semanticus.Engine
                 prepared = !string.IsNullOrWhiteSpace(accountProfileId)
                     ? (EntraToken.BuildCredentialForProfile(accountProfileId, disableInteractive: nonInteractive)
                         ?? throw new InvalidOperationException("That saved account is signed out on this device. Sign in again to use it."))
-                    : mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenant, System.Threading.CancellationToken.None, forceReauth, disableInteractive: nonInteractive, loginHint: loginHint);
+                    : mode == "token" ? null : await EntraToken.BuildCredentialAsync(mode, tenant, OpenTimer.Token, forceReauth, disableInteractive: nonInteractive, loginHint: loginHint);
+                OpenTimer.Step("credential");
+                OpenTimer.ThrowIfCancelled();
                 cred = prepared?.Credential;
                 tok = cred != null
-                    ? await EntraToken.GetTokenAsync(cred, System.Threading.CancellationToken.None)
-                    : await EntraToken.AcquireFullAsync(mode, rawToken, System.Threading.CancellationToken.None, tenant);
-                snap = LiveSnapshotExportForTests != null ? await LiveSnapshotExportForTests(endpoint, database)
-                    : await LiveModelExport.ToBimAsync(endpoint, database, tok.Token, tok.ExpiresOn);
+                    ? await EntraToken.GetTokenAsync(cred, OpenTimer.Token)
+                    : await EntraToken.AcquireFullAsync(mode, rawToken, OpenTimer.Token, tenant);
+                OpenTimer.Step("sign-in token");
+                OpenTimer.ThrowIfCancelled();
+                OpenTimer.Phase(2, "Connecting to the workspace");
+                // The read of the published model cannot be stopped half way (AMO has no cancel), so a Cancel lets it run out on its own and
+                // throws its snapshot away, and the open ends at once (cx2).
+                var export = LiveSnapshotExportForTests != null ? LiveSnapshotExportForTests(endpoint, database)
+                    : LiveModelExport.ToBimAsync(endpoint, database, tok.Token, tok.ExpiresOn);
+                try { snap = await export.WaitAsync(OpenTimer.Token); }
+                catch (OperationCanceledException) when (OpenTimer.CancelledNow) { DropAbandonedSnapshot(export); throw; }
+                OpenTimer.Step("read the published model");
+                if (OpenTimer.CancelledNow) { DropAbandonedSnapshot(export); OpenTimer.ThrowIfCancelled(); }
+                OpenTimer.Phase(4, "Loading the model");
             }
             catch (Exception ex)
             {
+                // Stopped by the window's Cancel (cx2): the person's choice, not a fault, and it promised nothing changed, so no history row.
+                if (OpenTimer.CancelledNow) throw new OpenCancelledException(string.IsNullOrWhiteSpace(database) ? null : database);
                 // The open FAILED at sign-in or export — before we committed the freshly chosen account (deferred), so the
                 // tenant-wide saved account is UNCHANGED. Record the failure honestly: attributed ONLY to an exact
                 // endpoint+dataset record (never a stale same-endpoint guess) and never to a stale LastAccount hint (MED 6).
@@ -3525,6 +3578,7 @@ namespace Semanticus.Engine
             try { (open, session) = await OpenSnapshotAsync(snap, liveTicket, sessionTicket); }
             catch (Exception ex)
             {
+                if (OpenTimer.CancelledNow) throw;   // stopped by the window's Cancel before the swap (c3): nothing changed, no history row (cx2)
                 // The swap was SUPERSEDED (a newer open/connect won the intent race), so this open did NOT take effect —
                 // the freshly chosen account must NOT be committed (HIGH 5: commit only on the WIN, else an older switch
                 // finishing late overwrites the newer winner's account pointer). Record the failure with the target's id
@@ -3565,12 +3619,25 @@ namespace Semanticus.Engine
             LiveModelExport.WriteOriginMarker(snap.BimPath, session.LiveOrigin);   // so a cold start that reopens this snapshot as a file still knows which model it is (identity only)
             }
             finally { System.Threading.Interlocked.Decrement(ref _liveOriginStampPending); }
+            OpenTimer.Step("keep the sign-in");
+            OpenTimer.Phase(5, "Connecting for queries");   // the model is open: the window is told Cancel can no longer stop it
             PublishModelSwapped(session, "Opened " + open.ModelName);
+            OpenTimer.Step("tell listeners");
             // Record the dataset actually resolved, not the caller's possibly-empty argument — the registry is keyed on
             // it, so an empty `database` must not mint a second record for the same model on the next open.
             var signedInTenant = RecordTenantForOpen(tenant, mode, prepared);   // the tenant this sign-in landed in (fx171)
-            var record = RememberConnection("xmla", endpoint, snap.DatabaseName, snap.DatabaseName, signedInTenant, authMode, account);
-            RecordConnectionHistory(record, ConnectHistoryKind(forceReauth, priorAccount, account, explicitSelection: !string.IsNullOrWhiteSpace(accountProfileId)), account, endpoint, snap.DatabaseName, signedInTenant, ok: true);
+            var historyKind = ConnectHistoryKind(forceReauth, priorAccount, account, explicitSelection: !string.IsNullOrWhiteSpace(accountProfileId));
+            // The saved-connections write reaches the disk before it returns (its labels are what the agent policy reads), and on a busy
+            // disk that flush took seconds (cx1: 0.04 to 6 s each). It needs nothing the query connection makes, so it runs while that
+            // connection opens, and the open waits for both. Neither throws: each is best-effort and swallows its own failure.
+            var databaseName = snap.DatabaseName;
+            var saving = Task.Run(() =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var record = RememberConnection("xmla", endpoint, databaseName, databaseName, signedInTenant, authMode, account);
+                RecordConnectionHistory(record, historyKind, account, endpoint, databaseName, signedInTenant, ok: true);
+                return sw.ElapsedMilliseconds;
+            });
             open.Account = account;
             // Seed the session's live-auth cache with the credential + token we just used, so the first deploy /
             // refresh reuses them with no second prompt and no re-acquisition.
@@ -3583,20 +3650,31 @@ namespace Semanticus.Engine
             // (Studio offers to attach) rather than failing the whole open. Rides the OPEN's intent ticket + session.
             open.LiveConnected = await TryBindLiveAsync("xmla", endpoint, liveCs, liveTicket, session, account,
                 accessToken: tok, silentCredential: SilentQueryCredential(cred, prepared, mode, tenant));
+            OpenTimer.Step("connect for queries");
+            OpenTimer.Alongside("save connection and history", await saving.ConfigureAwait(false));
+            OpenTimer.Step("wait for the connection save");
             await SafeRebroadcastWorkflowLibraryAsync();   // model + connection.* now exist — re-curate the menu (§10.6)
+            OpenTimer.Step("workflow menu");
             var swapped = PublishSessionSwap(open, "open_live");
+            OpenTimer.Step("publish the session");
             await ExtendWindowConsentAsync(origin).ConfigureAwait(false);   // the person's OK in this window carries to the live model the assistant opened (hero19 D11)
+            OpenTimer.Step("window consent");
             // A file this published model was saved to may hold work the service copy lacks (UAT 1.7 D3): say so on both doors, and offer it.
             if (swapped != null && await SavedCopyOfferAsync(session).ConfigureAwait(false) is { } offer)
             {
                 swapped.SavedCopy = offer;
                 swapped.Note = JoinNotes(swapped.Note, SavedCopyNote(offer));
             }
-            return swapped;
+            OpenTimer.Step("saved copy check");
+            timer.Finish(ok: true);
+            return timer.Stamp(swapped);
         }
 
         public async Task<OpenResult> OpenLocalAsync(string dataSource, string database, bool discardUnsaved = false)
         {
+            using var timer = OpenTimer.Begin("Power BI Desktop", "human", _sessions.Bus.PublishProgress, 5);
+            OpenTimer.Target(database);
+            OpenTimer.Phase(1, "Finding the model");
             RefuseUnheldDiscard(discardUnsaved, "open the model that is running in Power BI Desktop");
             var (liveTicket, sessionTicket) = NewSessionSwapIntents();   // one atomic pair at PUBLIC entry (see OpenLiveAsync)
             // UNIFIED OPEN for a running Power BI Desktop (local Analysis Services): make the SAME instance both
@@ -3608,8 +3686,22 @@ namespace Semanticus.Engine
                     ?? throw new InvalidOperationException("No local Power BI Desktop instance found. Open a .pbix, or pass a Data Source like 'localhost:51234'.");
                 dataSource = inst.DataSource;
             }
-            var snap = LiveSnapshotExportForTests != null ? await LiveSnapshotExportForTests(dataSource, database)
-                : await LiveModelExport.ToBimLocalAsync(dataSource, database);
+            OpenTimer.ThrowIfCancelled();
+            OpenTimer.Phase(2, "Connecting to Power BI Desktop");
+            // As with a published model, Cancel ends the wait and discards the export when it finishes.
+            var export = LiveSnapshotExportForTests != null ? LiveSnapshotExportForTests(dataSource, database)
+                : LiveModelExport.ToBimLocalAsync(dataSource, database);
+            LiveModelExport.Snapshot snap;
+            try { snap = await export.WaitAsync(OpenTimer.Token); }
+            catch (OperationCanceledException) when (OpenTimer.CancelledNow)
+            {
+                DropAbandonedSnapshot(export);
+                throw new OpenCancelledException(database);
+            }
+            if (OpenTimer.CancelledNow) { DropAbandonedSnapshot(export); OpenTimer.ThrowIfCancelled(); }
+            OpenTimer.Target(snap.DatabaseName);
+            OpenTimer.Step("read the Desktop model");
+            OpenTimer.Phase(4, "Loading the model");
             // Capture the Desktop identity ONCE, at open time — the restart-stable identity a local model's primer
             // keys on (port + database GUID both rotate per Desktop session). The window title, never the command line's
             // path (LocalDesktop's class comment); best-effort: null degrades to the endpoint|database identity.
@@ -3634,12 +3726,15 @@ namespace Semanticus.Engine
                 LiveModelExport.WriteOriginMarker(snap.BimPath, session.LiveOrigin);   // identity only (see OpenLiveAsync)
             }
             finally { System.Threading.Interlocked.Decrement(ref _liveOriginStampPending); }
+            OpenTimer.Phase(5, "Connecting for queries");
             PublishModelSwapped(session, "Opened " + open.ModelName);
             var localRecord = RememberConnection("localDesktop", dataSource, snap.DatabaseName, snap.DatabaseName);
             RecordConnectionHistory(localRecord, "open", null, dataSource, snap.DatabaseName, null, ok: true);
             open.LiveConnected = await TryBindLiveAsync("local", dataSource, LiveConnection.LocalConnectionString(dataSource, snap.DatabaseName), liveTicket, session, desktopId: desktopId);
             await SafeRebroadcastWorkflowLibraryAsync();   // model + connection.* now exist — re-curate the menu (§10.6)
-            return PublishSessionSwap(open, "open_local");
+            var swapped = PublishSessionSwap(open, "open_local");
+            timer.Finish(ok: true);
+            return timer.Stamp(swapped);
         }
 
         /// <summary>The origin a local open stamps. Only an instance proved to be a real Analysis Services is stamped as
@@ -3671,6 +3766,21 @@ namespace Semanticus.Engine
                 try { var dir = Path.GetDirectoryName(snap.BimPath); if (dir != null && Directory.Exists(dir)) Directory.Delete(dir, true); } catch { /* best-effort cleanup */ }
                 throw;
             }
+        }
+
+        /// <summary>A read of the published model that the window's Cancel left behind (cx2): when it finishes, its snapshot folder is deleted.</summary>
+        private static void DropAbandonedSnapshot(Task<LiveModelExport.Snapshot> export)
+        {
+            _ = export.ContinueWith(t =>
+            {
+                try
+                {
+                    var bim = t.Status == TaskStatus.RanToCompletion ? t.Result?.BimPath : null;
+                    var dir = bim == null ? null : Path.GetDirectoryName(bim);
+                    if (dir != null && Directory.Exists(dir) && dir.StartsWith(LiveModelExport.TempRoot, StringComparison.Ordinal)) Directory.Delete(dir, true);
+                }
+                catch { /* best-effort: a temp snapshot the sweep removes within a day */ }
+            }, TaskScheduler.Default);
         }
 
         // Attach the live query connection for a just-opened model. Best-effort: a failure here must not fail the

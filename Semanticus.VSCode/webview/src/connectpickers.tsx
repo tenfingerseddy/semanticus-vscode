@@ -11,7 +11,10 @@
 //
 // Each picker is a pure view (rendered state by state in test/connect-pickers.test.mjs) plus a thin stateful shell
 // that asks the engine. Neither view speaks engine words: no "XMLA", no "endpoint", no "dataset".
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { OpenBar, type OpenBarMessage } from './openbar';
+import type { OpenRun } from './openbar-model';
 import { onEngineState, rpc, rpcPressed, runHostCommand } from './bridge';
 import {
   COPY, OPTION_STYLE, SIGN_IN_WAYS, restartFits, WORKSPACE_ENV_OPTIONS, engineSentence, instanceDetail, instanceName, isAdvancedSignIn, isEngineAway,
@@ -247,6 +250,20 @@ export interface WorkspacePickerViewProps {
   signIn?: 'waiting' | 'unfinished' | null;
   onCancelSignIn?: () => void;
   onOpenOther?: () => void;
+  // ---- the bar (cx2, option A): Connect, the one account place with Change, the step and Cancel while it opens ----------------------
+  /** The frame's bottom row: the bar is drawn there so it never scrolls. Absent (a test), it is drawn at the end of the screen. */
+  barSlot?: HTMLElement | null;
+  run?: OpenRun | null;
+  now?: number;
+  onCancel?: () => void;
+  barMessage?: OpenBarMessage | null;
+  /** Drawn above the bar's line: the unsaved-changes question. */
+  barPop?: ReactNode;
+  /** The signed-in accounts Change offers. Picking one reads its workspaces (tester note 1: the list belongs to one account). */
+  profiles?: { id: string; username: string }[];
+  accountMenuOpen?: boolean;
+  onToggleAccountMenu?: () => void;
+  onUseAccount?: (profileId: string) => void;
 }
 
 function PickRow({ testid, label, selected, onPick, disabled }: { testid: string; label: string; selected: boolean; onPick: () => void; disabled?: boolean }) {
@@ -277,14 +294,42 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
     ));
   };
 
+  // The bar (cx2, option A): the picked workspace and model, "Connect as <account>" with Change, and Connect. The environment question
+  // and Connect only make sense over a list; a refused list shows its reason alone, and the bar keeps only who the list is read as.
+  const listed = p.workspaces.kind === 'ready' && p.workspaces.items.length > 0;
+  const model = ws && p.models?.kind === 'ready' ? p.models.items.find((m) => m.id === p.modelId) ?? null : null;
+  const who = [p.account ? `Connect as ${p.account}` : p.askingAccount ? COPY.anotherAccountAsk : 'You may be asked to sign in', p.tenant.trim() ? `tenant ${p.tenant.trim()}` : ''].filter(Boolean).join(', ');
+  const accountMenu = p.accountMenuOpen ? (
+    <div className="hub-pop hub-bar-menu" role="group" aria-label="Accounts" data-testid="pick-account-menu">
+      {(p.profiles ?? []).map((a) => (
+        <button key={a.id} type="button" className="hub-menu-item" data-testid="pick-account" onClick={() => p.onUseAccount?.(a.id)}>
+          <span>{a.username === p.account ? '\u2713 ' : ''}{a.username}</span><em className="hub-job-why">signed in</em></button>
+      ))}
+      {p.onAnotherAccount && <button type="button" className="hub-menu-item" data-testid="pick-another-account" disabled={p.busy} onClick={p.onAnotherAccount}><span>{COPY.anotherAccount}</span></button>}
+    </div>
+  ) : null;
+  const bar = OpenBar({
+    pickName: model ? (model.displayName || model.id) : null,
+    pickWhere: model && ws ? `in ${workspaceName(ws)}` : null,
+    emptyText: ws ? `Pick a model in ${workspaceName(ws)}` : listed ? 'Pick a workspace, then a model' : 'No workspace list yet',
+    accountText: who,
+    onChange: p.onToggleAccountMenu && (p.onAnotherAccount || (p.profiles ?? []).length > 0) ? p.onToggleAccountMenu : undefined,
+    changeOpen: !!p.accountMenuOpen,
+    action: 'Connect', actTestId: 'pick-connect', hideAct: !listed, canAct: canConnect, onAct: p.onConnect,
+    run: p.run ?? null, now: p.now ?? Date.now(), onCancel: p.onCancel ?? (() => undefined), interactive: p.authMode === 'interactive',
+    message: p.barMessage ?? (p.connectError ? { kind: 'bad', text: p.connectError } : null),
+    extra: listed ? (
+      <label className="sem-field-label hub-bar-env">{COPY.envLabel}
+        <select data-testid="pick-env" className="sem-field sem-field-sm" value={p.env} onChange={(e) => p.onEnv(e.target.value)}>
+          {WORKSPACE_ENV_OPTIONS.map((o) => <option key={o.value} value={o.value} style={OPTION_STYLE}>{o.label}</option>)}
+        </select>
+      </label>) : null,
+    pop: p.barPop ?? accountMenu,
+  });
+
   return (
     <section className="sem-grid" data-testid="pick-workspace">
-      <Head title={COPY.workspaceTitle} onBack={p.onBack}>
-        <span className="sem-push flex min-w-0 max-w-full flex-wrap items-center justify-end gap-x-2">
-          <span className="sem-text-meta min-w-0 truncate" data-testid="pick-as">{[p.account ? `as ${p.account}` : p.askingAccount ? COPY.anotherAccountAsk : 'You may be asked to sign in', p.tenant.trim() ? `tenant ${p.tenant.trim()}` : ''].filter(Boolean).join(', ')}</span>
-          {p.onAnotherAccount && <button type="button" className={BTN_QUIET} data-testid="pick-another-account" disabled={p.busy} onClick={p.onAnotherAccount}>{COPY.anotherAccount}</button>}
-        </span>
-      </Head>
+      <Head title={COPY.workspaceTitle} onBack={p.onBack} />
 
       {p.waitingToList ? (
         <p className="sem-text-meta">Choose a tenant, or list workspaces for your account.</p>
@@ -311,7 +356,8 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
       ) : (
         <>
           <div className="sem-card sem-card-flush sem-span-6" data-testid="pick-ws-list">
-            <div className="sem-card-head"><h3 className="sem-card-title">Workspace</h3></div>
+            <div className="sem-card-head"><h3 className="sem-card-title">Workspace</h3>{p.workspaces.kind === 'ready' && <span className="sem-text-meta sem-push">{p.workspaces.items.length}</span>}</div>
+            <div className="hub-pick-scroll">
             {p.workspaces.kind === 'loading' && (p.signIn === 'waiting'
               ? (<div className="sem-list-row sem-inline sem-text-meta" aria-live="polite" data-testid="pick-signin-waiting">
                 <span>{COPY.signInWaiting}</span>
@@ -323,27 +369,15 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
             {p.workspaces.kind === 'ready' && p.workspaces.items.map((w) => (
               <PickRow key={w.id} testid="pick-ws" label={workspaceName(w)} selected={w.id === p.wsId} disabled={p.busy} onPick={() => p.onPickWorkspace(w.id)} />
             ))}
+            </div>
           </div>
           <div className="sem-card sem-card-flush sem-span-6" data-testid="pick-model-list">
-            <div className="sem-card-head"><h3 className="sem-card-title">Model</h3></div>
-            {modelColumn()}
+            <div className="sem-card-head"><h3 className="sem-card-title">Model</h3>{ws && p.models?.kind === 'ready' && <span className="sem-text-meta sem-push">{p.models.items.length} in {workspaceName(ws)}</span>}</div>
+            <div className="hub-pick-scroll">{modelColumn()}</div>
           </div>
         </>
       )}
 
-      {/* The environment question and Connect only make sense over a list; a refused list shows its reason alone. */}
-      {p.workspaces.kind === 'ready' && p.workspaces.items.length > 0 && (<>
-      <div className="sem-inline">
-        <label className="sem-field-label">{COPY.envLabel}
-          <select data-testid="pick-env" className="sem-field" value={p.env} onChange={(e) => p.onEnv(e.target.value)}>
-            {WORKSPACE_ENV_OPTIONS.map((o) => <option key={o.value} value={o.value} style={OPTION_STYLE}>{o.label}</option>)}
-          </select>
-        </label>
-        <button type="button" className={`${BTN_PRIMARY} sem-push`} data-testid="pick-connect" disabled={!canConnect} onClick={p.onConnect}>
-          {p.busy ? 'Connecting...' : 'Connect'}</button>
-      </div>
-      {p.connectError && <Failure message={p.connectError} testid="pick-connect-error" />}
-      </>)}
 
       {/* The "Sign-in did not finish" row above already offers it: one button with this name on screen, not two (r2 UAT N14). */}
       {p.signIn !== 'unfinished' && (
@@ -373,6 +407,7 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
           </div>
         </div>
       )}
+      {p.barSlot ? createPortal(bar, p.barSlot) : bar}
     </section>
   );
 }
@@ -384,10 +419,14 @@ type AccountPick = { mode: 'saved' | 'another' | 'chosen'; profileId: string | n
 const SAVED_ACCOUNT: AccountPick = { mode: 'saved', profileId: null, account: null };
 type StartScreen = { pick: AccountPick; workspaces: Load<FabricWorkspace>; signIn: 'waiting' | 'unfinished' | null; waitingToList: boolean; otherOpen: boolean };
 
-export function WorkspacePicker({ account, anotherAccount = false, pressedFirst = false, initialAuthMode = 'interactive', initialTenant = '', onBack, onPasteAddress, onConnect }: {
+export function WorkspacePicker({ account, anotherAccount = false, pressedFirst = false, initialAuthMode = 'interactive', initialTenant = '', onBack, onPasteAddress, onConnect,
+  barSlot, run, now, onCancel, barMessage, barPop, profiles }: {
   account?: string | null; anotherAccount?: boolean; pressedFirst?: boolean; initialAuthMode?: string; initialTenant?: string;
   onBack: () => void; onPasteAddress: () => void; onConnect: PickAction<WorkspaceChoice>;
+  barSlot?: HTMLElement | null; run?: OpenRun | null; now?: number; onCancel?: () => void; barMessage?: OpenBarMessage | null; barPop?: ReactNode;
+  profiles?: { id: string; username: string }[];
 }) {
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   // Another account is a browser sign-in, whatever way the last model was opened.
   const startMode = anotherAccount ? 'interactive' : initialAuthMode;
   const [authMode, setAuthMode] = useState(startMode);
@@ -503,7 +542,15 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
     } catch (e) { if (mine === modelGen.current && live.current) setModels({ kind: 'failed', message: engineSentence(e) }); }
   };
 
+  // Change in the bar, then a signed-in account: the lists are read again as that account, and Connect opens as it (tester note 1).
+  const useAccount = (profileId: string) => {
+    const chosen = (profiles ?? []).find((a) => a.id === profileId);
+    setAccountMenuOpen(false);
+    setAccountPick({ mode: 'chosen', profileId, account: chosen?.username ?? null });
+    void loadWorkspaces();
+  };
   const startAnotherAccount = () => {
+    setAccountMenuOpen(false);
     if (accountPick.mode !== 'another') {
       // A saved read still under way is dropped by the new sign-in, so coming back to it means it did not finish (Try again).
       const inFlight = workspaces.kind === 'loading' && !waitingToList && signIn !== 'unfinished';
@@ -539,6 +586,8 @@ export function WorkspacePicker({ account, anotherAccount = false, pressedFirst 
       onBack={onBack} onRetry={() => void loadWorkspaces()} onPickWorkspace={(id) => void pickWorkspace(id)} onPickModel={setModelId}
       onEnv={setEnv} onAuthMode={(m) => { setAuthMode(m); if (m !== 'interactive') setAccountPick(SAVED_ACCOUNT); }} onTenant={setTenant}
       onToggleOther={() => setOtherOpen((v) => !v)} onPasteAddress={onPasteAddress} onConnect={() => void connect()}
-      signIn={signIn} onCancelSignIn={cancelWorkspaces} onOpenOther={() => setOtherOpen(true)} />
+      signIn={signIn} onCancelSignIn={cancelWorkspaces} onOpenOther={() => setOtherOpen(true)}
+      barSlot={barSlot} run={run} now={now} onCancel={onCancel} barMessage={barMessage} barPop={barPop}
+      profiles={profiles} accountMenuOpen={accountMenuOpen} onToggleAccountMenu={() => setAccountMenuOpen((v) => !v)} onUseAccount={useAccount} />
   );
 }

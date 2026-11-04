@@ -29,6 +29,10 @@ namespace Semanticus.Engine
             _cleanStop = cleanStop;
         }
 
+        /// <summary>The Connections dialog's Cancel on an open that runs (cx2). Human-only and on no MCP op: the person's own open is
+        /// the window's business, and an assistant connection must not be able to stop it. A null id stops the person's running opens.</summary>
+        public Task<OpenCancelResult> cancelOpen(string runId) => Task.FromResult(OpenTimer.Cancel(runId));
+
         /// <summary>A window that is replacing this engine with its own build asks THIS engine, over the connection
         /// it checked it on, to leave, and the engine agrees only while it holds no unsaved work (F-244). The check
         /// and the stop are one step on the dispatcher, so nothing can land in between, and the window never kills a

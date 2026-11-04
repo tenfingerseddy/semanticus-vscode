@@ -77,16 +77,18 @@ assert.match(hub, />Workspace address/, 'the single address input says what it i
 assert.equal(count(hub, 'type="search"') + count(hub, 'placeholder="powerbi'), 2,
   'the only endpoint-shaped inputs are the search box and the single Add-view endpoint field');
 assert.match(hub, /For a model the workspace list cannot show\./, 'the Add view says in one line what it is for');
-assert.match(hub, />Connect and remember</, 'and the button still says the address is remembered');
+// cx5: the button sits in the bar at the foot of the dialog (always in view), with the same words.
+assert.match(hub, /actLabel: 'Connect and remember'/, 'and the button still says the address is remembered');
 assert.ok(hub.indexOf('function AddView') < hub.indexOf('data-testid="hub-endpoint-input"')
   && hub.indexOf('data-testid="hub-endpoint-input"') < hub.indexOf('Connect and remember'),
   'the endpoint input must live inside the Add view');
 
-// ---- row density: ONE primary verb (Open) and the ⋯ menu that holds everything else (design, Kane 24 Sep) --------
-assert.equal(count(hub, 'data-testid="hub-row-open"'), 1, 'a model row has exactly one primary Open verb');
+// ---- row density: the ⋯ menu holds everything about a row; the ONE Open is in the bar (cx2, option A, Kane 3 Nov) ------
+// Kane picked option A of the Connect mock-up: a press picks the row, and the bar at the bottom of the dialog holds the one Open.
+assert.equal(count(hub, 'data-testid="hub-row-open"'), 0, 'a row has no Open of its own: the bar holds the one Open');
 assert.equal(count(hub, 'data-testid="hub-row-overflow"'), 1, 'a model row has exactly one overflow trigger');
 assert.equal(count(hub, 'data-testid="hub-row-tests"'), 0, 'there is no second row verb');
-assert.match(hub, /data-testid="hub-row-open"[\s\S]{0,280}>Open</,
+assert.match(hub, /action: 'Open', actTestId: 'hub-open'/,
   'the single primary verb is literally "Open" (never a stale-mutated "Sign in and open")');
 const menu = slice('role="menu" data-hub-menu', '{envEditId === r.id');
 for (const item of ['Use for tests and queries', 'Publish here', 'Work on a local copy', 'Add SQL endpoint', 'Open as another account', 'Environment label', 'History', 'Forget']) {
@@ -411,7 +413,7 @@ assert.match(hub, /if \(menuTriggerRef\.current\) \{ menuTriggerRef\.current\.fo
 assert.match(hub, /if \(stale\) openAccountChoice\(r, 'query'\); else void attachTests\(r\)/, 'a signed-out model goes to the account picker carrying QUERY intent');
 assert.match(hub, /const openAccountChoice = \(r: ConnectionRecord, purpose: 'open' \| 'query' \| null = null\) => \{ setError\(null\);[^\n]*setSwitchPurpose\(purpose\); setSwitchTarget\(r\); \}/, 'a stale Open or tests-and-queries carries its purpose into the account choice');
 assert.match(hub, /const asQuery = switchPurpose \? switchPurpose === 'query' : isQueryRole\(r\)/, 'applyAccount routes by explicit intent when set, else by role');
-assert.match(hub, /if \(stale\) openAccountChoice\(r, 'open'\); else void openModel\(r\)/, 'a stale Open carries OPEN intent');
+assert.match(hub, /if \(staleRow\(r\)\) openAccountChoice\(r, 'open'\); else void openModel\(r\)/, 'a stale Open carries OPEN intent (cx2: from the bar)');
 assert.match(hub, /setNotice\(`Tests and queries now run on \$\{nameOf\(r\)\}\.`\)/, 'a changed tests-and-queries model is said out loud');
 
 // (B4 + error surfacing) the hook returns the engine's own message; the hub shows it instead of a generic line.

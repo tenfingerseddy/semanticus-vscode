@@ -57,7 +57,9 @@ function registered(w, hostModelIdentity) {
   const saveScope = { conn: w.conn, vscode, propGrid: { commitFocused: async () => undefined }, commitStudioFocused: async () => undefined,
     pickFirstSaveDestination: async () => undefined, rememberLastModel: async () => undefined, watchModelDisk: () => undefined, noteSavedCopyLeftAlone: () => undefined };
   const saveCommand = new Function(...Object.keys(saveScope), `${functionSource('saveCommand').js}\nreturn saveCommand;`)(...Object.values(saveScope));
-  const relayScope = { saveCommand, conn: w.conn, withModelIdentity, withPress: (pressed, send) => send(), ParameterStructures: { byPosition: 1 }, studioRpcError: async (e) => String(e.message ?? e) };
+  const relayScope = { saveCommand, conn: w.conn, withModelIdentity, withPress: (pressed, send) => send(), ParameterStructures: { byPosition: 1 }, studioRpcError: async (e) => String(e.message ?? e),
+    // cx5: the open watch (src/openWatch.ts); these requests open no model.
+    isOpenMethod: () => false, openTargetName: () => 'the model', openWatch: { begin: () => 0, end: () => undefined, seen: () => 'shown', opening: undefined } };
   const studioRelayHandler = new Function(...Object.keys(relayScope), `${functionSource('studioRelayHandler').js}\nreturn studioRelayHandler;`)(...Object.values(relayScope));
   const personScope = { vscode, hostModelIdentity, insideAnyAction, personAction, fenceIdentity, conn: w.conn };
   const runPersonAction = new Function(...Object.keys(personScope), `${functionSource('runPersonAction').js}\nreturn runPersonAction;`)(...Object.values(personScope));
